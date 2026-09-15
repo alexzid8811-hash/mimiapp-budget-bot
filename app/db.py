@@ -81,6 +81,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_bill_payment
 ON transactions(user_id, bill_rule_id, bill_due_date)
 WHERE bill_rule_id IS NOT NULL AND bill_due_date IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS vacations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount >= 0),
+    payment_date TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(end_date >= start_date)
+);
+
+CREATE INDEX IF NOT EXISTS ix_vacations_user_dates
+ON vacations(user_id, start_date, end_date, payment_date);
+
 CREATE TABLE IF NOT EXISTS reserve_movements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
