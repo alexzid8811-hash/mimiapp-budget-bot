@@ -1,0 +1,21 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_PATH: /app/data/budget.sqlite3
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      DEV_MODE: ${DEV_MODE:-true}
+      INIT_DATA_MAX_AGE_SECONDS: ${INIT_DATA_MAX_AGE_SECONDS:-86400}
+    volumes:
+      - ./data:/app/data
+
+  bot:
+    build: .
+    command: ["python", "bot.py"]
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      MINI_APP_URL: ${MINI_APP_URL:-}
+    depends_on:
+      - web
