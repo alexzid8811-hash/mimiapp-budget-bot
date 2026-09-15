@@ -1,0 +1,176 @@
+"""Dated planning conditions shared by the dashboard and cash-flow forecast."""
+from contextlib import contextmanager
+from datetime import date, timedelta
+import json
+from copy import deepcopy
+
+from . import clock
+from .budget import Period, add_months, occurrences
+from .db import connect
+from .money import amount, cents
+from .payroll import PayrollConfig, payroll_events_between
+
+PAYROLL_COLUMNS = ('payroll_enabled', 'salary_gross', 'bonus_gross', 'tax_rate', 'salary_day', 'advance_day')
+INCOME_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'kind', 'is_payday', 'active')
+BILL_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'category_id', 'active')
+
+
+def live_conditions(con, uid):
+    settings = con.execute(f"SELECT {','.join(PAYROLL_COLUMNS)} FROM settings WHERE user_id=?", (uid,)).fetchone()
+    return {
+        'settings': dict(settings),
+        'income_rules': [dict(r) for r in con.execute(f"SELECT {','.join(INCOME_COLUMNS)} FROM income_rules WHERE user_id=? AND archived=0", (uid,))],
+        'bill_rules': [dict(r) for r in con.execute(f"SELECT {','.join(BILL_COLUMNS)} FROM bill_rules WHERE user_id=? AND archived=0", (uid,))],
+    }
+
+
+@contextmanager
+def change_conditions(uid, effective_date=None, *, table=None, record_id=None, payroll=False):
+    """Freeze old conditions and commit the edit plus its new version atomically.
+
+    Today's date is the default. Earlier dates must be explicitly selected,
+    allowing initial setup/corrections without silently rewriting history.
+    """
+    effective = effective_date or clock.today()
+    with connect() as con:
+        con.execute('BEGIN IMMEDIATE')
+        before = live_conditions(con, uid)
+        if not con.execute('SELECT 1 FROM plan_history WHERE user_id=? LIMIT 1', (uid,)).fetchone():
+            con.execute('INSERT INTO plan_history(user_id,effective_date,snapshot) VALUES(?,?,?)',
+                        (uid, '0001-01-01', json.dumps(before)))
+        yield con
+        after = live_conditions(con, uid)
+
+        def apply_edit(snapshot):
+            result = deepcopy(snapshot)
+            for key, value in after['settings'].items():
+                if payroll or value != before['settings'][key]:
+                    result['settings'][key] = value
+            for section in ('income_rules', 'bill_rules'):
+                old = {r['id']: r for r in before[section]}
+                new = {r['id']: r for r in after[section]}
+                records = {r['id']: r for r in result[section]}
+                for rid in old.keys() | new.keys():
+                    if old.get(rid) != new.get(rid) or (section == table and rid == record_id):
+                        if rid in new:
+                            records[rid] = new[rid]
+                        else:
+                            records.pop(rid, None)
+                result[section] = list(records.values())
+            return result
+
+        # Correct only the edited fields/rules. A backdated salary correction
+        # must not move unrelated bill changes into earlier days.
+        original = con.execute('SELECT snapshot FROM plan_history WHERE user_id=? AND effective_date<=? ORDER BY effective_date DESC LIMIT 1',
+                               (uid, effective.isoformat())).fetchone()
+        later = list(con.execute('SELECT id,snapshot FROM plan_history WHERE user_id=? AND effective_date>?', (uid, effective.isoformat())))
+        con.execute('INSERT INTO plan_history(user_id,effective_date,snapshot) VALUES(?,?,?) ON CONFLICT(user_id,effective_date) DO UPDATE SET snapshot=excluded.snapshot',
+                    (uid, effective.isoformat(), json.dumps(apply_edit(json.loads(original['snapshot'])))))
+        for row in later:
+            con.execute('UPDATE plan_history SET snapshot=? WHERE id=?', (json.dumps(apply_edit(json.loads(row['snapshot']))), row['id']))
+        con.execute("DELETE FROM reserve_movements WHERE user_id=? AND source='auto' AND period_start>=?",
+                    (uid, effective.replace(day=1).isoformat()))
+
+
+def condition_segments(uid, start, end):
+    if start > end:
+        return []
+    with connect() as con:
+        history = [dict(r) for r in con.execute(
+            'SELECT effective_date,snapshot FROM plan_history WHERE user_id=? AND effective_date<=? ORDER BY effective_date',
+            (uid, end.isoformat()))]
+        live = live_conditions(con, uid)
+    if not history:
+        return [(start, end, live)]
+    result = []
+    for i, row in enumerate(history):
+        left = max(start, date.fromisoformat(row['effective_date']))
+        right = end if i + 1 == len(history) else min(end, date.fromisoformat(history[i+1]['effective_date']) - timedelta(days=1))
+        if left <= right:
+            result.append((left, right, json.loads(row['snapshot'])))
+    return result
+
+
+def income_events(uid, start, end):
+    with connect() as con:
+        vacations = [dict(r) for r in con.execute('SELECT * FROM vacations WHERE user_id=?', (uid,))]
+    events = []
+    for left, right, conditions in condition_segments(uid, start, end):
+        cfg = conditions['settings']
+        enabled = bool(cfg['payroll_enabled'])
+        if enabled:
+            config = PayrollConfig(**{k: cfg[k] for k in PAYROLL_COLUMNS if k != 'payroll_enabled'})
+            for event in payroll_events_between(left, right, config, vacations):
+                events.append({**event, 'is_payday': event['kind'] in {'salary', 'advance'}})
+        else:
+            for vacation in vacations:
+                day = date.fromisoformat(vacation['payment_date'])
+                if left <= day <= right:
+                    events.append({'date': day, 'amount': vacation['amount'], 'title': 'Отпускные', 'is_payday': False})
+        payday_rules = []
+        for rule in conditions['income_rules']:
+            if not rule['active'] or (enabled and rule['kind'] != 'other'):
+                continue
+            is_payday = not enabled and (bool(rule['is_payday']) or rule['kind'] in {'salary', 'advance'})
+            if is_payday:
+                payday_rules.append(rule)
+            for day in occurrences([rule['day_of_month']], left, right, move_to_previous_workday=is_payday):
+                events.append({'date': day, 'amount': rule['amount'], 'title': rule['title'], 'is_payday': is_payday})
+        if not enabled and not payday_rules:
+            for day in occurrences([7, 22], left, right, move_to_previous_workday=True):
+                events.append({'date': day, 'amount': 0, 'title': 'выплата', 'is_payday': True})
+    return sorted(events, key=lambda e: e['date'])
+
+
+def income_map(uid, start, end, include_manual=True):
+    totals = {}
+    for event in income_events(uid, start, end):
+        day = event['date']
+        totals[day] = totals.get(day, 0) + cents(event['amount'])
+    if include_manual:
+        with connect() as con:
+            for row in con.execute("SELECT tx_date,amount FROM transactions WHERE user_id=? AND type='income' AND tx_date BETWEEN ? AND ?", (uid, start.isoformat(), end.isoformat())):
+                day = date.fromisoformat(row['tx_date'])
+                totals[day] = totals.get(day, 0) + cents(row['amount'])
+    return {day: amount(value) for day, value in sorted(totals.items())}
+
+
+def bill_events(uid, start, end):
+    events = {}
+    for left, right, conditions in condition_segments(uid, start, end):
+        for rule in conditions['bill_rules']:
+            if rule['active']:
+                for day in occurrences([rule['day_of_month']], left, right):
+                    events[(rule['id'], day.isoformat())] = {**rule, 'due_date': day.isoformat(), 'paid': False, 'payment_id': None}
+    with connect() as con:
+        for row in con.execute(
+            "SELECT t.bill_rule_id,t.bill_due_date,t.id AS payment_id,t.amount,t.note,t.category_id "
+            "FROM transactions t WHERE t.user_id=? AND t.bill_rule_id IS NOT NULL AND t.bill_due_date BETWEEN ? AND ?",
+            (uid, start.isoformat(), end.isoformat())):
+            key = (row['bill_rule_id'], row['bill_due_date'])
+            event = events.setdefault(key, {'id': row['bill_rule_id'], 'title': row['note'], 'category_id': row['category_id'], 'due_date': row['bill_due_date']})
+            event.update(amount=row['amount'], paid=True, payment_id=row['payment_id'])
+    return sorted(events.values(), key=lambda e: (e['due_date'], e['id']))
+
+
+def mandatory_map(uid, start, end):
+    totals = {}
+    for event in bill_events(uid, start, end):
+        day = date.fromisoformat(event['due_date'])
+        totals[day] = totals.get(day, 0) + cents(event['amount'])
+    return {day: amount(value) for day, value in totals.items()}
+
+
+def payday_boundaries(uid, start, end):
+    dates = {e['date']: e['title'] for e in income_events(uid, start, end) if e['is_payday']}
+    return [{'date': day, 'kind': title} for day, title in sorted(dates.items())]
+
+
+def user_period(uid, as_of):
+    dates = [e['date'] for e in payday_boundaries(uid, add_months(as_of, -3), add_months(as_of, 3))]
+    return Period(max(d for d in dates if d <= as_of), min(d for d in dates if d > as_of) - timedelta(days=1))
+
+
+def next_periods(uid, after, count):
+    dates = [e['date'] for e in payday_boundaries(uid, after, add_months(after, count + 2))]
+    return [Period(a, b - timedelta(days=1)) for a, b in zip(dates, dates[1:])][:count]

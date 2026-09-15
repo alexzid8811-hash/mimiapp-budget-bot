@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
 
 from . import main as legacy
+from . import clock, planning
+from .validation import APIModel, DatedConditionsIn
 from .auth import TelegramUser, current_user
 from .payroll import PayrollConfig, payroll_events_between, payroll_for_accrual_month
 
@@ -15,7 +17,7 @@ _legacy_payday_days = legacy.payday_days
 _legacy_period_recurring_income = legacy.period_recurring_income
 
 
-class PayrollSettingsIn(BaseModel):
+class PayrollSettingsIn(DatedConditionsIn):
     payroll_enabled: bool = False
     salary_gross: float = Field(default=0, ge=0)
     bonus_gross: float = Field(default=0, ge=0)
@@ -24,7 +26,7 @@ class PayrollSettingsIn(BaseModel):
     advance_day: int = Field(default=22, ge=1, le=31)
 
 
-class VacationIn(BaseModel):
+class VacationIn(APIModel):
     start_date: date
     end_date: date
     amount: float = Field(gt=0)
@@ -80,30 +82,7 @@ def payroll_payday_days(user_id: int) -> list[int]:
 
 
 def payroll_period_recurring_income(user_id: int, start: date, end: date) -> float:
-    cfg = payroll_settings(user_id)
-    vacations = vacation_rows(user_id)
-
-    if int(cfg["payroll_enabled"]):
-        total = sum(
-            float(event["amount"])
-            for event in payroll_events_between(start, end, payroll_config(user_id), vacations)
-        )
-        rules = legacy.rows(
-            "SELECT amount,day_of_month FROM income_rules "
-            "WHERE user_id=? AND active=1 AND kind='other'",
-            (user_id,),
-        )
-        for rule in rules:
-            for _ in legacy.occurrences([int(rule["day_of_month"])], start, end):
-                total += float(rule["amount"])
-        return round(total, 2)
-
-    total = _legacy_period_recurring_income(user_id, start, end)
-    for vacation in vacations:
-        payment_date = date.fromisoformat(vacation["payment_date"])
-        if start <= payment_date <= end:
-            total += float(vacation["amount"])
-    return round(total, 2)
+    return round(sum(planning.income_map(user_id, start, end, include_manual=False).values()), 2)
 
 
 # Functions defined in app.main resolve these names from app.main's globals at
@@ -119,7 +98,7 @@ def get_payroll_settings(user: TelegramUser = Depends(current_user)) -> dict:
     settings = payroll_settings(uid)
     preview = None
     if int(settings["payroll_enabled"]):
-        today = date.today()
+        today = clock.today()
         preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid), vacation_rows(uid))
     return {"settings": settings, "preview": preview}
 
@@ -127,7 +106,7 @@ def get_payroll_settings(user: TelegramUser = Depends(current_user)) -> dict:
 @app.put("/api/payroll-settings")
 def save_payroll_settings(payload: PayrollSettingsIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
-    with legacy.connect() as con:
+    with planning.change_conditions(uid, payload.effective_date, payroll=True) as con:
         con.execute(
             "UPDATE settings SET payroll_enabled=?,salary_gross=?,bonus_gross=?,tax_rate=?,salary_day=?,advance_day=?,"
             "updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
@@ -145,7 +124,7 @@ def save_payroll_settings(payload: PayrollSettingsIn, user: TelegramUser = Depen
     settings = payroll_settings(uid)
     preview = None
     if int(settings["payroll_enabled"]):
-        today = date.today()
+        today = clock.today()
         preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid), vacation_rows(uid))
     return {"settings": settings, "preview": preview}
 

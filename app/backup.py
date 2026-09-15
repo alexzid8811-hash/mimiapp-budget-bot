@@ -13,11 +13,12 @@ from telegram import Bot, InputFile
 from telegram.error import TelegramError
 
 from .auth import TelegramUser, current_user
+from .backup_validation import validate_backup
 from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -35,14 +36,16 @@ SETTINGS_COLUMNS = (
 
 TABLE_COLUMNS = {
     "categories": ("id", "title", "emoji", "created_at"),
-    "income_rules": ("id", "title", "amount", "day_of_month", "kind", "is_payday", "active", "created_at"),
-    "bill_rules": ("id", "title", "amount", "day_of_month", "category_id", "active", "created_at"),
+    "income_rules": ("id", "title", "amount", "day_of_month", "kind", "is_payday", "active", "archived", "created_at"),
+    "bill_rules": ("id", "title", "amount", "day_of_month", "category_id", "active", "archived", "created_at"),
     "transactions": (
         "id", "type", "amount", "tx_date", "category_id", "note",
         "bill_rule_id", "bill_due_date", "created_at",
     ),
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
+    "piggy_bank_movements": ("id", "direction", "amount", "movement_date", "note", "created_at"),
+    "plan_history": ("id", "effective_date", "snapshot"),
 }
 
 
@@ -53,6 +56,7 @@ def _records(con: Any, table: str, columns: tuple[str, ...], user_id: int) -> li
 
 def export_user_data(user_id: int) -> dict:
     with connect() as con:
+        con.execute("BEGIN")
         settings_row = con.execute(
             f"SELECT {','.join(SETTINGS_COLUMNS)} FROM settings WHERE user_id=?",
             (user_id,),
@@ -72,17 +76,7 @@ def export_user_data(user_id: int) -> dict:
 
 
 def _validated_data(payload: dict) -> dict:
-    if not isinstance(payload, dict) or payload.get("backup_version") != BACKUP_VERSION:
-        raise ValueError("Неподдерживаемая версия резервной копии")
-    if payload.get("app") != "mimiapp-budget-bot":
-        raise ValueError("Этот файл создан другим приложением")
-    data = payload.get("data")
-    if not isinstance(data, dict) or not isinstance(data.get("settings"), dict):
-        raise ValueError("В резервной копии нет настроек")
-    for table in TABLE_COLUMNS:
-        if not isinstance(data.get(table), list):
-            raise ValueError(f"Повреждён раздел {table}")
-    return data
+    return validate_backup(payload)
 
 
 def _created_at(row: dict) -> str:
@@ -96,7 +90,8 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
 
     try:
         with connect() as con:
-            for table in ("transactions", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
+            con.execute("BEGIN IMMEDIATE")
+            for table in ("transactions", "piggy_bank_movements", "plan_history", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             values = {
@@ -126,23 +121,26 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
                 category_ids[row.get("id")] = int(cur.lastrowid)
 
+            income_ids = {}
             for row in data["income_rules"]:
-                con.execute(
-                    "INSERT INTO income_rules(user_id,title,amount,day_of_month,kind,is_payday,active,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                cur = con.execute(
+                    "INSERT INTO income_rules(user_id,title,amount,day_of_month,kind,is_payday,active,archived,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["title"]), float(row.get("amount", 0)), int(row["day_of_month"]),
                         str(row.get("kind") or "other"), int(bool(row.get("is_payday", 0))),
-                        int(bool(row.get("active", 1))), _created_at(row),
+                        int(row["active"]), int(row["archived"]), _created_at(row),
                     ),
                 )
+
+                income_ids[row["id"]] = int(cur.lastrowid)
 
             bill_ids: dict[Any, int] = {}
             for row in data["bill_rules"]:
                 cur = con.execute(
-                    "INSERT INTO bill_rules(user_id,title,amount,day_of_month,category_id,active,created_at) VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO bill_rules(user_id,title,amount,day_of_month,category_id,active,archived,created_at) VALUES(?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["title"]), float(row.get("amount", 0)), int(row["day_of_month"]),
-                        category_ids.get(row.get("category_id")), int(bool(row.get("active", 1))), _created_at(row),
+                        category_ids.get(row.get("category_id")), int(row["active"]), int(row["archived"]), _created_at(row),
                     ),
                 )
                 bill_ids[row.get("id")] = int(cur.lastrowid)
@@ -174,6 +172,20 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                         str(row.get("source") or "auto"), _created_at(row),
                     ),
                 )
+            for row in data["piggy_bank_movements"]:
+                con.execute(
+                    "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,created_at) VALUES(?,?,?,?,?,?)",
+                    (user_id, row['direction'], row['amount'], row['movement_date'], row['note'], _created_at(row)),
+                )
+            for row in data["plan_history"]:
+                snapshot = row['snapshot']
+                for income in snapshot['income_rules']:
+                    income['id'] = income_ids[income['id']]
+                for bill in snapshot['bill_rules']:
+                    bill['id'] = bill_ids[bill['id']]
+                    bill['category_id'] = category_ids.get(bill.get('category_id'))
+                con.execute("INSERT INTO plan_history(user_id,effective_date,snapshot) VALUES(?,?,?)",
+                            (user_id, row['effective_date'], json.dumps(snapshot)))
     except (KeyError, TypeError, ValueError, sqlite3.Error) as exc:
         raise ValueError("Резервная копия повреждена или содержит неверные данные") from exc
 
@@ -233,3 +245,4 @@ async def send_backup_to_chat(user: TelegramUser = Depends(current_user)) -> dic
         raise HTTPException(502, "Не удалось отправить файл в чат с ботом") from exc
 
     return {"ok": True, "message_id": message.message_id, "filename": filename}
+

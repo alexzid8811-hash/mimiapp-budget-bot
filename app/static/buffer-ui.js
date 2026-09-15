@@ -21,7 +21,7 @@
   function formatMoney(value) {
     const code = document.getElementById("currency")?.value || "RUB";
     return new Intl.NumberFormat("ru-RU", {
-      style: "currency", currency: code, maximumFractionDigits: 0,
+      style: "currency", currency: code, maximumFractionDigits: 2,
     }).format(Number(value || 0));
   }
 
@@ -103,10 +103,10 @@
     }).join("");
   }
 
-  async function refresh() {
+  async function refresh(flow) {
     try {
       const [buffer, piggy] = await Promise.all([
-        request("/api/buffer"), request("/api/piggy-bank"),
+        flow ? Promise.resolve(flow) : request("/api/buffer"), request("/api/piggy-bank"),
       ]);
       bufferState = { buffer, piggy };
       renderBuffer();
@@ -123,7 +123,7 @@
     document.getElementById("savePiggyBtn").textContent =
       direction === "deposit" ? "Пополнить" : "Снять";
     document.getElementById("piggyAmount").value = "";
-    document.getElementById("piggyDate").value = new Date().toISOString().slice(0, 10);
+    document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
     document.getElementById("piggyDialog").showModal();
   }
@@ -148,8 +148,7 @@
       if (typeof toast === "function") {
         toast(direction === "deposit" ? "Копилка пополнена" : "Деньги возвращены в бюджет");
       }
-      await refresh();
-      if (typeof loadAll === "function") await loadAll();
+      await loadAll();
     } catch (error) {
       if (typeof toast === "function") toast(error.message);
     }
@@ -159,13 +158,13 @@
     if (!confirm("Удалить операцию копилки?")) return;
     try {
       await request(`/api/piggy-bank/movements/${id}`, { method: "DELETE" });
-      await refresh();
-      if (typeof loadAll === "function") await loadAll();
+      await loadAll();
     } catch (error) {
       if (typeof toast === "function") toast(error.message);
     }
   };
 
-  document.querySelector('[data-nav="buffer"]')?.addEventListener("click", refresh);
-  setTimeout(refresh, 450);
+  document.querySelector('[data-nav="buffer"]')?.addEventListener("click", () => refresh());
+  window.refreshBuffer = refresh;
 })();
+

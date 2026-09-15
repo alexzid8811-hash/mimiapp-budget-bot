@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-import os
-from datetime import date, datetime, timedelta
+import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from . import clock, planning
+from .validation import APIModel, DatedConditionsIn
+from .savings import piggy_effect
 from .auth import TelegramUser, current_user
-from .budget import current_period, dashboard_numbers, month_date, occurrences, period_sequence, reserve_needed_for_future
+from .budget import current_period, dashboard_numbers, occurrences, reserve_needed_for_future
 from .db import connect, ensure_user, init_db
 
 
@@ -30,7 +33,7 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-class IncomeRuleIn(BaseModel):
+class IncomeRuleIn(DatedConditionsIn):
     title: str = Field(min_length=1, max_length=80)
     amount: float = Field(ge=0)
     day_of_month: int = Field(ge=1, le=31)
@@ -39,7 +42,7 @@ class IncomeRuleIn(BaseModel):
     active: bool = True
 
 
-class BillRuleIn(BaseModel):
+class BillRuleIn(DatedConditionsIn):
     title: str = Field(min_length=1, max_length=80)
     amount: float = Field(ge=0)
     day_of_month: int = Field(ge=1, le=31)
@@ -47,25 +50,25 @@ class BillRuleIn(BaseModel):
     active: bool = True
 
 
-class CategoryIn(BaseModel):
+class CategoryIn(APIModel):
     title: str = Field(min_length=1, max_length=40)
     emoji: str = Field(default="💳", min_length=1, max_length=8)
 
 
-class TransactionIn(BaseModel):
+class TransactionIn(APIModel):
     type: Literal["expense", "income"]
     amount: float = Field(gt=0)
-    tx_date: date = Field(default_factory=date.today)
+    tx_date: date = Field(default_factory=clock.today)
     category_id: int | None = None
     note: str = Field(default="", max_length=200)
 
 
-class BillPaymentIn(BaseModel):
+class BillPaymentIn(APIModel):
     due_date: date
 
 
-class SettingsIn(BaseModel):
-    currency: str = Field(default="RUB", min_length=3, max_length=6)
+class SettingsIn(APIModel):
+    currency: str = Field(default="RUB", pattern=r"^[A-Za-z]{3}$")
     initial_reserve: float = Field(default=0, ge=0)
     forecast_months: int = Field(default=4, ge=1, le=12)
 
@@ -84,6 +87,13 @@ def one(sql: str, params: tuple = ()) -> dict | None:
     with connect() as con:
         r = con.execute(sql, params).fetchone()
         return dict(r) if r else None
+
+
+def require_category(con, uid: int, category_id: int | None) -> None:
+    if category_id is not None and not con.execute(
+        "SELECT 1 FROM categories WHERE id=? AND user_id=?", (category_id, uid)
+    ).fetchone():
+        raise HTTPException(422, "Категория не найдена")
 
 
 def payday_days(user_id: int) -> list[int]:
@@ -114,12 +124,7 @@ def period_recurring_income(user_id: int, start: date, end: date) -> float:
 
 
 def period_mandatory(user_id: int, start: date, end: date) -> float:
-    rules = rows("SELECT amount,day_of_month FROM bill_rules WHERE user_id=? AND active=1", (user_id,))
-    total = 0.0
-    for rule in rules:
-        for _ in occurrences([int(rule["day_of_month"])], start, end):
-            total += float(rule["amount"])
-    return round(total, 2)
+    return round(sum(planning.mandatory_map(user_id, start, end).values()), 2)
 
 
 def actual_income(user_id: int, start: date, end: date) -> float:
@@ -153,7 +158,7 @@ def reserve_balance_before(user_id: int, before_period: date) -> float:
 
 def future_reserve_target(user_id: int, current_end: date, count: int) -> tuple[float, list[dict]]:
     days = payday_days(user_id)
-    periods = period_sequence(current_end + timedelta(days=1), days, max(2, count * max(1, len(days)) + 1))
+    periods = planning.next_periods(user_id, current_end + timedelta(days=1), max(2, count * max(1, len(days)) + 1))
     nets: list[float] = []
     detail: list[dict] = []
     for p in periods:
@@ -167,7 +172,7 @@ def future_reserve_target(user_id: int, current_end: date, count: int) -> tuple[
 
 def ensure_auto_reserve(user_id: int, as_of: date) -> dict:
     days = payday_days(user_id)
-    period = current_period(as_of, days)
+    period = planning.user_period(user_id, as_of)
     existing = one(
         "SELECT * FROM reserve_movements WHERE user_id=? AND period_start=? AND source='auto'",
         (user_id, period.start.isoformat()),
@@ -180,7 +185,7 @@ def ensure_auto_reserve(user_id: int, as_of: date) -> dict:
     recurring_income = period_recurring_income(user_id, period.start, period.end)
     extra_income = actual_income(user_id, period.start, period.end)
     mandatory = period_mandatory(user_id, period.start, period.end)
-    structural_free = recurring_income + extra_income - mandatory
+    structural_free = recurring_income + extra_income - mandatory - piggy_effect(user_id, period.start, as_of)
     target, _ = future_reserve_target(user_id, period.end, int(settings["forecast_months"]))
 
     amount = 0.0
@@ -206,8 +211,8 @@ def ensure_auto_reserve(user_id: int, as_of: date) -> dict:
 
 
 def invalidate_current_auto_reserve(user_id: int) -> None:
-    today = date.today()
-    period = current_period(today, payday_days(user_id))
+    today = clock.today()
+    period = planning.user_period(user_id, today)
     with connect() as con:
         con.execute(
             "DELETE FROM reserve_movements WHERE user_id=? AND source='auto' AND period_start>=?",
@@ -219,10 +224,12 @@ def invalidate_current_auto_reserve(user_id: int) -> None:
 def bootstrap(user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
     return {
+        "budget_timezone": clock.budget_timezone(),
+        "today": clock.today().isoformat(),
         "user": {"id": user.id, "first_name": user.first_name, "username": user.username},
         "settings": one("SELECT currency,initial_reserve,forecast_months FROM settings WHERE user_id=?", (uid,)),
-        "income_rules": rows("SELECT * FROM income_rules WHERE user_id=? ORDER BY day_of_month,id", (uid,)),
-        "bill_rules": rows("SELECT * FROM bill_rules WHERE user_id=? ORDER BY day_of_month,id", (uid,)),
+        "income_rules": rows("SELECT * FROM income_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
+        "bill_rules": rows("SELECT * FROM bill_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
         "categories": rows("SELECT * FROM categories WHERE user_id=? ORDER BY id", (uid,)),
     }
 
@@ -230,8 +237,8 @@ def bootstrap(user: TelegramUser = Depends(current_user)) -> dict:
 @app.get("/api/dashboard")
 def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    today = date.today()
-    period = current_period(today, payday_days(uid))
+    today = clock.today()
+    period = planning.user_period(uid, today)
     movement = ensure_auto_reserve(uid, today)
     reserve_before = reserve_balance_before(uid, period.start)
     reserve_amount = float(movement["amount"])
@@ -244,13 +251,14 @@ def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
     spent = discretionary_spent(uid, period.start, today)
     spent_today = discretionary_spent(uid, today, today)
     remaining_days = (period.end - today).days + 1
-    numbers = dashboard_numbers(recurring + extras, mandatory, spent, reserve_in, reserve_out, remaining_days)
+    piggy = piggy_effect(uid, period.start, today)
+    numbers = dashboard_numbers(recurring + extras - piggy, mandatory, spent, reserve_in, reserve_out, remaining_days)
 
     settings = one("SELECT forecast_months FROM settings WHERE user_id=?", (uid,)) or {"forecast_months": 4}
     target, forecast = future_reserve_target(uid, period.end, int(settings["forecast_months"]))
     reserve_now = round(reserve_before + reserve_amount, 2)
 
-    deficit = max(0.0, mandatory - (recurring + extras + reserve_out))
+    deficit = max(0.0, mandatory + piggy - (recurring + extras + reserve_out))
     return {
         "today": today.isoformat(),
         "period": {"start": period.start.isoformat(), "end": period.end.isoformat(), "days_left": remaining_days},
@@ -278,8 +286,8 @@ def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) ->
     uid = user_ready(user)
     return rows(
         "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title "
-        "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id "
-        "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id "
+        "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
+        "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id AND b.user_id=t.user_id "
         "WHERE t.user_id=? ORDER BY tx_date DESC,id DESC LIMIT ?",
         (uid, min(max(limit, 1), 300)),
     )
@@ -289,6 +297,7 @@ def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) ->
 def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
     with connect() as con:
+        require_category(con, uid, payload.category_id)
         cur = con.execute(
             "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note) VALUES(?,?,?,?,?,?)",
             (uid, payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id, payload.note),
@@ -312,22 +321,14 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
 @app.get("/api/plan")
 def plan(user: TelegramUser = Depends(current_user)) -> list[dict]:
     uid = user_ready(user)
-    today = date.today()
-    period = current_period(today, payday_days(uid))
-    rules = rows(
-        "SELECT b.*, c.title AS category_title, c.emoji AS category_emoji FROM bill_rules b "
-        "LEFT JOIN categories c ON c.id=b.category_id WHERE b.user_id=? AND b.active=1 ORDER BY day_of_month",
-        (uid,),
-    )
-    events: list[dict] = []
-    for rule in rules:
-        for due in occurrences([int(rule["day_of_month"])], period.start, period.end):
-            paid = one(
-                "SELECT id FROM transactions WHERE user_id=? AND bill_rule_id=? AND bill_due_date=?",
-                (uid, rule["id"], due.isoformat()),
-            )
-            events.append({**rule, "due_date": due.isoformat(), "paid": bool(paid), "payment_id": paid["id"] if paid else None})
-    return sorted(events, key=lambda x: x["due_date"])
+    today = clock.today()
+    period = planning.user_period(uid, today)
+    categories = {row['id']: row for row in rows("SELECT * FROM categories WHERE user_id=?", (uid,))}
+    events = planning.bill_events(uid, period.start, period.end)
+    for event in events:
+        category = categories.get(event.get('category_id'), {})
+        event.update(category_title=category.get('title'), category_emoji=category.get('emoji'))
+    return events
 
 
 @app.post("/api/bills/{bill_id}/pay")
@@ -336,23 +337,28 @@ def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(
     bill = one("SELECT * FROM bill_rules WHERE id=? AND user_id=?", (bill_id, uid))
     if not bill:
         raise HTTPException(404, "Bill not found")
+    event = next((e for e in planning.bill_events(uid, payload.due_date, payload.due_date) if e['id'] == bill_id), None)
+    if event is None:
+        raise HTTPException(422, "На эту дату обязательный платёж не запланирован")
     try:
         with connect() as con:
+            require_category(con, uid, event.get("category_id"))
             cur = con.execute(
                 "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date) "
                 "VALUES(?, 'expense', ?, ?, ?, ?, ?, ?)",
-                (uid, bill["amount"], payload.due_date.isoformat(), bill["category_id"], bill["title"], bill_id, payload.due_date.isoformat()),
+                (uid, event["amount"], payload.due_date.isoformat(), event.get("category_id"), event["title"], bill_id, payload.due_date.isoformat()),
             )
             tx_id = cur.lastrowid
-    except Exception as exc:
+    except sqlite3.IntegrityError as exc:
         raise HTTPException(409, "This bill occurrence is already marked paid") from exc
+    invalidate_current_auto_reserve(uid)
     return one("SELECT * FROM transactions WHERE id=?", (tx_id,)) or {}
 
 
 @app.post("/api/income-rules")
 def add_income(payload: IncomeRuleIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    with connect() as con:
+    with planning.change_conditions(uid, payload.effective_date) as con:
         cur = con.execute(
             "INSERT INTO income_rules(user_id,title,amount,day_of_month,kind,is_payday,active) VALUES(?,?,?,?,?,?,?)",
             (uid, payload.title, payload.amount, payload.day_of_month, payload.kind, int(payload.is_payday), int(payload.active)),
@@ -365,7 +371,7 @@ def add_income(payload: IncomeRuleIn, user: TelegramUser = Depends(current_user)
 @app.put("/api/income-rules/{rule_id}")
 def edit_income(rule_id: int, payload: IncomeRuleIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    with connect() as con:
+    with planning.change_conditions(uid, payload.effective_date, table="income_rules", record_id=rule_id) as con:
         cur = con.execute(
             "UPDATE income_rules SET title=?,amount=?,day_of_month=?,kind=?,is_payday=?,active=? WHERE id=? AND user_id=?",
             (payload.title, payload.amount, payload.day_of_month, payload.kind, int(payload.is_payday), int(payload.active), rule_id, uid),
@@ -379,8 +385,8 @@ def edit_income(rule_id: int, payload: IncomeRuleIn, user: TelegramUser = Depend
 @app.delete("/api/income-rules/{rule_id}")
 def delete_income(rule_id: int, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    with connect() as con:
-        con.execute("DELETE FROM income_rules WHERE id=? AND user_id=?", (rule_id, uid))
+    with planning.change_conditions(uid) as con:
+        con.execute("UPDATE income_rules SET active=0,archived=1 WHERE id=? AND user_id=?", (rule_id, uid))
     invalidate_current_auto_reserve(uid)
     return {"ok": True}
 
@@ -388,7 +394,8 @@ def delete_income(rule_id: int, user: TelegramUser = Depends(current_user)) -> d
 @app.post("/api/bill-rules")
 def add_bill(payload: BillRuleIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    with connect() as con:
+    with planning.change_conditions(uid, payload.effective_date) as con:
+        require_category(con, uid, payload.category_id)
         cur = con.execute(
             "INSERT INTO bill_rules(user_id,title,amount,day_of_month,category_id,active) VALUES(?,?,?,?,?,?)",
             (uid, payload.title, payload.amount, payload.day_of_month, payload.category_id, int(payload.active)),
@@ -401,7 +408,8 @@ def add_bill(payload: BillRuleIn, user: TelegramUser = Depends(current_user)) ->
 @app.put("/api/bill-rules/{rule_id}")
 def edit_bill(rule_id: int, payload: BillRuleIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    with connect() as con:
+    with planning.change_conditions(uid, payload.effective_date, table="bill_rules", record_id=rule_id) as con:
+        require_category(con, uid, payload.category_id)
         cur = con.execute(
             "UPDATE bill_rules SET title=?,amount=?,day_of_month=?,category_id=?,active=? WHERE id=? AND user_id=?",
             (payload.title, payload.amount, payload.day_of_month, payload.category_id, int(payload.active), rule_id, uid),
@@ -415,8 +423,8 @@ def edit_bill(rule_id: int, payload: BillRuleIn, user: TelegramUser = Depends(cu
 @app.delete("/api/bill-rules/{rule_id}")
 def delete_bill(rule_id: int, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    with connect() as con:
-        con.execute("DELETE FROM bill_rules WHERE id=? AND user_id=?", (rule_id, uid))
+    with planning.change_conditions(uid) as con:
+        con.execute("UPDATE bill_rules SET active=0,archived=1 WHERE id=? AND user_id=?", (rule_id, uid))
     invalidate_current_auto_reserve(uid)
     return {"ok": True}
 

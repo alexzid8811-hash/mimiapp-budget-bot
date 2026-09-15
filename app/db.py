@@ -124,6 +124,14 @@ CREATE TABLE IF NOT EXISTS piggy_bank_movements (
 
 CREATE INDEX IF NOT EXISTS ix_piggy_bank_user_date
 ON piggy_bank_movements(user_id, movement_date DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS plan_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    effective_date TEXT NOT NULL,
+    snapshot TEXT NOT NULL,
+    UNIQUE(user_id, effective_date)
+);
 """
 
 
@@ -161,6 +169,10 @@ def init_db() -> None:
     with connect() as con:
         con.executescript(SCHEMA)
         _ensure_settings_columns(con)
+        for table in ('income_rules', 'bill_rules'):
+            columns = {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
+            if 'archived' not in columns:
+                con.execute(f'ALTER TABLE {table} ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
 
 
 def ensure_user(user_id: int, first_name: str = "", username: str | None = None) -> None:

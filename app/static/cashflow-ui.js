@@ -49,7 +49,7 @@
   }
 
   function todayISO() {
-    return new Date().toISOString().slice(0, 10);
+    return window.budgetDate.today();
   }
 
   function injectSettingsUI() {
@@ -136,24 +136,12 @@
     }
   }
 
-  async function refreshCashflow() {
+  window.applyCashflow = applyCashflow;
+  window.applyCashflowSettings = settings => {
     injectSettingsUI();
-    try {
-      const [settings, flow] = await Promise.all([
-        request("/api/cashflow-settings"),
-        request("/api/cashflow"),
-      ]);
-
-      const enabled = document.getElementById("cashflowEnabled");
-      const startDate = document.getElementById("cashflowStartDate");
-      if (enabled) enabled.checked = Boolean(settings.cashflow_enabled);
-      if (startDate && document.activeElement !== startDate) startDate.value = settings.start_date || todayISO();
-
-      applyCashflow(flow);
-    } catch (err) {
-      console.warn("Cashflow refresh failed", err);
-    }
-  }
+    document.getElementById("cashflowEnabled").checked = Boolean(settings.cashflow_enabled);
+    document.getElementById("cashflowStartDate").value = settings.start_date || todayISO();
+  };
 
   async function saveCashflowSettings() {
     try {
@@ -167,34 +155,11 @@
         }),
       });
       if (typeof toast === "function") toast("Стартовый капитал и буфер сохранены");
-      if (typeof loadAll === "function") await loadAll();
-      else await refreshCashflow();
+      await loadAll();
     } catch (err) {
       if (typeof toast === "function") toast(err.message);
     }
   }
 
-  let wrapped = false;
-  function wrapLoadAllWhenReady() {
-    if (wrapped || typeof loadAll !== "function") return false;
-    const originalLoadAll = loadAll;
-    loadAll = async function (...args) {
-      const result = await originalLoadAll(...args);
-      await refreshCashflow();
-      return result;
-    };
-    wrapped = true;
-    return true;
-  }
-
   injectSettingsUI();
-  if (!wrapLoadAllWhenReady()) {
-    const timer = setInterval(() => {
-      if (wrapLoadAllWhenReady()) clearInterval(timer);
-    }, 100);
-    setTimeout(() => clearInterval(timer), 5000);
-  }
-
-  setTimeout(refreshCashflow, 350);
-  setTimeout(refreshCashflow, 1200);
 })();

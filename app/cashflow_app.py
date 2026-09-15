@@ -4,9 +4,12 @@ from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from . import payroll_app as base
+from . import clock, planning
+from .validation import APIModel
+from .savings import check_piggy_history, piggy_effect
 from .auth import TelegramUser, current_user
 from .budget import add_months
 from .cashflow import calculate_cashflow_plan
@@ -16,15 +19,15 @@ app = base.app
 legacy = base.legacy
 
 
-class CashflowSettingsIn(BaseModel):
+class CashflowSettingsIn(APIModel):
     cashflow_enabled: bool = False
     start_date: date
     start_capital: float = Field(default=0, ge=0)
 
 
-class PiggyBankMovementIn(BaseModel):
+class PiggyBankMovementIn(APIModel):
     amount: float = Field(gt=0)
-    movement_date: date = Field(default_factory=date.today)
+    movement_date: date = Field(default_factory=clock.today)
     note: str = Field(default="", max_length=160)
 
 
@@ -36,7 +39,7 @@ def cashflow_settings(user_id: int) -> dict:
     ) or {}
     return {
         "cashflow_enabled": int(data.get("cashflow_enabled") or 0),
-        "start_date": data.get("cashflow_start_date") or date.today().isoformat(),
+        "start_date": data.get("cashflow_start_date") or clock.today().isoformat(),
         "start_capital": float(data.get("initial_reserve") or 0),
         "forecast_months": int(data.get("forecast_months") or 4),
     }
@@ -47,58 +50,12 @@ def _add(target: dict[date, float], day: date, amount: float) -> None:
 
 
 def planned_income_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    result: dict[date, float] = {}
-    cfg = base.payroll_settings(user_id)
-    vacations = base.vacation_rows(user_id)
-
-    if int(cfg["payroll_enabled"]):
-        for event in base.payroll_events_between(start, end, base.payroll_config(user_id), vacations):
-            _add(result, event["date"], event["amount"])
-        rules = legacy.rows(
-            "SELECT amount,day_of_month FROM income_rules WHERE user_id=? AND active=1 AND kind='other'",
-            (user_id,),
-        )
-        for rule in rules:
-            for day in legacy.occurrences([int(rule["day_of_month"])], start, end):
-                _add(result, day, rule["amount"])
-    else:
-        rules = legacy.rows(
-            "SELECT amount,day_of_month,kind,is_payday FROM income_rules WHERE user_id=? AND active=1",
-            (user_id,),
-        )
-        for rule in rules:
-            shifted = bool(rule["is_payday"]) or rule["kind"] in {"salary", "advance"}
-            for day in legacy.occurrences(
-                [int(rule["day_of_month"])],
-                start,
-                end,
-                move_to_previous_workday=shifted,
-            ):
-                _add(result, day, rule["amount"])
-        for vacation in vacations:
-            payment_date = date.fromisoformat(vacation["payment_date"])
-            if start <= payment_date <= end:
-                _add(result, payment_date, vacation["amount"])
-
-    manual = legacy.rows(
-        "SELECT tx_date,amount FROM transactions WHERE user_id=? AND type='income' AND tx_date BETWEEN ? AND ?",
-        (user_id, start.isoformat(), end.isoformat()),
-    )
-    for row in manual:
-        _add(result, date.fromisoformat(row["tx_date"]), row["amount"])
-    return result
+    return planning.income_map(user_id, start, end)
 
 
 def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    result: dict[date, float] = {}
-    rules = legacy.rows(
-        "SELECT amount,day_of_month FROM bill_rules WHERE user_id=? AND active=1",
-        (user_id,),
-    )
-    for rule in rules:
-        for day in legacy.occurrences([int(rule["day_of_month"])], start, end):
-            _add(result, day, rule["amount"])
-    return result
+    return planning.mandatory_map(user_id, start, end)
+
 
 
 def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
@@ -115,13 +72,7 @@ def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
 
 
 def piggy_bank_effect(user_id: int, start: date, end: date) -> float:
-    """Cash moved out of the spending budget into the separate piggy bank."""
-    row = legacy.one(
-        "SELECT COALESCE(SUM(CASE WHEN direction='deposit' THEN amount ELSE -amount END),0) AS amount "
-        "FROM piggy_bank_movements WHERE user_id=? AND movement_date BETWEEN ? AND ?",
-        (user_id, start.isoformat(), end.isoformat()),
-    )
-    return round(float(row["amount"] if row else 0), 2)
+    return piggy_effect(user_id, start, end)
 
 
 def piggy_bank_snapshot(user_id: int, limit: int = 80) -> dict:
@@ -134,31 +85,7 @@ def piggy_bank_snapshot(user_id: int, limit: int = 80) -> dict:
 
 
 def payday_boundaries(user_id: int, start: date, end: date) -> list[dict]:
-    """Return salary-period starts with human-readable payment labels."""
-    cfg = base.payroll_settings(user_id)
-    boundaries: dict[date, str] = {}
-    if int(cfg["payroll_enabled"]):
-        events = base.payroll_events_between(start, end, base.payroll_config(user_id), base.vacation_rows(user_id))
-        for event in events:
-            if event["kind"] in {"advance", "salary"}:
-                boundaries[event["date"]] = "аванс" if event["kind"] == "advance" else "зарплата"
-    else:
-        rules = legacy.rows(
-            "SELECT title,day_of_month,kind FROM income_rules "
-            "WHERE user_id=? AND active=1 AND (is_payday=1 OR kind IN ('salary','advance'))",
-            (user_id,),
-        )
-        for rule in rules:
-            for payment_date in legacy.occurrences(
-                [int(rule["day_of_month"])], start, end, move_to_previous_workday=True
-            ):
-                boundaries[payment_date] = str(rule["title"])
-    if not boundaries:
-        for payment_date in legacy.occurrences(
-            legacy.payday_days(user_id), start, end, move_to_previous_workday=True
-        ):
-            boundaries[payment_date] = "выплата"
-    return [{"date": day, "kind": boundaries[day]} for day in sorted(boundaries)]
+    return planning.payday_boundaries(user_id, start, end)
 
 
 def cashflow_period_rows(
@@ -168,6 +95,7 @@ def cashflow_period_rows(
     horizon_end: date,
     opening_balance_before_today_spend: float,
     daily_target: float,
+    spent_today: float = 0,
 ) -> list[dict]:
     boundaries = payday_boundaries(user_id, today + timedelta(days=1), horizon_end)
     starts = [{"date": today, "kind": "сейчас"}, *boundaries]
@@ -196,7 +124,7 @@ def cashflow_period_rows(
             sum(amount for day, amount in mandatory.items() if period_start <= day <= period_end), 2
         )
         free = round(received - bills, 2)
-        planned_spending = round(daily_target * days, 2)
+        planned_spending = round(daily_target * days + (max(0, spent_today - daily_target) if index == 0 else 0), 2)
         raw_after = round(buffer_before + free - planned_spending, 2)
         buffer_after = round(max(0.0, raw_after), 2)
         put_aside = round(max(0.0, buffer_after - buffer_before), 2)
@@ -217,13 +145,13 @@ def cashflow_period_rows(
                 "shortfall": round(max(0.0, -raw_after), 2),
             }
         )
-        buffer_before = buffer_after
+        buffer_before = raw_after
     return result
 
 
 def cashflow_snapshot(user_id: int) -> dict:
     settings = cashflow_settings(user_id)
-    today = date.today()
+    today = clock.today()
     if not settings["cashflow_enabled"]:
         return {"enabled": False, "settings": settings}
 
@@ -257,7 +185,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         mandatory_by_date=mandatory_future,
     )
 
-    period = legacy.current_period(today, legacy.payday_days(user_id))
+    period = planning.user_period(user_id, today)
     spent_period = legacy.discretionary_spent(user_id, max(period.start, start_date), today)
     days_left = max(1, (period.end - today).days + 1)
     remaining_period = round(plan.available_today + plan.daily_target * max(0, days_left - 1), 2)
@@ -281,6 +209,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         horizon_end=horizon_end,
         opening_balance_before_today_spend=opening_before_today_spend,
         daily_target=plan.daily_target,
+        spent_today=spent_today,
     )
 
     return {
@@ -315,7 +244,7 @@ def get_cashflow_settings(user: TelegramUser = Depends(current_user)) -> dict:
 @app.put("/api/cashflow-settings")
 def save_cashflow_settings(payload: CashflowSettingsIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
-    if payload.start_date > date.today():
+    if payload.start_date > clock.today():
         raise HTTPException(422, "Дата старта не может быть в будущем")
     with legacy.connect() as con:
         con.execute(
@@ -360,15 +289,19 @@ def get_piggy_bank(user: TelegramUser = Depends(current_user)) -> dict:
 def add_piggy_bank_movement(
     user_id: int, direction: Literal["deposit", "withdraw"], payload: PiggyBankMovementIn
 ) -> dict:
-    if payload.movement_date > date.today():
+    if payload.movement_date > clock.today():
         raise HTTPException(422, "Дата операции не может быть в будущем")
-    if direction == "withdraw" and payload.amount > piggy_bank_balance(user_id) + 0.005:
-        raise HTTPException(422, "В копилке недостаточно денег")
     with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
         movement_id = con.execute(
             "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note) VALUES(?,?,?,?,?)",
             (user_id, direction, payload.amount, payload.movement_date.isoformat(), payload.note),
         ).lastrowid
+        try:
+            check_piggy_history(con, user_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    legacy.invalidate_current_auto_reserve(user_id)
     return legacy.one(
         "SELECT id,direction,amount,movement_date,note,created_at "
         "FROM piggy_bank_movements WHERE id=? AND user_id=?",
@@ -399,17 +332,16 @@ def delete_piggy_bank_movement(
     movement_id: int, user: TelegramUser = Depends(current_user)
 ) -> dict:
     uid = legacy.user_ready(user)
-    movement = legacy.one(
-        "SELECT * FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid)
-    )
-    if not movement:
-        raise HTTPException(404, "Операция копилки не найдена")
-    if movement["direction"] == "deposit":
-        balance_without = piggy_bank_balance(uid) - float(movement["amount"])
-        if balance_without < -0.005:
-            raise HTTPException(422, "Нельзя удалить операцию: баланс станет отрицательным")
     with legacy.connect() as con:
-        con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
+        con.execute("BEGIN IMMEDIATE")
+        deleted = con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
+        if deleted.rowcount == 0:
+            raise HTTPException(404, "Операция копилки не найдена")
+        try:
+            check_piggy_history(con, uid)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    legacy.invalidate_current_auto_reserve(uid)
     return {"ok": True, **piggy_bank_snapshot(uid)}
 
 

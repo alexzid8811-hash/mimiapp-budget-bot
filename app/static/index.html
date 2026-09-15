@@ -123,6 +123,8 @@
             </div>
             <label>Дата зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label>
             <p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. При отпуске из расчёта исключаются только рабочие дни отпуска. На дату зарплаты приходит остаток оплаты за отработанные дни + чистая премия. Премия автоматически не уменьшается.</p>
+            <label>Применять условия с даты<input id="payrollEffectiveDate" type="date" required /></label>
+            <p class="muted">По умолчанию — с сегодняшнего дня. Прошедшие дни сохраняются. Выберите более раннюю дату только для исправления истории.</p>
             <div id="payrollPreview" class="payroll-preview"></div>
             <button class="primary" id="savePayrollBtn" type="button">Сохранить расчёт зарплаты</button>
           </div>
@@ -230,10 +232,13 @@
       <label>Сумма<input id="ruleAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>День месяца<input id="ruleDay" type="number" min="1" max="31" required /></label>
       <div id="incomeRuleFields">
-        <label>Тип<select id="ruleKind"><option value="other">Другой доход</option></select></label>
-        <input id="ruleIsPayday" type="checkbox" hidden />
+        <label>Тип<select id="ruleKind"><option value="other">Другой доход</option><option value="salary">Зарплата</option><option value="advance">Аванс</option></select></label>
+        <label class="checkbox"><input id="ruleIsPayday" type="checkbox" /> Начинает бюджетный период</label>
       </div>
       <label id="billCategoryWrap">Категория<select id="ruleBillCategory"></select></label>
+      <label class="checkbox"><input id="ruleActive" type="checkbox" checked /> Активно</label>
+      <label>Применять условия с даты<input id="ruleEffectiveDate" type="date" required /></label>
+      <p class="muted">Прошедшие дни сохраняются. Более ранняя дата пересчитает историю с выбранного дня.</p>
       <button class="primary big" value="default" id="saveRuleBtn">Сохранить</button>
     </form>
   </dialog>
@@ -250,10 +255,12 @@
   </dialog>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/money-input.js"></script>
-  <script src="/static/app.js?v=20260915-desktop-auth"></script>
-  <script src="/static/cashflow-ui.js?v=20260915-cashflow-auth"></script>
-  <script src="/static/buffer-ui.js?v=20260915-buffer-piggy"></script>
-  <script src="/static/backup.js?v=20260915-backup3"></script>
+  <script src="/static/budget-date.js?v=20260915-audit"></script>
+  <script src="/static/money-input.js?v=20260915-audit"></script>
+  <script src="/static/app.js?v=20260915-audit"></script>
+  <script src="/static/cashflow-ui.js?v=20260915-audit"></script>
+  <script src="/static/buffer-ui.js?v=20260915-audit"></script>
+  <script src="/static/backup.js?v=20260915-audit"></script>
 </body>
 </html>
+

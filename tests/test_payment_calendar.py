@@ -104,7 +104,7 @@ def test_snapshot_uses_every_day_until_shifted_next_payment(uid, monkeypatch, pa
         def today(cls):
             return cls(2026, 2, 20)
 
-    monkeypatch.setattr(flow, "date", FixedDate)
+    monkeypatch.setattr("app.clock.today", FixedDate.today)
     with connect() as con:
         con.execute(
             "UPDATE settings SET cashflow_enabled=1,cashflow_start_date='2026-02-20',"

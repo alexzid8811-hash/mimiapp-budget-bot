@@ -40,24 +40,28 @@ async function api(path, options = {}) {
 
 function currency() { return state.bootstrap?.settings?.currency || "RUB"; }
 function money(v) {
-  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), maximumFractionDigits: 0 }).format(Number(v || 0));
+  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), maximumFractionDigits: 2 }).format(Number(v || 0));
 }
 function fmtDate(s) { return new Intl.DateTimeFormat("ru-RU", { day:"numeric", month:"short" }).format(new Date(`${s}T12:00:00`)); }
 function fmtMonth(year, month) { return new Intl.DateTimeFormat("ru-RU", { month:"long", year:"numeric" }).format(new Date(year, month - 1, 1)); }
-function todayISO() { return new Date().toISOString().slice(0,10); }
-function shiftISODate(iso, days) {
-  const d = new Date(`${iso}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+function todayISO() { return window.budgetDate.today(); }
+function shiftISODate(iso, days) { return window.budgetDate.shift(iso, days); }
+
+let loadVersion = 0;
 
 async function loadAll() {
+  const version = ++loadVersion;
   try {
-    const [bootstrap, payroll, vacations, dashboard, transactions, plan] = await Promise.all([
-      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan")
+    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow] = await Promise.all([
+      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow")
     ]);
-    state = { bootstrap, payroll, vacations, dashboard, transactions, plan };
+    if (version !== loadVersion) return;
+    window.budgetDate.configure(bootstrap.budget_timezone);
+    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow };
     render();
+    window.applyCashflowSettings?.(cashflowSettings);
+    window.applyCashflow?.(cashflow);
+    await window.refreshBuffer?.(cashflow);
   } catch (e) { toast(e.message); }
 }
 
@@ -99,14 +103,14 @@ function renderTransactions() {
   el.innerHTML = state.transactions.map(t => {
     const isExpense = t.type === "expense";
     const title = t.bill_title || t.note || t.category_title || (isExpense ? "Расход" : "Доход");
-    return `<div class="list-row"><div class="row-main"><div class="emoji">${t.category_emoji || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions"><button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
+    return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions"><button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
   }).join("");
 }
 
 function renderPlan() {
   const el = $("planList");
   if (!state.plan.length) { el.innerHTML = `<div class="empty">В этом периоде обязательных платежей нет.</div>`; return; }
-  el.innerHTML = state.plan.map(p => `<div class="list-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${p.category_emoji || '📌'}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · уже учтено в бюджете</div></div></div><div><div class="amount expense">${money(p.amount)}</div>${p.paid ? '<div class="row-sub">оплачено</div>' : `<button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button>`}</div></div>`).join("");
+  el.innerHTML = state.plan.map(p => `<div class="list-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · уже учтено в бюджете</div></div></div><div><div class="amount expense">${money(p.amount)}</div>${p.paid ? '<div class="row-sub">оплачено</div>' : `<button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button>`}</div></div>`).join("");
 }
 
 function renderSettings() {
@@ -122,6 +126,7 @@ function renderSettings() {
   $("bonusGross").value = payroll.bonus_gross ?? 0;
   $("taxRate").value = payroll.tax_rate ?? 13;
   $("salaryDay").value = payroll.salary_day ?? 7;
+  $("payrollEffectiveDate").value = todayISO();
   $("advanceDay").value = payroll.advance_day ?? 22;
 
   const preview = state.payroll?.preview;
@@ -149,12 +154,12 @@ function renderSettings() {
   const incomeRules = Boolean(payroll.payroll_enabled) ? b.income_rules.filter(r => r.kind === 'other') : b.income_rules;
   $("incomeRulesList").innerHTML = incomeRules.length ? incomeRules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">${r.active ? 'активно' : 'выключено'}</div></div><div><div class="amount income">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editIncomeRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteIncomeRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Дополнительных регулярных доходов пока нет.</div>`;
   $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">ежемесячно</div></div><div><div class="amount expense">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
-  $("categoriesList").innerHTML = b.categories.map(c => `<span class="chip">${c.emoji} ${escapeHtml(c.title)}</span>`).join("");
+  $("categoriesList").innerHTML = b.categories.map(c => `<span class="chip">${escapeHtml(c.emoji)} ${escapeHtml(c.title)}</span>`).join("");
 }
 
 function fillCategorySelects() {
   const cats = state.bootstrap?.categories || [];
-  const options = cats.map(c => `<option value="${c.id}">${c.emoji} ${escapeHtml(c.title)}</option>`).join("");
+  const options = cats.map(c => `<option value="${c.id}">${escapeHtml(c.emoji)} ${escapeHtml(c.title)}</option>`).join("");
   $("expenseCategory").innerHTML = options;
   $("ruleBillCategory").innerHTML = `<option value="">Без категории</option>${options}`;
 }
@@ -168,7 +173,7 @@ function switchPage(page) {
 }
 
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.nav)));
-$("refreshBtn").addEventListener("click", loadAll);
+$("refreshBtn").addEventListener("click", () => loadAll());
 $("quickExpenseBtn").addEventListener("click", () => { $("expenseDate").value = todayISO(); $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50); });
 $("addIncomeTxBtn").addEventListener("click", () => { $("incomeTxDate").value = todayISO(); $("incomeTxDialog").showModal(); });
 
@@ -239,7 +244,9 @@ function openRule(mode, rule = null) {
   $("incomeRuleFields").style.display = income ? "block" : "none";
   $("billCategoryWrap").style.display = income ? "none" : "flex";
   $("ruleTitle").value = rule?.title || ""; $("ruleAmount").value = rule?.amount ?? ""; $("ruleDay").value = rule?.day_of_month ?? "";
-  $("ruleKind").value = "other"; $("ruleIsPayday").checked = false;
+  $("ruleKind").value = rule?.kind || "other"; $("ruleIsPayday").checked = Boolean(rule?.is_payday);
+  $("ruleActive").checked = rule?.active !== 0 && rule?.active !== false;
+  $("ruleEffectiveDate").value = todayISO();
   $("ruleBillCategory").value = rule?.category_id || "";
   $("ruleDialog").showModal();
 }
@@ -254,8 +261,8 @@ $("ruleForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const mode = $("ruleMode").value, id = $("ruleId").value;
   let body;
-  if (mode === "income") body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), kind:"other", is_payday:false, active:true };
-  else body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), category_id:$("ruleBillCategory").value ? Number($("ruleBillCategory").value) : null, active:true };
+  if (mode === "income") body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), kind:$("ruleKind").value, is_payday:$("ruleIsPayday").checked, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
+  else body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), category_id:$("ruleBillCategory").value ? Number($("ruleBillCategory").value) : null, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
   const base = mode === "income" ? "/api/income-rules" : "/api/bill-rules";
   try { await api(id ? `${base}/${id}` : base, {method:id?"PUT":"POST", body:JSON.stringify(body)}); $("ruleDialog").close(); toast("Сохранено"); await loadAll(); } catch(err){ toast(err.message); }
 });
@@ -270,6 +277,7 @@ function generalSettingsPayload() {
 
 function payrollSettingsPayload() {
   return {
+    effective_date: $("payrollEffectiveDate").value,
     payroll_enabled: $("payrollEnabled").checked,
     salary_gross: Number($("salaryGross").value || 0),
     bonus_gross: Number($("bonusGross").value || 0),
@@ -301,4 +309,4 @@ $("addCategoryBtn").addEventListener("click", async () => {
   try { await api("/api/categories", {method:"POST", body:JSON.stringify({title,emoji})}); await loadAll(); } catch(e){ toast(e.message); }
 });
 
-loadAll();
+window.addEventListener("DOMContentLoaded", () => loadAll(), { once: true });

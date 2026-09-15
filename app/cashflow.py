@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from .money import amount, cents
+
 
 @dataclass(frozen=True)
 class CashflowPlan:
@@ -38,55 +40,62 @@ def calculate_cashflow_plan(
     returned ``daily_target`` represent the full safe amount for today, while
     ``available_today`` is the remaining part after today's real spending.
     """
-    opening = float(opening_balance_before_today_spend)
-    spent_today = max(0.0, float(spent_today))
+    if horizon_end < today:
+        raise ValueError("Horizon ends before today")
+    opening = cents(opening_balance_before_today_spend)
+    spent = max(0, cents(spent_today))
 
     resources = opening
-    minimum_without_daily_spend = opening
-    daily_target: float | None = None
-    fixed_rows: list[tuple[date, float, float]] = []
+    minimum_without_daily_spend = opening - spent
+    daily_target: int | None = None
+    fixed_rows: list[tuple[date, int, int]] = []
 
     for index, day in enumerate(daterange(today, horizon_end), start=1):
         # Today's fixed flows are already included in the opening balance.
-        income = 0.0 if day == today else float(income_by_date.get(day, 0.0))
-        mandatory = 0.0 if day == today else float(mandatory_by_date.get(day, 0.0))
+        income = 0 if day == today else cents(income_by_date.get(day, 0))
+        mandatory = 0 if day == today else cents(mandatory_by_date.get(day, 0))
         resources += income - mandatory
-        minimum_without_daily_spend = min(minimum_without_daily_spend, resources)
-        candidate = resources / index
+        minimum_without_daily_spend = min(minimum_without_daily_spend, resources - spent)
+        # max(already_spent, daily) + (index - 1) * daily <= resources.
+        # Both bounds are needed after an overspend; integer division never
+        # promises a fraction of a kopeck that the account cannot cover.
+        candidate = resources // index
+        if index > 1:
+            candidate = min(candidate, (resources - spent) // (index - 1))
         daily_target = candidate if daily_target is None else min(daily_target, candidate)
         fixed_rows.append((day, income, mandatory))
 
-    safe_daily = round(max(0.0, daily_target or 0.0), 2)
-    available_today = round(max(0.0, safe_daily - spent_today), 2)
-    capital_shortfall = round(max(0.0, -minimum_without_daily_spend), 2)
+    safe_daily = max(0, daily_target or 0)
+    available_today = max(0, safe_daily - spent)
+    capital_shortfall = max(0, -minimum_without_daily_spend)
 
     # Simulate the plan. The money left after today's safe spending is the
     # virtual buffer reserved for future days and obligatory payments.
     balance = opening
-    minimum_balance = opening
+    minimum_balance = opening - spent
     timeline: list[dict] = []
     for day, income, mandatory in fixed_rows:
         if day != today:
             balance += income - mandatory
-        balance -= safe_daily
+        balance -= max(spent, safe_daily) if day == today else safe_daily
         minimum_balance = min(minimum_balance, balance)
         if income or mandatory:
             timeline.append(
                 {
                     "date": day.isoformat(),
-                    "income": round(income, 2),
-                    "mandatory": round(mandatory, 2),
-                    "buffer_after_day": round(max(0.0, balance), 2),
+                    "income": amount(income),
+                    "mandatory": amount(mandatory),
+                    "buffer_after_day": amount(max(0, balance)),
                 }
             )
 
-    buffer_balance = round(max(0.0, opening - safe_daily), 2)
+    buffer_balance = max(0, opening - max(spent, safe_daily))
     return CashflowPlan(
-        daily_target=safe_daily,
-        available_today=available_today,
-        buffer_balance=buffer_balance,
-        capital_shortfall=capital_shortfall,
-        projected_end_balance=round(balance, 2),
-        minimum_projected_balance=round(minimum_balance, 2),
+        daily_target=amount(safe_daily),
+        available_today=amount(available_today),
+        buffer_balance=amount(buffer_balance),
+        capital_shortfall=amount(capital_shortfall),
+        projected_end_balance=amount(balance),
+        minimum_projected_balance=amount(minimum_balance),
         timeline=timeline,
     )

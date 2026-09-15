@@ -25,7 +25,9 @@
       throw new Error("Выбранный файл не является резервной копией JSON");
     }
 
-    if (!confirm("Восстановление заменит все текущие данные бюджета содержимым резервной копии. Продолжить?")) return;
+    const missingPiggy = payload.backup_version === 1 && !Array.isArray(payload.data?.piggy_bank_movements);
+    const warning = missingPiggy ? " В старой копии нет данных копилки: её текущая история и баланс будут очищены." : "";
+    if (!confirm(`Восстановление заменит все текущие данные бюджета содержимым резервной копии.${warning} Продолжить?`)) return;
     importButton.disabled = true;
     try {
       await api("/api/backup/restore", { method: "POST", body: JSON.stringify(payload) });
@@ -49,3 +51,4 @@
     }
   });
 })();
+
