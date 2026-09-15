@@ -39,6 +39,24 @@ def test_january_salary_can_move_into_previous_month():
     assert date(2025, 12, 30) in dates
 
 
+def test_2027_new_year_holidays_move_january_salary_to_december(monkeypatch):
+    # The embedded calendar must win even if an external service incorrectly
+    # says every weekday in an upcoming year is working.
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda year: "0" * 365)
+    assert payday_on_or_before(date(2027, 1, 7)) == date(2026, 12, 30)
+    period = current_period(date(2027, 1, 7), [7, 22])
+    assert period.start == date(2026, 12, 30)
+    assert period.end == date(2027, 1, 21)
+
+
+def test_2027_february_weekend_moves_salary_before_weekend(monkeypatch):
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda year: "0" * 365)
+    assert payday_on_or_before(date(2027, 2, 7)) == date(2027, 2, 5)
+    period = current_period(date(2027, 2, 1), [7, 22])
+    assert period.start == date(2027, 1, 22)
+    assert period.end == date(2027, 2, 4)
+
+
 def test_reserve_for_future_deficit():
     assert reserve_needed_for_future([5000, -12000, 2000]) == 7000
     assert reserve_needed_for_future([5000, 1000, -2000]) == 0

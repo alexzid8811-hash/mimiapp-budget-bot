@@ -80,3 +80,14 @@ def test_second_half_vacation_keeps_advance_and_reduces_final_salary():
     assert calc["advance"] == 45789.47
     assert calc["salary_net_for_worked_days"] == 64105.26
     assert calc["final_salary"] == 18315.79
+
+
+def test_january_2027_advance_excludes_long_new_year_holidays(monkeypatch):
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda year: "0" * 365)
+    calc = payroll_for_accrual_month(
+        2027, 1, PayrollConfig(salary_gross=100000, bonus_gross=0, tax_rate=13)
+    )
+    assert calc["workdays_total"] == 15
+    assert calc["workdays_first_half"] == 5
+    assert calc["advance"] == 29000
+    assert calc["advance_date"] == "2027-01-22"
