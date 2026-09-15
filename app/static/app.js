@@ -3,9 +3,26 @@ if (tg) { tg.ready(); tg.expand(); }
 
 let state = { bootstrap: null, payroll: null, vacations: [], dashboard: null, transactions: [], plan: [] };
 const $ = (id) => document.getElementById(id);
-const initData = tg?.initData || "";
-const headers = { "Content-Type": "application/json" };
-if (initData) headers["X-Telegram-Init-Data"] = initData;
+
+function getTelegramInitData() {
+  const sdkInitData = window.Telegram?.WebApp?.initData;
+  if (sdkInitData) return sdkInitData;
+
+  // Telegram Desktop can expose Web App data in the URL before the SDK
+  // finishes copying it to Telegram.WebApp.initData.
+  for (const source of [window.location.hash.slice(1), window.location.search.slice(1)]) {
+    const urlInitData = new URLSearchParams(source).get("tgWebAppData");
+    if (urlInitData) return urlInitData;
+  }
+  return "";
+}
+
+function requestHeaders(extraHeaders = {}) {
+  const requestHeaders = { "Content-Type": "application/json", ...extraHeaders };
+  const initData = getTelegramInitData();
+  if (initData) requestHeaders["X-Telegram-Init-Data"] = initData;
+  return requestHeaders;
+}
 
 function toast(message) {
   const el = $("toast"); el.textContent = message; el.classList.add("show");
@@ -13,7 +30,7 @@ function toast(message) {
 }
 
 async function api(path, options = {}) {
-  const res = await fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
+  const res = await fetch(path, { ...options, headers: requestHeaders(options.headers) });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Ошибка ${res.status}`);
