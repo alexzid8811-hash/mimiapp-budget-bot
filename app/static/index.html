@@ -89,10 +89,16 @@
               <label>Дата аванса<input id="advanceDay" type="number" min="1" max="31" /></label>
             </div>
             <label>Дата зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label>
-            <p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. На дату зарплаты приходит остаток чистого оклада + чистая премия. Даты переносятся назад по производственному календарю РФ.</p>
+            <p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. При отпуске из расчёта исключаются только рабочие дни отпуска. На дату зарплаты приходит остаток оплаты за отработанные дни + чистая премия. Премия автоматически не уменьшается.</p>
             <div id="payrollPreview" class="payroll-preview"></div>
             <button class="primary" id="savePayrollBtn" type="button">Сохранить расчёт зарплаты</button>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="section-head"><div><div class="eyebrow">Разовые выплаты</div><h3>Отпускные</h3></div><button class="secondary" id="addVacationBtn">＋</button></div>
+          <p class="muted">Сумму отпускных вводите вручную. Она учитывается как отдельный доход. Зарплата и аванс уменьшаются только за рабочие дни отпуска — сумма отпускных сама по себе из них не вычитается и долг не переносится.</p>
+          <div id="vacationsList" class="list"></div>
         </div>
 
         <div class="card">
@@ -152,6 +158,22 @@
       <label>Дата<input id="incomeTxDate" type="date" required /></label>
       <label>Комментарий<input id="incomeTxNote" maxlength="200" placeholder="Премия, возврат..." /></label>
       <button class="primary big" value="default" id="saveIncomeTxBtn">Записать доход</button>
+    </form>
+  </dialog>
+
+  <dialog id="vacationDialog">
+    <form method="dialog" id="vacationForm" class="dialog-card">
+      <div class="section-head"><h2 id="vacationDialogTitle">Отпуск</h2><button class="icon-btn" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <input id="vacationId" type="hidden" />
+      <div class="grid2">
+        <label>Начало<input id="vacationStart" type="date" required /></label>
+        <label>Окончание<input id="vacationEnd" type="date" required /></label>
+      </div>
+      <label>Отпускные к получению<input id="vacationAmount" type="number" min="0.01" step="0.01" inputmode="decimal" required placeholder="0" /></label>
+      <label>Дата выплаты отпускных<input id="vacationPaymentDate" type="date" required /></label>
+      <label>Комментарий<input id="vacationNote" maxlength="120" placeholder="Необязательно" /></label>
+      <p class="muted">Для нового отпуска дата выплаты по умолчанию ставится за 3 календарных дня до начала. Её можно изменить на фактическую.</p>
+      <button class="primary big" value="default">Сохранить отпуск</button>
     </form>
   </dialog>
 
