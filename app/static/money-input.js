@@ -47,14 +47,14 @@
     input.value = String(parseMoney(input.value));
   }
 
-  function formatField(input, fixed = false) {
+  function formatField(input) {
     if (!input || !input.matches(selector) || document.activeElement === input) return;
     if (input.value === '') return;
-    input.value = fixed ? formatMoney(input.value) : formatMoney(input.value);
+    input.value = formatMoney(input.value);
   }
 
   function formatAll() {
-    document.querySelectorAll(selector).forEach((input) => formatField(input, true));
+    document.querySelectorAll(selector).forEach(formatField);
   }
 
   document.addEventListener('input', (event) => {
@@ -71,10 +71,8 @@
     input.value = formatMoney(input.value);
   }, true);
 
-  // Existing app.js reads values with Number(...). Convert formatted Russian
-  // strings to a machine number immediately before its handlers run.
   document.addEventListener('click', (event) => {
-    const button = event.target.closest?.('#savePayrollBtn, #saveSettingsBtn');
+    const button = event.target.closest?.('#savePayrollBtn, #saveSettingsBtn, #saveCashflowBtn');
     if (!button) return;
     document.querySelectorAll(selector).forEach(normalizeForApi);
     setTimeout(formatAll, 0);
@@ -85,8 +83,6 @@
     setTimeout(formatAll, 0);
   }, true);
 
-  // API data is rendered asynchronously by app.js, so periodically format
-  // fields that are not being edited. This also covers reopening dialogs.
   setInterval(formatAll, 300);
   formatAll();
 
