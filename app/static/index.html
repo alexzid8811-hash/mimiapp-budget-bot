@@ -21,22 +21,29 @@
     <main>
       <section class="page active" data-page="home">
         <div class="hero card">
-          <div class="eyebrow">Можно потратить сегодня</div>
-          <div class="hero-value" id="dailyAvailable">—</div>
+          <div class="eyebrow">Бюджет на текущий период</div>
+          <div class="hero-value" id="periodBudget">—</div>
           <div class="muted" id="periodCaption">—</div>
           <div class="progress"><span id="dayProgress"></span></div>
-          <div class="split small-gap">
+
+          <div class="grid2">
+            <div class="card compact">
+              <span class="muted">Осталось на период</span>
+              <strong id="remaining">—</strong>
+            </div>
+            <div class="card compact">
+              <span class="muted">Можно сегодня</span>
+              <strong id="dailyAvailable">—</strong>
+            </div>
+          </div>
+
+          <div class="split small-gap" style="margin-top:14px">
             <div><span class="muted">Сегодня потрачено</span><strong id="spentToday">—</strong></div>
-            <div class="right"><span class="muted">Осталось периода</span><strong id="remaining">—</strong></div>
+            <div class="right"><span class="muted">Обязательные платежи</span><strong id="mandatory">—</strong></div>
           </div>
         </div>
 
         <button class="primary big" id="quickExpenseBtn">＋ Добавить расход</button>
-
-        <div class="grid2">
-          <div class="card compact"><span class="muted">Бюджет периода</span><strong id="periodBudget">—</strong></div>
-          <div class="card compact"><span class="muted">Обязательные</span><strong id="mandatory">—</strong></div>
-        </div>
 
         <div class="card">
           <div class="section-head"><div><div class="eyebrow">Копилка безопасности</div><h2 id="reserveBalance">—</h2></div><span class="pill" id="reserveTarget">цель —</span></div>
