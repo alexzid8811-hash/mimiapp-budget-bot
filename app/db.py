@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS settings (
     tax_rate REAL NOT NULL DEFAULT 13,
     salary_day INTEGER NOT NULL DEFAULT 7,
     advance_day INTEGER NOT NULL DEFAULT 22,
+    cashflow_enabled INTEGER NOT NULL DEFAULT 0,
+    cashflow_start_date TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -134,6 +136,8 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
         "tax_rate": "REAL NOT NULL DEFAULT 13",
         "salary_day": "INTEGER NOT NULL DEFAULT 7",
         "advance_day": "INTEGER NOT NULL DEFAULT 22",
+        "cashflow_enabled": "INTEGER NOT NULL DEFAULT 0",
+        "cashflow_start_date": "TEXT",
     }
     for name, ddl in additions.items():
         if name not in columns:
