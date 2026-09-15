@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import io
+import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from telegram import Bot, InputFile
+from telegram.error import TelegramError
 
 from .auth import TelegramUser, current_user
 from .db import connect, ensure_user
@@ -38,7 +43,6 @@ TABLE_COLUMNS = {
     ),
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
-    "piggy_bank_movements": ("id", "direction", "amount", "movement_date", "note", "created_at"),
 }
 
 
@@ -75,9 +79,6 @@ def _validated_data(payload: dict) -> dict:
     data = payload.get("data")
     if not isinstance(data, dict) or not isinstance(data.get("settings"), dict):
         raise ValueError("В резервной копии нет настроек")
-    # Backups made before the separate piggy bank was introduced have no such
-    # section. Treat it as an empty history so old backups remain restorable.
-    data.setdefault("piggy_bank_movements", [])
     for table in TABLE_COLUMNS:
         if not isinstance(data.get(table), list):
             raise ValueError(f"Повреждён раздел {table}")
@@ -95,7 +96,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
 
     try:
         with connect() as con:
-            for table in ("transactions", "reserve_movements", "piggy_bank_movements", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("transactions", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             values = {
@@ -173,16 +174,6 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                         str(row.get("source") or "auto"), _created_at(row),
                     ),
                 )
-
-            for row in data["piggy_bank_movements"]:
-                con.execute(
-                    "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,created_at) "
-                    "VALUES(?,?,?,?,?,?)",
-                    (
-                        user_id, str(row["direction"]), float(row["amount"]), str(row["movement_date"]),
-                        str(row.get("note") or ""), _created_at(row),
-                    ),
-                )
     except (KeyError, TypeError, ValueError, sqlite3.Error) as exc:
         raise ValueError("Резервная копия повреждена или содержит неверные данные") from exc
 
@@ -214,3 +205,31 @@ def upload_backup(payload: dict, user: TelegramUser = Depends(current_user)) -> 
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"ok": True, "restored": counts}
+
+
+@router.post("/send")
+async def send_backup_to_chat(user: TelegramUser = Depends(current_user)) -> dict:
+    ensure_user(user.id, user.first_name, user.username)
+    token = os.getenv("BOT_TOKEN", "")
+    if not token:
+        raise HTTPException(503, "BOT_TOKEN не настроен на сервере")
+
+    try:
+        payload = export_user_data(user.id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    filename = f"budget-backup-{datetime.now(timezone.utc).date().isoformat()}.json"
+    content = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    document = InputFile(io.BytesIO(content), filename=filename)
+    try:
+        async with Bot(token=token) as bot:
+            message = await bot.send_document(
+                chat_id=user.id,
+                document=document,
+                caption="Резервная копия бюджета. Сохраните этот файл — из него можно полностью восстановить данные.",
+            )
+    except TelegramError as exc:
+        raise HTTPException(502, "Не удалось отправить файл в чат с ботом") from exc
+
+    return {"ok": True, "message_id": message.message_id, "filename": filename}
