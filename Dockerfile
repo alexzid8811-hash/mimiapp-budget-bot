@@ -6,4 +6,4 @@ COPY . .
 RUN mkdir -p /app/data
 ENV DATABASE_PATH=/app/data/budget.sqlite3
 EXPOSE 8000
-CMD ["uvicorn", "app.payroll_app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.cashflow_app:app", "--host", "0.0.0.0", "--port", "8000"]
