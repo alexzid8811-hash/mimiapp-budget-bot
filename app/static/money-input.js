@@ -87,4 +87,13 @@
   formatAll();
 
   window.ruMoneyInput = { parseMoney, formatMoney, formatEditing };
+
+  // Load the cash-flow UI as an additive layer so existing Mini App markup
+  // stays backward-compatible on already deployed installations.
+  if (!document.querySelector('script[data-cashflow-ui]')) {
+    const script = document.createElement('script');
+    script.src = '/static/cashflow-ui.js';
+    script.dataset.cashflowUi = '1';
+    document.head.appendChild(script);
+  }
 })();
