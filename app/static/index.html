@@ -72,7 +72,31 @@
         <div class="section-head"><div><div class="eyebrow">Параметры</div><h2>Настройки</h2></div></div>
 
         <div class="card">
-          <div class="section-head"><h3>Доходы</h3><button class="secondary" id="addIncomeRuleBtn">＋</button></div>
+          <div class="section-head">
+            <div><div class="eyebrow">Автоматический расчёт</div><h3>Зарплата</h3></div>
+            <span class="pill">7 / 22</span>
+          </div>
+          <label class="checkbox"><input id="payrollEnabled" type="checkbox" /> Рассчитывать зарплату и аванс автоматически</label>
+          <div id="payrollFields">
+            <label>Оклад до НДФЛ
+              <input id="salaryGross" inputmode="decimal" type="number" min="0" step="100" placeholder="Например, 100000" />
+            </label>
+            <label>Премия до НДФЛ
+              <input id="bonusGross" inputmode="decimal" type="number" min="0" step="100" placeholder="Например, 20000" />
+            </label>
+            <div class="grid2">
+              <label>НДФЛ, %<input id="taxRate" type="number" min="0" max="100" step="0.1" /></label>
+              <label>Дата аванса<input id="advanceDay" type="number" min="1" max="31" /></label>
+            </div>
+            <label>Дата зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label>
+            <p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. На дату зарплаты приходит остаток чистого оклада + чистая премия. Даты переносятся назад по производственному календарю РФ.</p>
+            <div id="payrollPreview" class="payroll-preview"></div>
+            <button class="primary" id="savePayrollBtn" type="button">Сохранить расчёт зарплаты</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-head"><h3>Другие регулярные доходы</h3><button class="secondary" id="addIncomeRuleBtn">＋</button></div>
           <div id="incomeRulesList" class="list"></div>
         </div>
 
@@ -140,8 +164,8 @@
       <label>Сумма<input id="ruleAmount" type="number" min="0" step="0.01" required /></label>
       <label>День месяца<input id="ruleDay" type="number" min="1" max="31" required /></label>
       <div id="incomeRuleFields">
-        <label>Тип<select id="ruleKind"><option value="salary">Зарплата</option><option value="advance">Аванс</option><option value="other">Другой доход</option></select></label>
-        <label class="checkbox"><input id="ruleIsPayday" type="checkbox" /> Считать границей бюджетного периода</label>
+        <label>Тип<select id="ruleKind"><option value="other">Другой доход</option></select></label>
+        <input id="ruleIsPayday" type="checkbox" hidden />
       </div>
       <label id="billCategoryWrap">Категория<select id="ruleBillCategory"></select></label>
       <button class="primary big" value="default" id="saveRuleBtn">Сохранить</button>
