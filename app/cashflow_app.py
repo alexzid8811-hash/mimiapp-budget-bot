@@ -193,3 +193,8 @@ def save_cashflow_settings(payload: CashflowSettingsIn, user: TelegramUser = Dep
 def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
     return cashflow_snapshot(uid)
+
+
+from .backup import router as backup_router
+
+app.include_router(backup_router)
