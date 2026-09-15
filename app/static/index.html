@@ -46,7 +46,7 @@
         <button class="primary big" id="quickExpenseBtn">＋ Добавить расход</button>
 
         <div class="card">
-          <div class="section-head"><div><div class="eyebrow">Копилка безопасности</div><h2 id="reserveBalance">—</h2></div><span class="pill" id="reserveTarget">цель —</span></div>
+          <div class="section-head"><div><div class="eyebrow">Буфер безопасности</div><h2 id="reserveBalance">—</h2></div><span class="pill" id="reserveTarget">цель —</span></div>
           <p class="muted" id="reserveReason">Прогноз рассчитывается по будущим выплатам и обязательным платежам.</p>
           <div id="deficitWarning" class="warning hidden"></div>
         </div>
@@ -66,6 +66,39 @@
         <div class="section-head"><div><div class="eyebrow">Текущий период</div><h2>Обязательные платежи</h2></div></div>
         <p class="muted">Эти суммы уже зарезервированы и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными.</p>
         <div id="planList" class="list cards-list"></div>
+      </section>
+
+      <section class="page" data-page="buffer">
+        <div class="section-head"><div><div class="eyebrow">Периоды от выплаты до выплаты</div><h2>Буфер</h2></div><span class="pill" id="bufferHorizon">—</span></div>
+        <p class="muted buffer-intro">Буфер рассчитывается автоматически и показывает, сколько нужно оставить сейчас, чтобы будущие обязательные платежи не увели бюджет в минус.</p>
+
+        <div id="bufferDisabled" class="warning hidden">Включите безопасный дневной лимит в настройках и укажите стартовый капитал.</div>
+        <div class="grid2 buffer-summary">
+          <div class="card compact"><span class="muted">В буфере</span><strong id="bufferPageBalance">—</strong></div>
+          <div class="card compact"><span class="muted">Можно сегодня</span><strong id="bufferPageDaily">—</strong></div>
+        </div>
+        <div id="bufferShortfall" class="warning hidden"></div>
+
+        <div class="card buffer-table-card">
+          <div class="section-head"><h3>План по периодам</h3><span class="muted">автоматически</span></div>
+          <div class="buffer-table-wrap">
+            <table class="buffer-table">
+              <thead><tr><th>Дата</th><th>Вид</th><th>Получено</th><th>Дней</th><th>Обязательные</th><th>Свободно</th><th>В день</th><th>Отложить</th><th>Взять</th><th>Буфер</th></tr></thead>
+              <tbody id="bufferPeriods"><tr><td colspan="10"><div class="empty">Загрузка…</div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card piggy-card">
+          <div class="section-head"><div><div class="eyebrow">На чёрный день</div><h3>Копилка</h3></div><strong class="piggy-balance" id="piggyBalance">—</strong></div>
+          <p class="muted">Копилка отделена от автоматического буфера. Пополнение исключает деньги из доступного бюджета, а снятие возвращает их обратно.</p>
+          <div class="piggy-actions">
+            <button class="primary" id="piggyDepositBtn" type="button">＋ Пополнить</button>
+            <button class="secondary" id="piggyWithdrawBtn" type="button">Снять</button>
+          </div>
+          <div class="section-head piggy-history-head"><h3>История</h3></div>
+          <div id="piggyMovements" class="list"></div>
+        </div>
       </section>
 
       <section class="page" data-page="settings">
@@ -112,8 +145,8 @@
         </div>
 
         <div class="card">
-          <h3>Копилка и прогноз</h3>
-          <label>Уже есть в копилке
+          <h3>Стартовый капитал и прогноз</h3>
+          <label>Стартовый капитал на начало дня
             <input id="initialReserve" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="0,00" />
           </label>
           <label>Горизонт прогноза, месяцев
@@ -146,6 +179,7 @@
       <button class="nav-item active" data-nav="home"><span>⌂</span><small>Главная</small></button>
       <button class="nav-item" data-nav="operations"><span>≡</span><small>Операции</small></button>
       <button class="nav-item" data-nav="plan"><span>✓</span><small>План</small></button>
+      <button class="nav-item" data-nav="buffer"><span>◈</span><small>Буфер</small></button>
       <button class="nav-item" data-nav="settings"><span>⚙</span><small>Настройки</small></button>
     </nav>
   </div>
@@ -204,10 +238,22 @@
     </form>
   </dialog>
 
+  <dialog id="piggyDialog">
+    <form method="dialog" id="piggyForm" class="dialog-card">
+      <div class="section-head"><h2 id="piggyDialogTitle">Копилка</h2><button class="icon-btn" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <input id="piggyDirection" type="hidden" value="deposit" />
+      <label>Сумма<input id="piggyAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label>Дата<input id="piggyDate" type="date" required /></label>
+      <label>Комментарий<input id="piggyNote" maxlength="160" placeholder="Необязательно" /></label>
+      <button class="primary big" value="default" id="savePiggyBtn">Сохранить</button>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast"></div>
   <script src="/static/money-input.js"></script>
   <script src="/static/app.js?v=20260915-desktop-auth"></script>
   <script src="/static/cashflow-ui.js?v=20260915-cashflow-auth"></script>
+  <script src="/static/buffer-ui.js?v=20260915-buffer-piggy"></script>
   <script src="/static/backup.js?v=20260915-backup"></script>
 </body>
 </html>

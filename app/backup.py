@@ -38,6 +38,7 @@ TABLE_COLUMNS = {
     ),
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
+    "piggy_bank_movements": ("id", "direction", "amount", "movement_date", "note", "created_at"),
 }
 
 
@@ -74,6 +75,9 @@ def _validated_data(payload: dict) -> dict:
     data = payload.get("data")
     if not isinstance(data, dict) or not isinstance(data.get("settings"), dict):
         raise ValueError("В резервной копии нет настроек")
+    # Backups made before the separate piggy bank was introduced have no such
+    # section. Treat it as an empty history so old backups remain restorable.
+    data.setdefault("piggy_bank_movements", [])
     for table in TABLE_COLUMNS:
         if not isinstance(data.get(table), list):
             raise ValueError(f"Повреждён раздел {table}")
@@ -91,7 +95,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
 
     try:
         with connect() as con:
-            for table in ("transactions", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("transactions", "reserve_movements", "piggy_bank_movements", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             values = {
@@ -167,6 +171,16 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     (
                         user_id, str(row["period_start"]), float(row["amount"]), str(row.get("reason") or ""),
                         str(row.get("source") or "auto"), _created_at(row),
+                    ),
+                )
+
+            for row in data["piggy_bank_movements"]:
+                con.execute(
+                    "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,created_at) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (
+                        user_id, str(row["direction"]), float(row["amount"]), str(row["movement_date"]),
+                        str(row.get("note") or ""), _created_at(row),
                     ),
                 )
     except (KeyError, TypeError, ValueError, sqlite3.Error) as exc:

@@ -21,6 +21,10 @@ def test_backup_round_trip_remaps_relations(tmp_path, monkeypatch):
             (category_id, bill_id),
         )
         con.execute("UPDATE settings SET salary_gross=123456,payroll_enabled=1 WHERE user_id=1")
+        con.execute(
+            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note) "
+            "VALUES(1,'deposit',5000,'2026-09-12','На чёрный день')"
+        )
 
     backup = export_user_data(1)
     with connect() as con:
@@ -40,6 +44,11 @@ def test_backup_round_trip_remaps_relations(tmp_path, monkeypatch):
         settings = con.execute("SELECT salary_gross,payroll_enabled FROM settings WHERE user_id=1").fetchone()
     assert tuple(tx) == ("Оплата", "Резервная категория", "Аренда")
     assert tuple(settings) == (123456.0, 1)
+    with connect() as con:
+        piggy = con.execute(
+            "SELECT direction,amount,note FROM piggy_bank_movements WHERE user_id=1"
+        ).fetchone()
+    assert tuple(piggy) == ("deposit", 5000.0, "На чёрный день")
 
 
 def test_invalid_backup_does_not_delete_existing_data(tmp_path, monkeypatch):

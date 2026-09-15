@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS reserve_movements (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_auto_reserve_period
 ON reserve_movements(user_id, period_start, source)
 WHERE source = 'auto';
+
+CREATE TABLE IF NOT EXISTS piggy_bank_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK(direction IN ('deposit','withdraw')),
+    amount REAL NOT NULL CHECK(amount > 0),
+    movement_date TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_piggy_bank_user_date
+ON piggy_bank_movements(user_id, movement_date DESC, id DESC);
 """
 
 

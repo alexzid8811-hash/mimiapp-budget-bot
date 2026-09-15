@@ -1,4 +1,6 @@
 (() => {
+  if (window.__cashflowUiLoaded) return;
+  window.__cashflowUiLoaded = true;
   function currentTelegramInitData() {
     if (typeof window.getTelegramInitData === "function") {
       const sharedInitData = window.getTelegramInitData();
