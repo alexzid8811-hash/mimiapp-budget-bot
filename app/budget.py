@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Iterable
 
+from .russian_calendar import payday_on_or_before
+
 
 @dataclass(frozen=True)
 class Period:
@@ -22,15 +24,31 @@ def add_months(d: date, months: int) -> date:
     return date(year, month0 + 1, min(d.day, calendar.monthrange(year, month0 + 1)[1]))
 
 
-def occurrences(days: Iterable[int], start: date, end: date) -> list[date]:
+def occurrences(
+    days: Iterable[int],
+    start: date,
+    end: date,
+    *,
+    move_to_previous_workday: bool = False,
+) -> list[date]:
+    """Return monthly occurrences inside [start, end].
+
+    Salary/advance occurrences can be moved to the latest preceding working
+    day according to the Russian five-day production calendar. One extra month
+    is scanned because (for example) 7 January may move into late December.
+    """
     result: set[date] = set()
     cursor = date(start.year, start.month, 1)
     last_month = date(end.year, end.month, 1)
+    if move_to_previous_workday:
+        last_month = add_months(last_month, 1).replace(day=1)
+
     while cursor <= last_month:
         for day in days:
-            d = month_date(cursor.year, cursor.month, int(day))
-            if start <= d <= end:
-                result.add(d)
+            nominal = month_date(cursor.year, cursor.month, int(day))
+            actual = payday_on_or_before(nominal) if move_to_previous_workday else nominal
+            if start <= actual <= end:
+                result.add(actual)
         cursor = add_months(cursor, 1).replace(day=1)
     return sorted(result)
 
@@ -40,7 +58,7 @@ def current_period(as_of: date, payday_days: list[int]) -> Period:
         payday_days = [1]
     search_start = add_months(as_of.replace(day=1), -2)
     search_end = add_months(as_of.replace(day=1), 2) + timedelta(days=40)
-    dates = occurrences(payday_days, search_start, search_end)
+    dates = occurrences(payday_days, search_start, search_end, move_to_previous_workday=True)
     previous = [d for d in dates if d <= as_of]
     future = [d for d in dates if d > as_of]
     if not previous or not future:
@@ -53,7 +71,7 @@ def current_period(as_of: date, payday_days: list[int]) -> Period:
 def period_sequence(after: date, payday_days: list[int], count: int) -> list[Period]:
     search_start = after - timedelta(days=1)
     search_end = add_months(after, max(3, count + 2)) + timedelta(days=40)
-    dates = occurrences(payday_days, search_start, search_end)
+    dates = occurrences(payday_days, search_start, search_end, move_to_previous_workday=True)
     dates = [d for d in dates if d >= after]
     result: list[Period] = []
     for i in range(min(count, max(0, len(dates) - 1))):
