@@ -1,10 +1,29 @@
 (() => {
-  const tgApp = window.Telegram?.WebApp;
-  const requestHeaders = { "Content-Type": "application/json" };
-  if (tgApp?.initData) requestHeaders["X-Telegram-Init-Data"] = tgApp.initData;
+  function currentTelegramInitData() {
+    if (typeof window.getTelegramInitData === "function") {
+      const sharedInitData = window.getTelegramInitData();
+      if (sharedInitData) return sharedInitData;
+    }
+
+    const sdkInitData = window.Telegram?.WebApp?.initData;
+    if (sdkInitData) return sdkInitData;
+
+    for (const source of [window.location.hash.slice(1), window.location.search.slice(1)]) {
+      const urlInitData = new URLSearchParams(source).get("tgWebAppData");
+      if (urlInitData) return urlInitData;
+    }
+    return "";
+  }
+
+  function currentRequestHeaders(extraHeaders = {}) {
+    const headers = { "Content-Type": "application/json", ...extraHeaders };
+    const initData = currentTelegramInitData();
+    if (initData) headers["X-Telegram-Init-Data"] = initData;
+    return headers;
+  }
 
   async function request(path, options = {}) {
-    const res = await fetch(path, { ...options, headers: { ...requestHeaders, ...(options.headers || {}) } });
+    const res = await fetch(path, { ...options, headers: currentRequestHeaders(options.headers) });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.detail || `Ошибка ${res.status}`);
