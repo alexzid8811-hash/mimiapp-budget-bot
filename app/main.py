@@ -88,7 +88,8 @@ def one(sql: str, params: tuple = ()) -> dict | None:
 
 def payday_days(user_id: int) -> list[int]:
     data = rows(
-        "SELECT day_of_month FROM income_rules WHERE user_id=? AND active=1 AND is_payday=1 ORDER BY day_of_month",
+        "SELECT DISTINCT day_of_month FROM income_rules WHERE user_id=? AND active=1 "
+        "AND (is_payday=1 OR kind IN ('salary','advance')) ORDER BY day_of_month",
         (user_id,),
     )
     days = [int(r["day_of_month"]) for r in data]
@@ -96,10 +97,18 @@ def payday_days(user_id: int) -> list[int]:
 
 
 def period_recurring_income(user_id: int, start: date, end: date) -> float:
-    rules = rows("SELECT amount,day_of_month FROM income_rules WHERE user_id=? AND active=1", (user_id,))
+    rules = rows(
+        "SELECT amount,day_of_month,kind,is_payday FROM income_rules WHERE user_id=? AND active=1",
+        (user_id,),
+    )
     total = 0.0
     for rule in rules:
-        for _ in occurrences([int(rule["day_of_month"])], start, end):
+        # Match the actual payment dates used by cashflow and period boundaries,
+        # including a January payment moved into the preceding December.
+        shifted = bool(rule["is_payday"]) or rule["kind"] in {"salary", "advance"}
+        for _ in occurrences(
+            [int(rule["day_of_month"])], start, end, move_to_previous_workday=shifted
+        ):
             total += float(rule["amount"])
     return round(total, 2)
 
