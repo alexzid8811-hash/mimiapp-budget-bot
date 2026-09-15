@@ -1,7 +1,7 @@
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 
-let state = { bootstrap: null, payroll: null, dashboard: null, transactions: [], plan: [] };
+let state = { bootstrap: null, payroll: null, vacations: [], dashboard: null, transactions: [], plan: [] };
 const $ = (id) => document.getElementById(id);
 const initData = tg?.initData || "";
 const headers = { "Content-Type": "application/json" };
@@ -28,13 +28,18 @@ function money(v) {
 function fmtDate(s) { return new Intl.DateTimeFormat("ru-RU", { day:"numeric", month:"short" }).format(new Date(`${s}T12:00:00`)); }
 function fmtMonth(year, month) { return new Intl.DateTimeFormat("ru-RU", { month:"long", year:"numeric" }).format(new Date(year, month - 1, 1)); }
 function todayISO() { return new Date().toISOString().slice(0,10); }
+function shiftISODate(iso, days) {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 async function loadAll() {
   try {
-    const [bootstrap, payroll, dashboard, transactions, plan] = await Promise.all([
-      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan")
+    const [bootstrap, payroll, vacations, dashboard, transactions, plan] = await Promise.all([
+      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan")
     ]);
-    state = { bootstrap, payroll, dashboard, transactions, plan };
+    state = { bootstrap, payroll, vacations, dashboard, transactions, plan };
     render();
   } catch (e) { toast(e.message); }
 }
@@ -107,15 +112,22 @@ function renderSettings() {
   if (preview) {
     const advShift = preview.advance_date !== preview.advance_nominal_date ? ` · перенос с ${fmtDate(preview.advance_nominal_date)}` : '';
     const salShift = preview.salary_date !== preview.salary_nominal_date ? ` · перенос с ${fmtDate(preview.salary_nominal_date)}` : '';
+    const vacationLine = preview.vacation_workdays > 0
+      ? `<div class="preview-line"><span>Рабочих дней отпуска</span><strong>${preview.vacation_workdays}</strong></div>` : '';
     previewEl.innerHTML = `
       <div class="preview-title">Расчёт за ${fmtMonth(preview.accrual_year, preview.accrual_month)}</div>
-      <div class="preview-line"><span>Рабочие дни 1–15</span><strong>${preview.workdays_first_half} из ${preview.workdays_total}</strong></div>
+      <div class="preview-line"><span>Отработано 1–15</span><strong>${preview.worked_days_first_half} из ${preview.workdays_first_half}</strong></div>
+      ${vacationLine}
+      <div class="preview-line"><span>Оклад за отработанные дни</span><strong>${money(preview.salary_net_for_worked_days)}</strong></div>
       <div class="preview-line"><span>Аванс · ${fmtDate(preview.advance_date)}${advShift}</span><strong>${money(preview.advance)}</strong></div>
       <div class="preview-line"><span>Зарплата + премия · ${fmtDate(preview.salary_date)}${salShift}</span><strong>${money(preview.final_salary)}</strong></div>
-      <div class="row-sub">Оклад после НДФЛ ${money(preview.salary_net)} · премия после НДФЛ ${money(preview.bonus_net)}</div>`;
+      <div class="row-sub">Полный чистый оклад ${money(preview.salary_net)} · премия после НДФЛ ${money(preview.bonus_net)}. Отпускные учитываются отдельно.</div>`;
   } else {
     previewEl.innerHTML = `<div class="empty">Включите автоматический расчёт и сохраните оклад, чтобы увидеть сумму аванса и зарплаты.</div>`;
   }
+
+  $("vacationsList").innerHTML = state.vacations.length ? state.vacations.map(v => `
+    <div class="list-row"><div class="row-text"><div class="row-title">Отпуск ${fmtDate(v.start_date)} — ${fmtDate(v.end_date)}</div><div class="row-sub">Выплата ${fmtDate(v.payment_date)}${v.note ? ` · ${escapeHtml(v.note)}` : ''}</div></div><div><div class="amount income">${money(v.amount)}</div><div class="actions"><button class="tiny" onclick="editVacation(${v.id})">Изм.</button><button class="tiny danger" onclick="deleteVacation(${v.id})">×</button></div></div></div>`).join("") : `<div class="empty">Отпуска пока не добавлены.</div>`;
 
   const incomeRules = Boolean(payroll.payroll_enabled) ? b.income_rules.filter(r => r.kind === 'other') : b.income_rules;
   $("incomeRulesList").innerHTML = incomeRules.length ? incomeRules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">${r.active ? 'активно' : 'выключено'}</div></div><div><div class="amount income">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editIncomeRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteIncomeRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Дополнительных регулярных доходов пока нет.</div>`;
@@ -161,6 +173,47 @@ $("incomeTxForm").addEventListener("submit", async (e) => {
 
 window.deleteTx = async (id) => { if (!confirm("Удалить операцию?")) return; await api(`/api/transactions/${id}`, {method:"DELETE"}); await loadAll(); };
 window.payBill = async (id, due) => { try { await api(`/api/bills/${id}/pay`, {method:"POST", body:JSON.stringify({due_date:due})}); toast("Отмечено оплачено"); await loadAll(); } catch(e){ toast(e.message); } };
+
+function openVacation(vacation = null) {
+  const start = vacation?.start_date || todayISO();
+  $("vacationId").value = vacation?.id || "";
+  $("vacationDialogTitle").textContent = vacation ? "Изменить отпуск" : "Новый отпуск";
+  $("vacationStart").value = start;
+  $("vacationEnd").value = vacation?.end_date || start;
+  $("vacationAmount").value = vacation?.amount ?? "";
+  $("vacationPaymentDate").value = vacation?.payment_date || shiftISODate(start, -3);
+  $("vacationNote").value = vacation?.note || "";
+  $("vacationDialog").showModal();
+}
+
+$("addVacationBtn").addEventListener("click", () => openVacation());
+$("vacationStart").addEventListener("change", () => {
+  if (!$("vacationId").value) $("vacationPaymentDate").value = shiftISODate($("vacationStart").value, -3);
+  if (!$("vacationEnd").value || $("vacationEnd").value < $("vacationStart").value) $("vacationEnd").value = $("vacationStart").value;
+});
+window.editVacation = id => openVacation(state.vacations.find(x => x.id === id));
+window.deleteVacation = async id => {
+  if (!confirm("Удалить отпуск?")) return;
+  try { await api(`/api/vacations/${id}`, {method:"DELETE"}); toast("Отпуск удалён"); await loadAll(); } catch(e) { toast(e.message); }
+};
+
+$("vacationForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = $("vacationId").value;
+  const body = {
+    start_date: $("vacationStart").value,
+    end_date: $("vacationEnd").value,
+    amount: Number($("vacationAmount").value),
+    payment_date: $("vacationPaymentDate").value,
+    note: $("vacationNote").value,
+  };
+  try {
+    await api(id ? `/api/vacations/${id}` : "/api/vacations", {method:id?"PUT":"POST", body:JSON.stringify(body)});
+    $("vacationDialog").close();
+    toast("Отпуск сохранён");
+    await loadAll();
+  } catch(err) { toast(err.message); }
+});
 
 function openRule(mode, rule = null) {
   $("ruleMode").value = mode; $("ruleId").value = rule?.id || "";
