@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
-from fastapi import Depends
-from pydantic import BaseModel, Field
+from fastapi import Depends, HTTPException
+from pydantic import BaseModel, Field, model_validator
 
 from . import main as legacy
 from .auth import TelegramUser, current_user
@@ -22,6 +22,20 @@ class PayrollSettingsIn(BaseModel):
     tax_rate: float = Field(default=13, ge=0, le=100)
     salary_day: int = Field(default=7, ge=1, le=31)
     advance_day: int = Field(default=22, ge=1, le=31)
+
+
+class VacationIn(BaseModel):
+    start_date: date
+    end_date: date
+    amount: float = Field(gt=0)
+    payment_date: date | None = None
+    note: str = Field(default="", max_length=120)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> "VacationIn":
+        if self.end_date < self.start_date:
+            raise ValueError("Дата окончания отпуска должна быть не раньше даты начала")
+        return self
 
 
 def payroll_settings(user_id: int) -> dict:
@@ -50,6 +64,14 @@ def payroll_config(user_id: int) -> PayrollConfig:
     )
 
 
+def vacation_rows(user_id: int) -> list[dict]:
+    return legacy.rows(
+        "SELECT id,start_date,end_date,amount,payment_date,note,created_at "
+        "FROM vacations WHERE user_id=? ORDER BY start_date DESC,id DESC",
+        (user_id,),
+    )
+
+
 def payroll_payday_days(user_id: int) -> list[int]:
     cfg = payroll_settings(user_id)
     if int(cfg["payroll_enabled"]):
@@ -59,18 +81,28 @@ def payroll_payday_days(user_id: int) -> list[int]:
 
 def payroll_period_recurring_income(user_id: int, start: date, end: date) -> float:
     cfg = payroll_settings(user_id)
-    if not int(cfg["payroll_enabled"]):
-        return _legacy_period_recurring_income(user_id, start, end)
+    vacations = vacation_rows(user_id)
 
-    total = sum(float(event["amount"]) for event in payroll_events_between(start, end, payroll_config(user_id)))
-    rules = legacy.rows(
-        "SELECT amount,day_of_month FROM income_rules "
-        "WHERE user_id=? AND active=1 AND kind='other'",
-        (user_id,),
-    )
-    for rule in rules:
-        for _ in legacy.occurrences([int(rule["day_of_month"])], start, end):
-            total += float(rule["amount"])
+    if int(cfg["payroll_enabled"]):
+        total = sum(
+            float(event["amount"])
+            for event in payroll_events_between(start, end, payroll_config(user_id), vacations)
+        )
+        rules = legacy.rows(
+            "SELECT amount,day_of_month FROM income_rules "
+            "WHERE user_id=? AND active=1 AND kind='other'",
+            (user_id,),
+        )
+        for rule in rules:
+            for _ in legacy.occurrences([int(rule["day_of_month"])], start, end):
+                total += float(rule["amount"])
+        return round(total, 2)
+
+    total = _legacy_period_recurring_income(user_id, start, end)
+    for vacation in vacations:
+        payment_date = date.fromisoformat(vacation["payment_date"])
+        if start <= payment_date <= end:
+            total += float(vacation["amount"])
     return round(total, 2)
 
 
@@ -88,7 +120,7 @@ def get_payroll_settings(user: TelegramUser = Depends(current_user)) -> dict:
     preview = None
     if int(settings["payroll_enabled"]):
         today = date.today()
-        preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid))
+        preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid), vacation_rows(uid))
     return {"settings": settings, "preview": preview}
 
 
@@ -114,5 +146,66 @@ def save_payroll_settings(payload: PayrollSettingsIn, user: TelegramUser = Depen
     preview = None
     if int(settings["payroll_enabled"]):
         today = date.today()
-        preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid))
+        preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid), vacation_rows(uid))
     return {"settings": settings, "preview": preview}
+
+
+@app.get("/api/vacations")
+def get_vacations(user: TelegramUser = Depends(current_user)) -> list[dict]:
+    uid = legacy.user_ready(user)
+    return vacation_rows(uid)
+
+
+@app.post("/api/vacations")
+def create_vacation(payload: VacationIn, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = legacy.user_ready(user)
+    payment_date = payload.payment_date or (payload.start_date - timedelta(days=3))
+    with legacy.connect() as con:
+        cur = con.execute(
+            "INSERT INTO vacations(user_id,start_date,end_date,amount,payment_date,note) VALUES(?,?,?,?,?,?)",
+            (
+                uid,
+                payload.start_date.isoformat(),
+                payload.end_date.isoformat(),
+                payload.amount,
+                payment_date.isoformat(),
+                payload.note,
+            ),
+        )
+        vacation_id = cur.lastrowid
+    legacy.invalidate_current_auto_reserve(uid)
+    return legacy.one("SELECT * FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid)) or {}
+
+
+@app.put("/api/vacations/{vacation_id}")
+def update_vacation(vacation_id: int, payload: VacationIn, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = legacy.user_ready(user)
+    payment_date = payload.payment_date or (payload.start_date - timedelta(days=3))
+    with legacy.connect() as con:
+        cur = con.execute(
+            "UPDATE vacations SET start_date=?,end_date=?,amount=?,payment_date=?,note=? WHERE id=? AND user_id=?",
+            (
+                payload.start_date.isoformat(),
+                payload.end_date.isoformat(),
+                payload.amount,
+                payment_date.isoformat(),
+                payload.note,
+                vacation_id,
+                uid,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Отпуск не найден")
+    legacy.invalidate_current_auto_reserve(uid)
+    return legacy.one("SELECT * FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid)) or {}
+
+
+@app.delete("/api/vacations/{vacation_id}")
+def delete_vacation(vacation_id: int, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = legacy.user_ready(user)
+    with legacy.connect() as con:
+        cur = con.execute("DELETE FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Отпуск не найден")
+    legacy.invalidate_current_auto_reserve(uid)
+    return {"ok": True}
