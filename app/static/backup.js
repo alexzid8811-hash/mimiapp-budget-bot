@@ -8,6 +8,18 @@
     return `budget-backup-${new Date().toISOString().slice(0, 10)}.json`;
   }
 
+  function saveFile(file) {
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file.name;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   async function downloadBackup() {
     exportButton.disabled = true;
     try {
@@ -19,17 +31,19 @@
       const backup = await response.json();
       const file = new File([JSON.stringify(backup, null, 2)], backupFilename(), { type: "application/json" });
 
-      if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: "Резервная копия бюджета" });
+      const telegramPlatform = window.Telegram?.WebApp?.platform || "";
+      const isMobile = telegramPlatform === "ios" || telegramPlatform === "android" ||
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+      if (isMobile && navigator.share && navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: "Резервная копия бюджета" });
+        } catch (shareError) {
+          if (shareError?.name === "AbortError") return;
+          saveFile(file);
+        }
       } else {
-        const url = URL.createObjectURL(file);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = file.name;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        saveFile(file);
       }
       toast("Резервная копия создана");
     } catch (error) {
