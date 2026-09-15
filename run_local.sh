@@ -2,4 +2,4 @@
 set -euo pipefail
 export DEV_MODE="${DEV_MODE:-true}"
 export DATABASE_PATH="${DATABASE_PATH:-./data/budget.sqlite3}"
-exec uvicorn app.payroll_app:app --reload --host 0.0.0.0 --port "${PORT:-8000}"
+exec uvicorn app.cashflow_app:app --reload --host 0.0.0.0 --port "${PORT:-8000}"
