@@ -31,6 +31,49 @@
     return new Date().toISOString().slice(0, 10);
   }
 
+  function injectSettingsUI() {
+    if (document.getElementById("cashflowEnabled")) return;
+    const capitalInput = document.getElementById("initialReserve");
+    const card = capitalInput?.closest(".card");
+    if (!card) return;
+
+    const title = card.querySelector("h3");
+    if (title) title.textContent = "Стартовый капитал и буфер";
+
+    const capitalLabel = capitalInput.closest("label");
+    if (capitalLabel) {
+      const textNode = [...capitalLabel.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+      if (textNode) textNode.textContent = "Стартовый капитал на начало дня\n            ";
+    }
+
+    const enableLabel = document.createElement("label");
+    enableLabel.className = "checkbox";
+    enableLabel.innerHTML = '<input id="cashflowEnabled" type="checkbox" /> Не уходить в минус: считать безопасный дневной лимит';
+
+    const dateLabel = document.createElement("label");
+    dateLabel.innerHTML = `Дата старта расчёта<input id="cashflowStartDate" type="date" value="${todayISO()}" />`;
+
+    const help = document.createElement("p");
+    help.className = "muted";
+    help.textContent = "Стартовый капитал — деньги, которыми вы реально располагаете на начало выбранного дня. Всё сверх безопасной суммы на день приложение держит в виртуальном буфере для будущих обязательных платежей и слабых выплат.";
+
+    const save = document.createElement("button");
+    save.className = "primary";
+    save.id = "saveCashflowBtn";
+    save.type = "button";
+    save.textContent = "Сохранить старт и буфер";
+
+    card.insertBefore(enableLabel, capitalLabel);
+    card.insertBefore(dateLabel, capitalLabel);
+    capitalLabel.insertAdjacentElement("afterend", help);
+    help.insertAdjacentElement("afterend", save);
+
+    const reserveHeading = document.getElementById("reserveBalance")?.closest(".section-head")?.querySelector(".eyebrow");
+    if (reserveHeading) reserveHeading.textContent = "Буфер безопасности";
+
+    save.addEventListener("click", saveCashflowSettings);
+  }
+
   function applyCashflow(flow) {
     if (!flow?.enabled) return;
 
@@ -73,6 +116,7 @@
   }
 
   async function refreshCashflow() {
+    injectSettingsUI();
     try {
       const [settings, flow] = await Promise.all([
         request("/api/cashflow-settings"),
@@ -90,37 +134,44 @@
     }
   }
 
-  const saveButton = document.getElementById("saveCashflowBtn");
-  if (saveButton) {
-    saveButton.addEventListener("click", async () => {
-      try {
-        const startDate = document.getElementById("cashflowStartDate")?.value || todayISO();
-        await request("/api/cashflow-settings", {
-          method: "PUT",
-          body: JSON.stringify({
-            cashflow_enabled: Boolean(document.getElementById("cashflowEnabled")?.checked),
-            start_date: startDate,
-            start_capital: parseMoneyField("initialReserve"),
-          }),
-        });
-        if (typeof toast === "function") toast("Стартовый капитал и буфер сохранены");
-        if (typeof loadAll === "function") await loadAll();
-        else await refreshCashflow();
-      } catch (err) {
-        if (typeof toast === "function") toast(err.message);
-      }
-    });
+  async function saveCashflowSettings() {
+    try {
+      const startDate = document.getElementById("cashflowStartDate")?.value || todayISO();
+      await request("/api/cashflow-settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          cashflow_enabled: Boolean(document.getElementById("cashflowEnabled")?.checked),
+          start_date: startDate,
+          start_capital: parseMoneyField("initialReserve"),
+        }),
+      });
+      if (typeof toast === "function") toast("Стартовый капитал и буфер сохранены");
+      if (typeof loadAll === "function") await loadAll();
+      else await refreshCashflow();
+    } catch (err) {
+      if (typeof toast === "function") toast(err.message);
+    }
   }
 
-  // Wrap the app refresh so cash-flow numbers are reapplied after every
-  // expense, income, vacation or settings change.
-  if (typeof loadAll === "function") {
+  let wrapped = false;
+  function wrapLoadAllWhenReady() {
+    if (wrapped || typeof loadAll !== "function") return false;
     const originalLoadAll = loadAll;
     loadAll = async function (...args) {
       const result = await originalLoadAll(...args);
       await refreshCashflow();
       return result;
     };
+    wrapped = true;
+    return true;
+  }
+
+  injectSettingsUI();
+  if (!wrapLoadAllWhenReady()) {
+    const timer = setInterval(() => {
+      if (wrapLoadAllWhenReady()) clearInterval(timer);
+    }, 100);
+    setTimeout(() => clearInterval(timer), 5000);
   }
 
   setTimeout(refreshCashflow, 350);
