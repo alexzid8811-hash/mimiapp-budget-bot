@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS settings (
     currency TEXT NOT NULL DEFAULT 'RUB',
     initial_reserve REAL NOT NULL DEFAULT 0,
     forecast_months INTEGER NOT NULL DEFAULT 4,
+    payroll_enabled INTEGER NOT NULL DEFAULT 0,
+    salary_gross REAL NOT NULL DEFAULT 0,
+    bonus_gross REAL NOT NULL DEFAULT 0,
+    tax_rate REAL NOT NULL DEFAULT 13,
+    salary_day INTEGER NOT NULL DEFAULT 7,
+    advance_day INTEGER NOT NULL DEFAULT 22,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -104,9 +110,25 @@ def connect() -> sqlite3.Connection:
     return con
 
 
+def _ensure_settings_columns(con: sqlite3.Connection) -> None:
+    columns = {row[1] for row in con.execute("PRAGMA table_info(settings)").fetchall()}
+    additions = {
+        "payroll_enabled": "INTEGER NOT NULL DEFAULT 0",
+        "salary_gross": "REAL NOT NULL DEFAULT 0",
+        "bonus_gross": "REAL NOT NULL DEFAULT 0",
+        "tax_rate": "REAL NOT NULL DEFAULT 13",
+        "salary_day": "INTEGER NOT NULL DEFAULT 7",
+        "advance_day": "INTEGER NOT NULL DEFAULT 22",
+    }
+    for name, ddl in additions.items():
+        if name not in columns:
+            con.execute(f"ALTER TABLE settings ADD COLUMN {name} {ddl}")
+
+
 def init_db() -> None:
     with connect() as con:
         con.executescript(SCHEMA)
+        _ensure_settings_columns(con)
 
 
 def ensure_user(user_id: int, first_name: str = "", username: str | None = None) -> None:
