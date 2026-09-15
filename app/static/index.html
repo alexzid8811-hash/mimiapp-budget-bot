@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#10131a" />
+  <title>Мой бюджет</title>
+  <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Личный бюджет</div>
+        <h1 id="hello">Мой бюджет</h1>
+      </div>
+      <button class="icon-btn" id="refreshBtn" aria-label="Обновить">↻</button>
+    </header>
+
+    <main>
+      <section class="page active" data-page="home">
+        <div class="hero card">
+          <div class="eyebrow">Можно потратить сегодня</div>
+          <div class="hero-value" id="dailyAvailable">—</div>
+          <div class="muted" id="periodCaption">—</div>
+          <div class="progress"><span id="dayProgress"></span></div>
+          <div class="split small-gap">
+            <div><span class="muted">Сегодня потрачено</span><strong id="spentToday">—</strong></div>
+            <div class="right"><span class="muted">Осталось периода</span><strong id="remaining">—</strong></div>
+          </div>
+        </div>
+
+        <button class="primary big" id="quickExpenseBtn">＋ Добавить расход</button>
+
+        <div class="grid2">
+          <div class="card compact"><span class="muted">Бюджет периода</span><strong id="periodBudget">—</strong></div>
+          <div class="card compact"><span class="muted">Обязательные</span><strong id="mandatory">—</strong></div>
+        </div>
+
+        <div class="card">
+          <div class="section-head"><div><div class="eyebrow">Копилка безопасности</div><h2 id="reserveBalance">—</h2></div><span class="pill" id="reserveTarget">цель —</span></div>
+          <p class="muted" id="reserveReason">Прогноз рассчитывается по будущим выплатам и обязательным платежам.</p>
+          <div id="deficitWarning" class="warning hidden"></div>
+        </div>
+
+        <div class="card">
+          <div class="section-head"><h3>Прогноз периодов</h3><span class="muted">до 4 мес.</span></div>
+          <div id="forecastList" class="list"></div>
+        </div>
+      </section>
+
+      <section class="page" data-page="operations">
+        <div class="section-head"><div><div class="eyebrow">История</div><h2>Операции</h2></div><button class="secondary" id="addIncomeTxBtn">＋ Доход</button></div>
+        <div id="transactionsList" class="list cards-list"></div>
+      </section>
+
+      <section class="page" data-page="plan">
+        <div class="section-head"><div><div class="eyebrow">Текущий период</div><h2>Обязательные платежи</h2></div></div>
+        <p class="muted">Эти суммы уже зарезервированы и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными.</p>
+        <div id="planList" class="list cards-list"></div>
+      </section>
+
+      <section class="page" data-page="settings">
+        <div class="section-head"><div><div class="eyebrow">Параметры</div><h2>Настройки</h2></div></div>
+
+        <div class="card">
+          <div class="section-head"><h3>Доходы</h3><button class="secondary" id="addIncomeRuleBtn">＋</button></div>
+          <div id="incomeRulesList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <div class="section-head"><h3>Обязательные платежи</h3><button class="secondary" id="addBillRuleBtn">＋</button></div>
+          <div id="billRulesList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <h3>Копилка и прогноз</h3>
+          <label>Уже есть в копилке
+            <input id="initialReserve" inputmode="decimal" type="number" min="0" step="100" />
+          </label>
+          <label>Горизонт прогноза, месяцев
+            <input id="forecastMonths" type="number" min="1" max="12" />
+          </label>
+          <label>Валюта
+            <select id="currency"><option value="RUB">₽ RUB</option><option value="EUR">€ EUR</option><option value="USD">$ USD</option></select>
+          </label>
+          <button class="primary" id="saveSettingsBtn">Сохранить</button>
+        </div>
+
+        <div class="card">
+          <div class="section-head"><h3>Категории</h3><button class="secondary" id="addCategoryBtn">＋</button></div>
+          <div id="categoriesList" class="chips"></div>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-nav="home"><span>⌂</span><small>Главная</small></button>
+      <button class="nav-item" data-nav="operations"><span>≡</span><small>Операции</small></button>
+      <button class="nav-item" data-nav="plan"><span>✓</span><small>План</small></button>
+      <button class="nav-item" data-nav="settings"><span>⚙</span><small>Настройки</small></button>
+    </nav>
+  </div>
+
+  <dialog id="expenseDialog">
+    <form method="dialog" id="expenseForm" class="dialog-card">
+      <div class="section-head"><h2>Новый расход</h2><button class="icon-btn" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <label>Сумма<input id="expenseAmount" type="number" step="0.01" min="0.01" inputmode="decimal" required placeholder="0" /></label>
+      <label>Категория<select id="expenseCategory"></select></label>
+      <label>Дата<input id="expenseDate" type="date" required /></label>
+      <label>Комментарий<input id="expenseNote" maxlength="200" placeholder="Например, продукты" /></label>
+      <button class="primary big" value="default" id="saveExpenseBtn">Записать расход</button>
+    </form>
+  </dialog>
+
+  <dialog id="incomeTxDialog">
+    <form method="dialog" id="incomeTxForm" class="dialog-card">
+      <div class="section-head"><h2>Дополнительный доход</h2><button class="icon-btn" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <label>Сумма<input id="incomeTxAmount" type="number" step="0.01" min="0.01" required /></label>
+      <label>Дата<input id="incomeTxDate" type="date" required /></label>
+      <label>Комментарий<input id="incomeTxNote" maxlength="200" placeholder="Премия, возврат..." /></label>
+      <button class="primary big" value="default" id="saveIncomeTxBtn">Записать доход</button>
+    </form>
+  </dialog>
+
+  <dialog id="ruleDialog">
+    <form method="dialog" id="ruleForm" class="dialog-card">
+      <div class="section-head"><h2 id="ruleDialogTitle">Правило</h2><button class="icon-btn" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <input id="ruleMode" type="hidden" />
+      <input id="ruleId" type="hidden" />
+      <label>Название<input id="ruleTitle" required maxlength="80" /></label>
+      <label>Сумма<input id="ruleAmount" type="number" min="0" step="0.01" required /></label>
+      <label>День месяца<input id="ruleDay" type="number" min="1" max="31" required /></label>
+      <div id="incomeRuleFields">
+        <label>Тип<select id="ruleKind"><option value="salary">Зарплата</option><option value="advance">Аванс</option><option value="other">Другой доход</option></select></label>
+        <label class="checkbox"><input id="ruleIsPayday" type="checkbox" /> Считать границей бюджетного периода</label>
+      </div>
+      <label id="billCategoryWrap">Категория<select id="ruleBillCategory"></select></label>
+      <button class="primary big" value="default" id="saveRuleBtn">Сохранить</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
