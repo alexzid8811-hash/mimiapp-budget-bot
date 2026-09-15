@@ -1,7 +1,7 @@
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 
-let state = { bootstrap: null, dashboard: null, transactions: [], plan: [] };
+let state = { bootstrap: null, payroll: null, dashboard: null, transactions: [], plan: [] };
 const $ = (id) => document.getElementById(id);
 const initData = tg?.initData || "";
 const headers = { "Content-Type": "application/json" };
@@ -26,14 +26,15 @@ function money(v) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), maximumFractionDigits: 0 }).format(Number(v || 0));
 }
 function fmtDate(s) { return new Intl.DateTimeFormat("ru-RU", { day:"numeric", month:"short" }).format(new Date(`${s}T12:00:00`)); }
+function fmtMonth(year, month) { return new Intl.DateTimeFormat("ru-RU", { month:"long", year:"numeric" }).format(new Date(year, month - 1, 1)); }
 function todayISO() { return new Date().toISOString().slice(0,10); }
 
 async function loadAll() {
   try {
-    const [bootstrap, dashboard, transactions, plan] = await Promise.all([
-      api("/api/bootstrap"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan")
+    const [bootstrap, payroll, dashboard, transactions, plan] = await Promise.all([
+      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan")
     ]);
-    state = { bootstrap, dashboard, transactions, plan };
+    state = { bootstrap, payroll, dashboard, transactions, plan };
     render();
   } catch (e) { toast(e.message); }
 }
@@ -88,10 +89,36 @@ function renderPlan() {
 
 function renderSettings() {
   const b = state.bootstrap; if (!b) return;
-  $("initialReserve").value = b.settings.initial_reserve ?? 0;
-  $("forecastMonths").value = b.settings.forecast_months ?? 4;
-  $("currency").value = b.settings.currency || "RUB";
-  $("incomeRulesList").innerHTML = b.income_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">${r.is_payday ? 'граница периода · ' : ''}${r.active ? 'активно' : 'выключено'}</div></div><div><div class="amount income">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editIncomeRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteIncomeRule(${r.id})">×</button></div></div></div>`).join("");
+  const settings = b.settings || {};
+  const payroll = state.payroll?.settings || {};
+  $("initialReserve").value = settings.initial_reserve ?? 0;
+  $("forecastMonths").value = settings.forecast_months ?? 4;
+  $("currency").value = settings.currency || "RUB";
+
+  $("payrollEnabled").checked = Boolean(payroll.payroll_enabled);
+  $("salaryGross").value = payroll.salary_gross ?? 0;
+  $("bonusGross").value = payroll.bonus_gross ?? 0;
+  $("taxRate").value = payroll.tax_rate ?? 13;
+  $("salaryDay").value = payroll.salary_day ?? 7;
+  $("advanceDay").value = payroll.advance_day ?? 22;
+
+  const preview = state.payroll?.preview;
+  const previewEl = $("payrollPreview");
+  if (preview) {
+    const advShift = preview.advance_date !== preview.advance_nominal_date ? ` · перенос с ${fmtDate(preview.advance_nominal_date)}` : '';
+    const salShift = preview.salary_date !== preview.salary_nominal_date ? ` · перенос с ${fmtDate(preview.salary_nominal_date)}` : '';
+    previewEl.innerHTML = `
+      <div class="preview-title">Расчёт за ${fmtMonth(preview.accrual_year, preview.accrual_month)}</div>
+      <div class="preview-line"><span>Рабочие дни 1–15</span><strong>${preview.workdays_first_half} из ${preview.workdays_total}</strong></div>
+      <div class="preview-line"><span>Аванс · ${fmtDate(preview.advance_date)}${advShift}</span><strong>${money(preview.advance)}</strong></div>
+      <div class="preview-line"><span>Зарплата + премия · ${fmtDate(preview.salary_date)}${salShift}</span><strong>${money(preview.final_salary)}</strong></div>
+      <div class="row-sub">Оклад после НДФЛ ${money(preview.salary_net)} · премия после НДФЛ ${money(preview.bonus_net)}</div>`;
+  } else {
+    previewEl.innerHTML = `<div class="empty">Включите автоматический расчёт и сохраните оклад, чтобы увидеть сумму аванса и зарплаты.</div>`;
+  }
+
+  const incomeRules = Boolean(payroll.payroll_enabled) ? b.income_rules.filter(r => r.kind === 'other') : b.income_rules;
+  $("incomeRulesList").innerHTML = incomeRules.length ? incomeRules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">${r.active ? 'активно' : 'выключено'}</div></div><div><div class="amount income">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editIncomeRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteIncomeRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Дополнительных регулярных доходов пока нет.</div>`;
   $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">ежемесячно</div></div><div><div class="amount expense">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
   $("categoriesList").innerHTML = b.categories.map(c => `<span class="chip">${c.emoji} ${escapeHtml(c.title)}</span>`).join("");
 }
@@ -142,7 +169,7 @@ function openRule(mode, rule = null) {
   $("incomeRuleFields").style.display = income ? "block" : "none";
   $("billCategoryWrap").style.display = income ? "none" : "flex";
   $("ruleTitle").value = rule?.title || ""; $("ruleAmount").value = rule?.amount ?? ""; $("ruleDay").value = rule?.day_of_month ?? "";
-  $("ruleKind").value = rule?.kind || "other"; $("ruleIsPayday").checked = Boolean(rule?.is_payday);
+  $("ruleKind").value = "other"; $("ruleIsPayday").checked = false;
   $("ruleBillCategory").value = rule?.category_id || "";
   $("ruleDialog").showModal();
 }
@@ -157,14 +184,45 @@ $("ruleForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const mode = $("ruleMode").value, id = $("ruleId").value;
   let body;
-  if (mode === "income") body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), kind:$("ruleKind").value, is_payday:$("ruleIsPayday").checked, active:true };
+  if (mode === "income") body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), kind:"other", is_payday:false, active:true };
   else body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), category_id:$("ruleBillCategory").value ? Number($("ruleBillCategory").value) : null, active:true };
   const base = mode === "income" ? "/api/income-rules" : "/api/bill-rules";
   try { await api(id ? `${base}/${id}` : base, {method:id?"PUT":"POST", body:JSON.stringify(body)}); $("ruleDialog").close(); toast("Сохранено"); await loadAll(); } catch(err){ toast(err.message); }
 });
 
+function generalSettingsPayload() {
+  return {
+    currency: $("currency").value,
+    initial_reserve: Number($("initialReserve").value || 0),
+    forecast_months: Number($("forecastMonths").value || 4),
+  };
+}
+
+function payrollSettingsPayload() {
+  return {
+    payroll_enabled: $("payrollEnabled").checked,
+    salary_gross: Number($("salaryGross").value || 0),
+    bonus_gross: Number($("bonusGross").value || 0),
+    tax_rate: Number($("taxRate").value || 0),
+    salary_day: Number($("salaryDay").value || 7),
+    advance_day: Number($("advanceDay").value || 22),
+  };
+}
+
 $("saveSettingsBtn").addEventListener("click", async () => {
-  try { await api("/api/settings", {method:"PUT", body:JSON.stringify({currency:$("currency").value, initial_reserve:Number($("initialReserve").value||0), forecast_months:Number($("forecastMonths").value||4)})}); toast("Настройки сохранены"); await loadAll(); } catch(e){ toast(e.message); }
+  try {
+    await api("/api/settings", {method:"PUT", body:JSON.stringify(generalSettingsPayload())});
+    toast("Настройки сохранены");
+    await loadAll();
+  } catch(e) { toast(e.message); }
+});
+
+$("savePayrollBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/payroll-settings", {method:"PUT", body:JSON.stringify(payrollSettingsPayload())});
+    toast("Расчёт зарплаты сохранён");
+    await loadAll();
+  } catch(e) { toast(e.message); }
 });
 
 $("addCategoryBtn").addEventListener("click", async () => {
