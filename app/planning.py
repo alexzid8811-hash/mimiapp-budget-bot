@@ -141,15 +141,36 @@ def bill_events(uid, start, end):
         for rule in conditions['bill_rules']:
             if rule['active']:
                 for day in occurrences([rule['day_of_month']], left, right):
-                    events[(rule['id'], day.isoformat())] = {**rule, 'due_date': day.isoformat(), 'paid': False, 'payment_id': None}
+                    events[(rule['id'], day.isoformat())] = {
+                        **rule,
+                        'due_date': day.isoformat(),
+                        'planned_amount': rule['amount'],
+                        'paid': False,
+                        'payment_id': None,
+                        'remainder_destination': 'budget',
+                        'remainder_amount': 0,
+                    }
     with connect() as con:
         for row in con.execute(
-            "SELECT t.bill_rule_id,t.bill_due_date,t.id AS payment_id,t.amount,t.note,t.category_id "
-            "FROM transactions t WHERE t.user_id=? AND t.bill_rule_id IS NOT NULL AND t.bill_due_date BETWEEN ? AND ?",
+            "SELECT t.bill_rule_id,t.bill_due_date,t.id AS payment_id,t.amount,t.note,t.category_id,"
+            "t.bill_planned_amount,p.amount AS remainder_amount "
+            "FROM transactions t LEFT JOIN piggy_bank_movements p "
+            "ON p.user_id=t.user_id AND p.bill_payment_id=t.id "
+            "WHERE t.user_id=? AND t.bill_rule_id IS NOT NULL AND t.bill_due_date BETWEEN ? AND ?",
             (uid, start.isoformat(), end.isoformat())):
             key = (row['bill_rule_id'], row['bill_due_date'])
-            event = events.setdefault(key, {'id': row['bill_rule_id'], 'title': row['note'], 'category_id': row['category_id'], 'due_date': row['bill_due_date']})
-            event.update(amount=row['amount'], paid=True, payment_id=row['payment_id'])
+            event = events.setdefault(key, {
+                'id': row['bill_rule_id'], 'title': row['note'], 'category_id': row['category_id'],
+                'due_date': row['bill_due_date'], 'planned_amount': row['bill_planned_amount'] or row['amount'],
+            })
+            event.update(
+                amount=row['amount'],
+                planned_amount=row['bill_planned_amount'] or event.get('planned_amount') or row['amount'],
+                paid=True,
+                payment_id=row['payment_id'],
+                remainder_destination='piggy' if row['remainder_amount'] is not None else 'budget',
+                remainder_amount=row['remainder_amount'] or 0,
+            )
     return sorted(events.values(), key=lambda e: (e['due_date'], e['id']))
 
 
@@ -159,6 +180,17 @@ def mandatory_map(uid, start, end):
         day = date.fromisoformat(event['due_date'])
         totals[day] = totals.get(day, 0) + cents(event['amount'])
     return {day: amount(value) for day, value in totals.items()}
+
+
+def bill_planned_amount(uid, bill_id, due_date):
+    """Return the historical planned amount for one bill occurrence."""
+    for left, right, conditions in condition_segments(uid, due_date, due_date):
+        for rule in conditions['bill_rules']:
+            if rule['id'] != bill_id or not rule['active']:
+                continue
+            if due_date in occurrences([rule['day_of_month']], left, right):
+                return amount(cents(rule['amount']))
+    return None
 
 
 def payday_boundaries(uid, start, end):

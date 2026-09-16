@@ -141,6 +141,93 @@ def test_paid_bill_amount_and_classification_survive_edit_delete(client):
     assert client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-11'}).status_code == 422
 
 
+def test_paid_bill_actual_amount_can_return_remainder_to_budget_or_piggy(client):
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Коммуналка', 'amount': 10000, 'day_of_month': 10, 'effective_date': '2026-09-01'
+    }).json()
+    payment = client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-10'}).json()
+    before = cashflow_snapshot(1)['current_cash']
+
+    response = client.put(f"/api/bill-payments/{payment['id']}", json={
+        'amount': 8000, 'remainder_destination': 'budget'
+    })
+    assert response.status_code == 200
+    assert response.json()['remainder_amount'] == 0
+    assert planning.mandatory_map(1, date(2026, 9, 10), date(2026, 9, 10)) == {date(2026, 9, 10): 8000}
+    assert cashflow_snapshot(1)['current_cash'] == before + 2000
+    assert piggy_bank_balance(1) == 0
+
+    response = client.put(f"/api/bill-payments/{payment['id']}", json={
+        'amount': 8000, 'remainder_destination': 'piggy'
+    })
+    assert response.status_code == 200
+    assert response.json()['remainder_amount'] == 2000
+    assert piggy_bank_balance(1) == 2000
+    assert cashflow_snapshot(1)['current_cash'] == before
+
+    response = client.put(f"/api/bill-payments/{payment['id']}", json={
+        'amount': 7000, 'remainder_destination': 'piggy'
+    })
+    assert response.status_code == 200
+    assert piggy_bank_balance(1) == 3000
+    with connect() as con:
+        assert con.execute(
+            'SELECT COUNT(*) FROM piggy_bank_movements WHERE bill_payment_id=?', (payment['id'],)
+        ).fetchone()[0] == 1
+
+    event = client.get('/api/plan').json()[0]
+    assert event['amount'] == 7000
+    assert event['planned_amount'] == 10000
+    assert event['remainder_destination'] == 'piggy'
+    assert event['remainder_amount'] == 3000
+
+
+def test_bill_remainder_edit_rolls_back_if_it_would_overdraw_piggy(client):
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Коммуналка', 'amount': 10000, 'day_of_month': 10, 'effective_date': '2026-09-01'
+    }).json()
+    payment = client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-10'}).json()
+    assert client.put(f"/api/bill-payments/{payment['id']}", json={
+        'amount': 8000, 'remainder_destination': 'piggy'
+    }).status_code == 200
+    assert client.post('/api/piggy-bank/withdraw', json={
+        'amount': 1500, 'movement_date': '2026-09-15'
+    }).status_code == 200
+
+    response = client.put(f"/api/bill-payments/{payment['id']}", json={
+        'amount': 9500, 'remainder_destination': 'piggy'
+    })
+    assert response.status_code == 422
+    with connect() as con:
+        stored = con.execute('SELECT amount FROM transactions WHERE id=?', (payment['id'],)).fetchone()[0]
+        saved = con.execute(
+            'SELECT amount FROM piggy_bank_movements WHERE bill_payment_id=?', (payment['id'],)
+        ).fetchone()[0]
+    assert stored == 8000
+    assert saved == 2000
+
+
+def test_bill_remainder_link_survives_backup_restore(client):
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Коммуналка', 'amount': 10000, 'day_of_month': 10, 'effective_date': '2026-09-01'
+    }).json()
+    payment = client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-10'}).json()
+    client.put(f"/api/bill-payments/{payment['id']}", json={
+        'amount': 8000, 'remainder_destination': 'piggy'
+    })
+    backup = export_user_data(1)
+    ensure_user(2)
+    restore_user_data(2, backup)
+
+    assert piggy_bank_balance(2) == 2000
+    with connect() as con:
+        linked = con.execute(
+            'SELECT t.amount,p.amount FROM transactions t JOIN piggy_bank_movements p '
+            'ON p.bill_payment_id=t.id WHERE t.user_id=2'
+        ).fetchone()
+    assert tuple(linked) == (8000, 2000)
+
+
 def test_history_boundaries_do_not_rewrite_previous_payday(client):
     rule = {**salary_rule(), 'day_of_month': 16}
     client.put(f"/api/income-rules/{rule['id']}", json=rule)

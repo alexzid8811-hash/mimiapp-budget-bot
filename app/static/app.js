@@ -110,7 +110,19 @@ function renderTransactions() {
 function renderPlan() {
   const el = $("planList");
   if (!state.plan.length) { el.innerHTML = `<div class="empty">В этом периоде обязательных платежей нет.</div>`; return; }
-  el.innerHTML = state.plan.map(p => `<div class="list-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · уже учтено в бюджете</div></div></div><div><div class="amount expense">${money(p.amount)}</div>${p.paid ? '<div class="row-sub">оплачено</div>' : `<button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button>`}</div></div>`).join("");
+  el.innerHTML = state.plan.map(p => {
+    const planned = Number(p.planned_amount ?? p.amount);
+    const paidCaption = Number(p.amount) === planned
+      ? 'оплачено'
+      : `оплачено из ${money(planned)}`;
+    const remainderCaption = Number(p.remainder_amount || 0) > 0
+      ? ` · ${money(p.remainder_amount)} в копилке`
+      : '';
+    const action = p.paid
+      ? `<div class="row-sub">${paidCaption}${remainderCaption}</div><button class="tiny" onclick="editBillPayment(${p.payment_id})">Изменить</button>`
+      : `<button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button>`;
+    return `<div class="list-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · уже учтено в бюджете</div></div></div><div><div class="amount expense">${money(p.amount)}</div>${action}</div></div>`;
+  }).join("");
 }
 
 function renderSettings() {
@@ -195,6 +207,32 @@ $("incomeTxForm").addEventListener("submit", async (e) => {
 
 window.deleteTx = async (id) => { if (!confirm("Удалить операцию?")) return; await api(`/api/transactions/${id}`, {method:"DELETE"}); await loadAll(); };
 window.payBill = async (id, due) => { try { await api(`/api/bills/${id}/pay`, {method:"POST", body:JSON.stringify({due_date:due})}); toast("Отмечено оплачено"); await loadAll(); } catch(e){ toast(e.message); } };
+window.editBillPayment = paymentId => {
+  const payment = state.plan.find(item => item.payment_id === paymentId);
+  if (!payment) return;
+  $("billPaymentId").value = paymentId;
+  $("billPaymentAmount").value = payment.amount;
+  $("billRemainderDestination").value = payment.remainder_destination || "budget";
+  $("billPaymentPlanned").textContent = `Запланировано: ${money(payment.planned_amount ?? payment.amount)}`;
+  $("billPaymentDialog").showModal();
+};
+
+$("billPaymentForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const paymentId = Number($("billPaymentId").value);
+  try {
+    await api(`/api/bill-payments/${paymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        amount: window.ruMoneyInput?.parseMoney($("billPaymentAmount").value) ?? Number($("billPaymentAmount").value),
+        remainder_destination: $("billRemainderDestination").value,
+      }),
+    });
+    $("billPaymentDialog").close();
+    toast("Фактическая сумма сохранена");
+    await loadAll();
+  } catch (e2) { toast(e2.message); }
+});
 
 function openVacation(vacation = null) {
   const start = vacation?.start_date || todayISO();

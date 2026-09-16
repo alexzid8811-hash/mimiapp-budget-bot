@@ -70,6 +70,7 @@ class Transaction(Record):
     note: str = Field(default='', max_length=200)
     bill_rule_id: int | None = Field(default=None, gt=0)
     bill_due_date: date | None = None
+    bill_planned_amount: float | None = Field(default=None, ge=0)
 
     @model_validator(mode='after')
     def bill_fields(self):
@@ -104,6 +105,7 @@ class Piggy(Record):
     amount: float = Field(gt=0)
     movement_date: date
     note: str = Field(default='', max_length=160)
+    bill_payment_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode='after')
     def not_future(self):
@@ -130,7 +132,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -160,6 +162,18 @@ def validate_backup(payload):
     for row in data['transactions']:
         if row['bill_rule_id'] is not None and row['bill_rule_id'] not in bill_ids:
             raise ValueError('Не найдено правило обязательного платежа')
+    transaction_by_id = {row['id']: row for row in data['transactions']}
+    linked_payments = set()
+    for row in data['piggy_bank_movements']:
+        payment_id = row.get('bill_payment_id')
+        if payment_id is None:
+            continue
+        payment = transaction_by_id.get(payment_id)
+        if payment is None or payment['bill_rule_id'] is None or payment['type'] != 'expense':
+            raise ValueError('Не найден оплаченный обязательный платёж для копилки')
+        if payment_id in linked_payments:
+            raise ValueError('Повторяющаяся связь остатка платежа с копилкой')
+        linked_payments.add(payment_id)
     dates = set()
     for row in data['plan_history']:
         effective = row['effective_date']

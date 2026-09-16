@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     note TEXT NOT NULL DEFAULT '',
     bill_rule_id INTEGER,
     bill_due_date TEXT,
+    bill_planned_amount REAL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE SET NULL,
     FOREIGN KEY(bill_rule_id) REFERENCES bill_rules(id) ON DELETE SET NULL
@@ -119,11 +120,16 @@ CREATE TABLE IF NOT EXISTS piggy_bank_movements (
     amount REAL NOT NULL CHECK(amount > 0),
     movement_date TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
+    bill_payment_id INTEGER REFERENCES transactions(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS ix_piggy_bank_user_date
 ON piggy_bank_movements(user_id, movement_date DESC, id DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_piggy_bill_payment
+ON piggy_bank_movements(user_id, bill_payment_id)
+WHERE bill_payment_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS plan_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,10 +171,28 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
             con.execute(f"ALTER TABLE settings ADD COLUMN {name} {ddl}")
 
 
+def _ensure_payment_columns(con: sqlite3.Connection) -> None:
+    transaction_columns = {row[1] for row in con.execute("PRAGMA table_info(transactions)").fetchall()}
+    if "bill_planned_amount" not in transaction_columns:
+        con.execute("ALTER TABLE transactions ADD COLUMN bill_planned_amount REAL")
+
+    piggy_columns = {row[1] for row in con.execute("PRAGMA table_info(piggy_bank_movements)").fetchall()}
+    if "bill_payment_id" not in piggy_columns:
+        con.execute(
+            "ALTER TABLE piggy_bank_movements ADD COLUMN bill_payment_id INTEGER "
+            "REFERENCES transactions(id) ON DELETE CASCADE"
+        )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_piggy_bill_payment "
+        "ON piggy_bank_movements(user_id, bill_payment_id) WHERE bill_payment_id IS NOT NULL"
+    )
+
+
 def init_db() -> None:
     with connect() as con:
         con.executescript(SCHEMA)
         _ensure_settings_columns(con)
+        _ensure_payment_columns(con)
         for table in ('income_rules', 'bill_rules'):
             columns = {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
             if 'archived' not in columns:

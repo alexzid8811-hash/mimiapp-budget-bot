@@ -12,7 +12,8 @@ from pydantic import Field
 
 from . import clock, planning
 from .validation import APIModel, DatedConditionsIn
-from .savings import piggy_effect
+from .savings import check_piggy_history, piggy_effect
+from .money import amount as money_amount, cents
 from .auth import TelegramUser, current_user
 from .budget import current_period, dashboard_numbers, occurrences, reserve_needed_for_future
 from .db import connect, ensure_user, init_db
@@ -65,6 +66,11 @@ class TransactionIn(APIModel):
 
 class BillPaymentIn(APIModel):
     due_date: date
+
+
+class BillPaymentEditIn(APIModel):
+    amount: float = Field(ge=0)
+    remainder_destination: Literal["budget", "piggy"] = "budget"
 
 
 class SettingsIn(APIModel):
@@ -310,10 +316,15 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
 @app.delete("/api/transactions/{tx_id}")
 def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
-    with connect() as con:
-        cur = con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (tx_id, uid))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "Operation not found")
+    try:
+        with connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            cur = con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (tx_id, uid))
+            if cur.rowcount == 0:
+                raise HTTPException(404, "Operation not found")
+            check_piggy_history(con, uid)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     invalidate_current_auto_reserve(uid)
     return {"ok": True}
 
@@ -344,15 +355,84 @@ def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(
         with connect() as con:
             require_category(con, uid, event.get("category_id"))
             cur = con.execute(
-                "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date) "
-                "VALUES(?, 'expense', ?, ?, ?, ?, ?, ?)",
-                (uid, event["amount"], payload.due_date.isoformat(), event.get("category_id"), event["title"], bill_id, payload.due_date.isoformat()),
+                "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,bill_planned_amount) "
+                "VALUES(?, 'expense', ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    uid, event["amount"], payload.due_date.isoformat(), event.get("category_id"),
+                    event["title"], bill_id, payload.due_date.isoformat(), event["amount"],
+                ),
             )
             tx_id = cur.lastrowid
     except sqlite3.IntegrityError as exc:
         raise HTTPException(409, "This bill occurrence is already marked paid") from exc
     invalidate_current_auto_reserve(uid)
     return one("SELECT * FROM transactions WHERE id=?", (tx_id,)) or {}
+
+
+@app.put("/api/bill-payments/{payment_id}")
+def edit_bill_payment(
+    payment_id: int, payload: BillPaymentEditIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = user_ready(user)
+    try:
+        with connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            payment = con.execute(
+                "SELECT * FROM transactions WHERE id=? AND user_id=? AND type='expense' "
+                "AND bill_rule_id IS NOT NULL AND bill_due_date IS NOT NULL",
+                (payment_id, uid),
+            ).fetchone()
+            if payment is None:
+                raise HTTPException(404, "Оплаченный обязательный платёж не найден")
+
+            due_date = date.fromisoformat(payment["bill_due_date"])
+            planned = payment["bill_planned_amount"]
+            if planned is None:
+                planned = planning.bill_planned_amount(uid, payment["bill_rule_id"], due_date)
+            if planned is None:
+                planned = payment["amount"]
+
+            planned_cents = cents(planned)
+            actual_cents = cents(payload.amount)
+            saved_cents = max(0, planned_cents - actual_cents) if payload.remainder_destination == "piggy" else 0
+            saved_amount = money_amount(saved_cents)
+
+            con.execute(
+                "UPDATE transactions SET amount=?,bill_planned_amount=? WHERE id=? AND user_id=?",
+                (money_amount(actual_cents), money_amount(planned_cents), payment_id, uid),
+            )
+            existing = con.execute(
+                "SELECT id FROM piggy_bank_movements WHERE user_id=? AND bill_payment_id=?",
+                (uid, payment_id),
+            ).fetchone()
+            if saved_cents:
+                movement_date = min(due_date, clock.today()).isoformat()
+                note = f"Остаток от обязательного платежа: {payment['note']}"[:160]
+                if existing:
+                    con.execute(
+                        "UPDATE piggy_bank_movements SET amount=?,movement_date=?,note=? WHERE id=?",
+                        (saved_amount, movement_date, note, existing["id"]),
+                    )
+                else:
+                    con.execute(
+                        "INSERT INTO piggy_bank_movements"
+                        "(user_id,direction,amount,movement_date,note,bill_payment_id) VALUES(?, 'deposit', ?, ?, ?, ?)",
+                        (uid, saved_amount, movement_date, note, payment_id),
+                    )
+            elif existing:
+                con.execute("DELETE FROM piggy_bank_movements WHERE id=?", (existing["id"],))
+
+            check_piggy_history(con, uid)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    invalidate_current_auto_reserve(uid)
+    return {
+        "payment": one("SELECT * FROM transactions WHERE id=? AND user_id=?", (payment_id, uid)),
+        "planned_amount": money_amount(planned_cents),
+        "remainder_destination": payload.remainder_destination if saved_cents else "budget",
+        "remainder_amount": saved_amount,
+    }
 
 
 @app.post("/api/income-rules")

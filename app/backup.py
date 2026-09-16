@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 2
+BACKUP_VERSION = 3
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -40,11 +40,13 @@ TABLE_COLUMNS = {
     "bill_rules": ("id", "title", "amount", "day_of_month", "category_id", "active", "archived", "created_at"),
     "transactions": (
         "id", "type", "amount", "tx_date", "category_id", "note",
-        "bill_rule_id", "bill_due_date", "created_at",
+        "bill_rule_id", "bill_due_date", "bill_planned_amount", "created_at",
     ),
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
-    "piggy_bank_movements": ("id", "direction", "amount", "movement_date", "note", "created_at"),
+    "piggy_bank_movements": (
+        "id", "direction", "amount", "movement_date", "note", "bill_payment_id", "created_at"
+    ),
     "plan_history": ("id", "effective_date", "snapshot"),
 }
 
@@ -145,15 +147,19 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
                 bill_ids[row.get("id")] = int(cur.lastrowid)
 
+            transaction_ids: dict[Any, int] = {}
             for row in data["transactions"]:
-                con.execute(
-                    "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                cur = con.execute(
+                    "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,bill_planned_amount,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["type"]), float(row["amount"]), str(row["tx_date"]),
                         category_ids.get(row.get("category_id")), str(row.get("note") or ""),
-                        bill_ids.get(row.get("bill_rule_id")), row.get("bill_due_date"), _created_at(row),
+                        bill_ids.get(row.get("bill_rule_id")), row.get("bill_due_date"),
+                        row.get("bill_planned_amount"), _created_at(row),
                     ),
                 )
+                transaction_ids[row.get("id")] = int(cur.lastrowid)
 
             for row in data["vacations"]:
                 con.execute(
@@ -174,8 +180,12 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
             for row in data["piggy_bank_movements"]:
                 con.execute(
-                    "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,created_at) VALUES(?,?,?,?,?,?)",
-                    (user_id, row['direction'], row['amount'], row['movement_date'], row['note'], _created_at(row)),
+                    "INSERT INTO piggy_bank_movements"
+                    "(user_id,direction,amount,movement_date,note,bill_payment_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        user_id, row['direction'], row['amount'], row['movement_date'], row['note'],
+                        transaction_ids.get(row.get('bill_payment_id')), _created_at(row),
+                    ),
                 )
             for row in data["plan_history"]:
                 snapshot = row['snapshot']
@@ -245,4 +255,3 @@ async def send_backup_to_chat(user: TelegramUser = Depends(current_user)) -> dic
         raise HTTPException(502, "Не удалось отправить файл в чат с ботом") from exc
 
     return {"ok": True, "message_id": message.message_id, "filename": filename}
-
