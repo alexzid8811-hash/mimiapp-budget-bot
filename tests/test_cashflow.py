@@ -57,4 +57,22 @@ def test_spent_today_reduces_only_remaining_today():
         mandatory_by_date={},
     )
     assert plan.daily_target == 100
+    assert plan.today_target == 100
     assert plan.available_today == 40
+
+
+def test_overspend_is_negative_and_does_not_reduce_buffer():
+    today = date(2026, 9, 15)
+    plan = calculate_cashflow_plan(
+        today=today,
+        horizon_end=today + timedelta(days=9),
+        opening_balance_before_today_spend=1000,
+        spent_today=150,
+        income_by_date={},
+        mandatory_by_date={},
+    )
+
+    assert plan.today_target == 100
+    assert plan.available_today == -50
+    assert plan.daily_target == 94.44
+    assert plan.buffer_balance == 900

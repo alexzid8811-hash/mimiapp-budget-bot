@@ -54,15 +54,15 @@ def test_unreceived_planned_income_does_not_inflate_start_capital(client):
     assert cashflow_snapshot(1)["current_cash"] == 11300
 
 
-@pytest.mark.parametrize('spent,expected_daily,shortfall,buffer', [(900, 11.11, 0, 100), (1100, 0, 100, 0)])
-def test_overspend_uses_actual_cash(spent, expected_daily, shortfall, buffer):
+@pytest.mark.parametrize('spent,expected_daily,available,shortfall', [(900, 11.11, -800, 0), (1100, 0, -1000, 100)])
+def test_overspend_uses_actual_cash_without_spending_buffer(spent, expected_daily, available, shortfall):
     plan = calculate_cashflow_plan(today=date(2026, 9, 15), horizon_end=date(2026, 9, 24),
                                   opening_balance_before_today_spend=1000, spent_today=spent,
                                   income_by_date={}, mandatory_by_date={})
     assert plan.daily_target == expected_daily
-    assert plan.available_today == 0
+    assert plan.available_today == available
     assert plan.capital_shortfall == shortfall
-    assert plan.buffer_balance == buffer
+    assert plan.buffer_balance == 900
     assert plan.projected_end_balance == round(1000 - spent - 9 * expected_daily, 2)
 
 
@@ -77,7 +77,7 @@ def test_rounding_never_spends_nonexistent_kopecks():
 def test_period_table_includes_overspend(client):
     result = cashflow_period_rows(1, today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
                                  opening_balance_before_today_spend=1000, daily_target=20, spent_today=900)
-    assert result[0]['buffer'] == 0
+    assert result[0]['buffer'] == 880
 
 
 def test_income_edits_and_deletes_preserve_past(client):

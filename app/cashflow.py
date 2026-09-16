@@ -9,6 +9,7 @@ from .money import amount, cents
 @dataclass(frozen=True)
 class CashflowPlan:
     daily_target: float
+    today_target: float
     available_today: float
     buffer_balance: float
     capital_shortfall: float
@@ -66,7 +67,22 @@ def calculate_cashflow_plan(
         fixed_rows.append((day, income, mandatory))
 
     safe_daily = max(0, daily_target or 0)
-    available_today = max(0, safe_daily - spent)
+
+    # Keep today's allowance stable while expenses are being added.  The
+    # actual overspend is shown as a negative value; only the allowance for
+    # the following days is recalculated.  Using ``safe_daily`` here used to
+    # hide the overspend behind zero and made the virtual buffer appear to pay
+    # for it.
+    today_plan = calculate_cashflow_plan(
+        today=today,
+        horizon_end=horizon_end,
+        opening_balance_before_today_spend=amount(opening),
+        spent_today=0,
+        income_by_date=income_by_date,
+        mandatory_by_date=mandatory_by_date,
+    ) if spent else None
+    today_target = cents(today_plan.daily_target) if today_plan else safe_daily
+    available_today = today_target - spent
     capital_shortfall = max(0, -minimum_without_daily_spend)
 
     # Simulate the plan. The money left after today's safe spending is the
@@ -89,9 +105,13 @@ def calculate_cashflow_plan(
                 }
             )
 
-    buffer_balance = max(0, opening - max(spent, safe_daily))
+    # The buffer is the amount protected after today's original allowance.
+    # An overspend is redistributed over future daily limits, not withdrawn
+    # from this protected amount.
+    buffer_balance = max(0, opening - today_target)
     return CashflowPlan(
         daily_target=amount(safe_daily),
+        today_target=amount(today_target),
         available_today=amount(available_today),
         buffer_balance=amount(buffer_balance),
         capital_shortfall=amount(capital_shortfall),

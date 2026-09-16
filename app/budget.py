@@ -98,7 +98,7 @@ def dashboard_numbers(
     remaining_days: int,
 ) -> dict[str, float]:
     period_budget = max(0.0, period_income + reserve_out - mandatory - reserve_in)
-    remaining = max(0.0, period_budget - discretionary_spent)
+    remaining = period_budget - discretionary_spent
     daily = remaining / max(1, remaining_days)
     return {
         "period_budget": round(period_budget, 2),

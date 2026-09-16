@@ -140,7 +140,9 @@ def cashflow_period_rows(
             sum(amount for day, amount in mandatory.items() if period_start <= day <= period_end), 2
         )
         free = round(received - bills, 2)
-        planned_spending = round(daily_target * days + (max(0, spent_today - daily_target) if index == 0 else 0), 2)
+        # Today's overspend reduces the recalculated allowance for the days
+        # ahead.  It must not be presented as a withdrawal from the buffer.
+        planned_spending = round(daily_target * days, 2)
         raw_after = round(buffer_before + free - planned_spending, 2)
         buffer_after = round(max(0.0, raw_after), 2)
         put_aside = round(max(0.0, buffer_after - buffer_before), 2)
@@ -208,7 +210,7 @@ def cashflow_snapshot(user_id: int) -> dict:
     period = planning.user_period(user_id, today)
     spent_period = legacy.discretionary_spent(user_id, max(period.start, start_date), today)
     days_left = max(1, (period.end - today).days + 1)
-    remaining_period = round(plan.available_today + plan.daily_target * max(0, days_left - 1), 2)
+    remaining_period = round(max(0.0, plan.available_today) + plan.daily_target * max(0, days_left - 1), 2)
     period_budget = round(spent_period + remaining_period, 2)
     next_income = next((row for row in plan.timeline if row["income"] > 0), None)
 
@@ -240,6 +242,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         "current_cash": current_cash,
         "piggy_bank_balance": piggy_bank_balance(user_id),
         "daily_target": plan.daily_target,
+        "today_target": plan.today_target,
         "available_today": plan.available_today,
         "buffer_balance": plan.buffer_balance,
         "capital_shortfall": plan.capital_shortfall,
