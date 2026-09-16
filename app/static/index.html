@@ -6,7 +6,8 @@
   <meta name="theme-color" content="#10131a" />
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260916-piggy-tab" />
+  <script src="/static/theme.js?v=20260916-theme-choice"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=20260916-theme-choice" />
 </head>
 <body>
   <div id="app">
@@ -106,6 +107,18 @@
 
       <section class="page" data-page="settings">
         <div class="section-head"><div><div class="eyebrow">Параметры</div><h2>Настройки</h2></div></div>
+
+        <div class="card">
+          <div class="section-head"><div><div class="eyebrow">Внешний вид</div><h3>Тема оформления</h3></div></div>
+          <label>Тема
+            <select id="themeMode">
+              <option value="auto">Автоматически</option>
+              <option value="light">Светлая</option>
+              <option value="dark">Тёмная</option>
+            </select>
+          </label>
+          <p class="muted">Автоматический режим использует тему Telegram, а при открытии в браузере — тему устройства.</p>
+        </div>
 
         <div class="card">
           <div class="section-head">
