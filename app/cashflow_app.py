@@ -160,13 +160,16 @@ def cashflow_snapshot(user_id: int) -> dict:
     months = max(1, min(12, int(settings["forecast_months"])))
     horizon_end = add_months(today, months)
 
-    income_history = planned_income_map(user_id, start_date, today)
+    # Past scheduled income is only a forecast until the user records that it
+    # was actually received. Otherwise an unpaid salary/vacation payment would
+    # silently inflate the real balance carried from the starting capital.
+    actual_income_history = legacy.actual_income(user_id, start_date, today)
     mandatory_history = planned_mandatory_map(user_id, start_date, today)
     spent_history = legacy.discretionary_spent(user_id, start_date, today)
 
     piggy_effect = piggy_bank_effect(user_id, start_date, today)
     current_cash = round(
-        start_capital + sum(income_history.values()) - sum(mandatory_history.values()) - spent_history - piggy_effect,
+        start_capital + actual_income_history - sum(mandatory_history.values()) - spent_history - piggy_effect,
         2,
     )
     spent_today = legacy.discretionary_spent(user_id, today, today)
