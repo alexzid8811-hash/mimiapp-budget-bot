@@ -127,10 +127,6 @@ CREATE TABLE IF NOT EXISTS piggy_bank_movements (
 CREATE INDEX IF NOT EXISTS ix_piggy_bank_user_date
 ON piggy_bank_movements(user_id, movement_date DESC, id DESC);
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_piggy_bill_payment
-ON piggy_bank_movements(user_id, bill_payment_id)
-WHERE bill_payment_id IS NOT NULL;
-
 CREATE TABLE IF NOT EXISTS plan_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

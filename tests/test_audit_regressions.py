@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 
@@ -363,6 +364,45 @@ def test_existing_database_migration_preserves_data(client):
     init_db()
     assert cashflow_snapshot(1)['current_cash'] == 1000
     assert salary_rule()['amount'] == 10000
+
+
+def test_payment_columns_are_added_before_linked_piggy_index(tmp_path, monkeypatch):
+    database = tmp_path / 'legacy-budget.sqlite3'
+    monkeypatch.setenv('DATABASE_PATH', str(database))
+    with sqlite3.connect(database) as con:
+        con.executescript('''
+            CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                tx_date TEXT NOT NULL,
+                category_id INTEGER,
+                note TEXT NOT NULL DEFAULT '',
+                bill_rule_id INTEGER,
+                bill_due_date TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE piggy_bank_movements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                direction TEXT NOT NULL,
+                amount REAL NOT NULL,
+                movement_date TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+
+    init_db()
+    init_db()
+    with sqlite3.connect(database) as con:
+        transaction_columns = {row[1] for row in con.execute('PRAGMA table_info(transactions)')}
+        piggy_columns = {row[1] for row in con.execute('PRAGMA table_info(piggy_bank_movements)')}
+        indexes = {row[1] for row in con.execute('PRAGMA index_list(piggy_bank_movements)')}
+    assert 'bill_planned_amount' in transaction_columns
+    assert 'bill_payment_id' in piggy_columns
+    assert 'ux_piggy_bill_payment' in indexes
 
 
 def test_backup_restores_bill_history_and_paid_links(client):
