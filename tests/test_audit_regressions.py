@@ -95,10 +95,13 @@ def test_income_edits_and_deletes_preserve_past(client):
 def test_new_rules_do_not_appear_in_past_unless_explicit(client):
     body = {'title': 'Доход', 'amount': 500, 'day_of_month': 10}
     rule = client.post('/api/income-rules', json=body).json()
+    assert date(2026, 9, 10) not in planning.income_map(1, date(2026, 9, 10), date(2026, 9, 10))
     assert cashflow_snapshot(1)['current_cash'] == 1000
+
     body['effective_date'] = '2026-09-01'
     assert client.put(f"/api/income-rules/{rule['id']}", json=body).status_code == 200
-    assert cashflow_snapshot(1)['current_cash'] == 11500
+    assert planning.income_map(1, date(2026, 9, 10), date(2026, 9, 10))[date(2026, 9, 10)] == 500
+    assert cashflow_snapshot(1)['current_cash'] == 1000
 
 
 def test_backdated_salary_edit_preserves_unrelated_bill_history(client, monkeypatch):
