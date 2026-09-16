@@ -165,6 +165,6 @@
   };
 
   document.querySelector('[data-nav="buffer"]')?.addEventListener("click", () => refresh());
+  document.querySelector('[data-nav="piggy"]')?.addEventListener("click", () => refresh());
   window.refreshBuffer = refresh;
 })();
-

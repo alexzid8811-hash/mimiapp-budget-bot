@@ -120,3 +120,14 @@ test('paid bill can be edited from transaction history and its remainder sent to
   const request = requests.find(r => r.url === '/api/bill-payments/17');
   assert.deepEqual(JSON.parse(request.body), {amount:8000,remainder_destination:'piggy'});
 });
+
+test('piggy bank has its own page and bottom navigation tab', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
+  const styles = fs.readFileSync(path.join(__dirname,'../app/static/styles.css'),'utf8');
+  const bufferStart = html.indexOf('data-page="buffer"');
+  const piggyStart = html.indexOf('data-page="piggy"');
+  const settingsStart = html.indexOf('data-page="settings"');
+  assert.ok(bufferStart >= 0 && piggyStart > bufferStart && settingsStart > piggyStart);
+  assert.match(html,/data-nav="piggy"[^>]*><span>₽<\/span><small>Копилка<\/small>/);
+  assert.match(styles,/grid-template-columns:repeat\(6,1fr\)/);
+});

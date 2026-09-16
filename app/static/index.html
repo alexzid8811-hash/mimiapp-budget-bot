@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#10131a" />
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260915-buffer-desktop" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260916-piggy-tab" />
 </head>
 <body>
   <div id="app">
@@ -89,8 +89,11 @@
           </div>
         </div>
 
+      </section>
+
+      <section class="page" data-page="piggy">
+        <div class="section-head"><div><div class="eyebrow">На чёрный день</div><h2>Копилка</h2></div><strong class="piggy-balance" id="piggyBalance">—</strong></div>
         <div class="card piggy-card">
-          <div class="section-head"><div><div class="eyebrow">На чёрный день</div><h3>Копилка</h3></div><strong class="piggy-balance" id="piggyBalance">—</strong></div>
           <p class="muted">Копилка отделена от автоматического буфера. Пополнение исключает деньги из доступного бюджета, а снятие возвращает их обратно.</p>
           <div class="piggy-actions">
             <button class="primary" id="piggyDepositBtn" type="button">＋ Пополнить</button>
@@ -182,6 +185,7 @@
       <button class="nav-item" data-nav="operations"><span>≡</span><small>Операции</small></button>
       <button class="nav-item" data-nav="plan"><span>✓</span><small>План</small></button>
       <button class="nav-item" data-nav="buffer"><span>◈</span><small>Буфер</small></button>
+      <button class="nav-item" data-nav="piggy"><span>₽</span><small>Копилка</small></button>
       <button class="nav-item" data-nav="settings"><span>⚙</span><small>Настройки</small></button>
     </nav>
   </div>
@@ -276,7 +280,7 @@
   <script src="/static/money-input.js?v=20260915-audit"></script>
   <script src="/static/app.js?v=20260916-bill-payment-history"></script>
   <script src="/static/cashflow-ui.js?v=20260915-audit"></script>
-  <script src="/static/buffer-ui.js?v=20260915-audit"></script>
+  <script src="/static/buffer-ui.js?v=20260916-piggy-tab"></script>
   <script src="/static/backup.js?v=20260915-audit"></script>
 </body>
 </html>
