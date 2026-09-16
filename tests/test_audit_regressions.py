@@ -34,6 +34,25 @@ def salary_rule():
         return dict(con.execute("SELECT * FROM income_rules WHERE user_id=1 AND kind='salary'").fetchone())
 
 
+def test_unreceived_planned_income_does_not_inflate_start_capital(client):
+    # The salary scheduled for September 7 is still only a forecast because no
+    # matching actual income transaction was recorded.
+    assert cashflow_snapshot(1)["current_cash"] == 1000
+
+    response = client.post(
+        "/api/transactions",
+        json={
+            "type": "income",
+            "amount": 10300,
+            "tx_date": "2026-09-11",
+            "category_id": None,
+            "note": "Фактически получено",
+        },
+    )
+    assert response.status_code == 200
+    assert cashflow_snapshot(1)["current_cash"] == 11300
+
+
 @pytest.mark.parametrize('spent,expected_daily,shortfall,buffer', [(900, 11.11, 0, 100), (1100, 0, 100, 0)])
 def test_overspend_uses_actual_cash(spent, expected_daily, shortfall, buffer):
     plan = calculate_cashflow_plan(today=date(2026, 9, 15), horizon_end=date(2026, 9, 24),
@@ -63,7 +82,7 @@ def test_period_table_includes_overspend(client):
 def test_income_edits_and_deletes_preserve_past(client):
     rule = salary_rule()
     before = cashflow_snapshot(1)['current_cash']
-    assert before == 11000
+    assert before == 1000
     rule['amount'] = 20000
     assert client.put(f"/api/income-rules/{rule['id']}", json=rule).status_code == 200
     assert cashflow_snapshot(1)['current_cash'] == before
@@ -76,7 +95,7 @@ def test_income_edits_and_deletes_preserve_past(client):
 def test_new_rules_do_not_appear_in_past_unless_explicit(client):
     body = {'title': 'Доход', 'amount': 500, 'day_of_month': 10}
     rule = client.post('/api/income-rules', json=body).json()
-    assert cashflow_snapshot(1)['current_cash'] == 11000
+    assert cashflow_snapshot(1)['current_cash'] == 1000
     body['effective_date'] = '2026-09-01'
     assert client.put(f"/api/income-rules/{rule['id']}", json=body).status_code == 200
     assert cashflow_snapshot(1)['current_cash'] == 11500
@@ -145,10 +164,10 @@ def test_backup_remaps_archived_rule_history(client):
     backup = export_user_data(1)
     ensure_user(2)
     restore_user_data(2, backup)
-    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 11000
+    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 1000
     # A second export/import must remain valid after ID remapping.
     restore_user_data(2, export_user_data(2))
-    assert cashflow_snapshot(2)['current_cash'] == 11000
+    assert cashflow_snapshot(2)['current_cash'] == 1000
 
 
 def test_version_one_backup_without_piggy_replaces_all_data(client):
@@ -252,7 +271,7 @@ def test_existing_database_migration_preserves_data(client):
         con.execute('ALTER TABLE bill_rules DROP COLUMN archived')
     init_db()
     init_db()
-    assert cashflow_snapshot(1)['current_cash'] == 11000
+    assert cashflow_snapshot(1)['current_cash'] == 1000
     assert salary_rule()['amount'] == 10000
 
 
