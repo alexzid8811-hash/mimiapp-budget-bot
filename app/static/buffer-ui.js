@@ -1,5 +1,6 @@
 (() => {
   let bufferState = { buffer: null, piggy: { balance: 0, movements: [] } };
+  let vacationReserveEdited = false;
 
   function initData() {
     if (typeof getTelegramInitData === "function") return getTelegramInitData();
@@ -50,6 +51,13 @@
     setText("bufferHorizon", data.enabled ? `до ${formatDate(data.horizon_end)}` : "выключен");
     setText("bufferPageBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
+    const settings = data.settings || {};
+    const vacationReserve = Number(settings.initial_vacation_reserve || 0);
+    setText("vacationReserveBalance", formatMoney(vacationReserve));
+    setText("vacationReserveDate", settings.start_date ? formatDate(settings.start_date) : "дату старта");
+    setText("vacationReserveTotal", `На старте: ${formatMoney(settings.start_capital)} + ${formatMoney(vacationReserve)} из отпускных = ${formatMoney(Number(settings.start_capital || 0) + vacationReserve)}.`);
+    const reserveInput = document.getElementById("vacationReserveAmount");
+    if (reserveInput && !vacationReserveEdited) reserveInput.value = String(vacationReserve);
 
     const shortfall = document.getElementById("bufferShortfall");
     if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
@@ -115,6 +123,28 @@
       if (typeof toast === "function") toast(error.message);
     }
   }
+
+  document.getElementById("vacationReserveAmount")?.addEventListener("input", () => {
+    vacationReserveEdited = true;
+  });
+  document.getElementById("vacationReserveForm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = document.getElementById("saveVacationReserveBtn");
+    if (button.disabled) return;
+    const raw = document.getElementById("vacationReserveAmount").value;
+    const amount = window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(raw) : Number(raw);
+    button.disabled = true;
+    try {
+      await request("/api/buffer/vacation-reserve", { method: "PUT", body: JSON.stringify({ amount }) });
+      vacationReserveEdited = false;
+      await loadAll();
+      if (typeof toast === "function") toast("Отложенные отпускные учтены в буфере");
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   function openMovement(direction) {
     document.getElementById("piggyDirection").value = direction;

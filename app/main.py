@@ -153,13 +153,13 @@ def discretionary_spent(user_id: int, start: date, end: date) -> float:
 
 
 def reserve_balance_before(user_id: int, before_period: date) -> float:
-    settings = one("SELECT initial_reserve FROM settings WHERE user_id=?", (user_id,)) or {"initial_reserve": 0}
+    settings = one("SELECT initial_reserve,initial_vacation_reserve FROM settings WHERE user_id=?", (user_id,)) or {}
     with connect() as con:
         r = con.execute(
             "SELECT COALESCE(SUM(amount),0) FROM reserve_movements WHERE user_id=? AND period_start < ?",
             (user_id, before_period.isoformat()),
         ).fetchone()
-    return round(float(settings["initial_reserve"]) + float(r[0]), 2)
+    return round(float(settings.get("initial_reserve", 0)) + float(settings.get("initial_vacation_reserve", 0)) + float(r[0]), 2)
 
 
 def future_reserve_target(user_id: int, current_end: date, count: int) -> tuple[float, list[dict]]:

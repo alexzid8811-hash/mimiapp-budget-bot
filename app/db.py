@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS settings (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     currency TEXT NOT NULL DEFAULT 'RUB',
     initial_reserve REAL NOT NULL DEFAULT 0,
+    initial_vacation_reserve REAL NOT NULL DEFAULT 0,
     forecast_months INTEGER NOT NULL DEFAULT 4,
     payroll_enabled INTEGER NOT NULL DEFAULT 0,
     salary_gross REAL NOT NULL DEFAULT 0,
@@ -153,6 +154,7 @@ def connect() -> sqlite3.Connection:
 def _ensure_settings_columns(con: sqlite3.Connection) -> None:
     columns = {row[1] for row in con.execute("PRAGMA table_info(settings)").fetchall()}
     additions = {
+        "initial_vacation_reserve": "REAL NOT NULL DEFAULT 0",
         "payroll_enabled": "INTEGER NOT NULL DEFAULT 0",
         "salary_gross": "REAL NOT NULL DEFAULT 0",
         "bonus_gross": "REAL NOT NULL DEFAULT 0",

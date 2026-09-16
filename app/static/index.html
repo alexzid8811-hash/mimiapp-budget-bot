@@ -79,6 +79,15 @@
         </div>
         <div id="bufferShortfall" class="warning hidden"></div>
 
+        <form id="vacationReserveForm" class="card">
+          <div class="section-head"><h3>Отложено из отпускных</h3><strong id="vacationReserveBalance">—</strong></div>
+          <p class="muted">Отдельно от стартового капитала на <span id="vacationReserveDate">дату старта</span>. Укажите уже полученные деньги, оставленные для следующих периодов и ещё не учтённые в стартовом капитале или операциях дохода.</p>
+          <label>Сумма на начало расчёта<input id="vacationReserveAmount" type="text" inputmode="decimal" data-money required placeholder="0"></label>
+          <button id="saveVacationReserveBtn" class="primary" type="submit">Сохранить сумму</button>
+          <p class="muted" id="vacationReserveTotal"></p>
+          <p class="muted">Эти деньги участвуют в общем буфере и покрывают слабые периоды. Сумма выше показывает, сколько было отложено на старте; текущий остаток общего буфера — в карточке «В буфере». Повторное сохранение заменяет сумму.</p>
+        </form>
+
         <div class="card buffer-table-card">
           <div class="section-head"><h3>План по периодам</h3><span class="muted">автоматически</span></div>
           <div class="buffer-table-wrap">
@@ -280,7 +289,7 @@
   <script src="/static/money-input.js?v=20260915-audit"></script>
   <script src="/static/app.js?v=20260916-bill-payment-history"></script>
   <script src="/static/cashflow-ui.js?v=20260915-audit"></script>
-  <script src="/static/buffer-ui.js?v=20260916-piggy-tab"></script>
+  <script src="/static/buffer-ui.js?v=20260916-vacation-reserve"></script>
   <script src="/static/backup.js?v=20260915-audit"></script>
 </body>
 </html>

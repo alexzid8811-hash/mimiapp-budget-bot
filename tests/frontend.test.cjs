@@ -131,3 +131,21 @@ test('piggy bank has its own page and bottom navigation tab', () => {
   assert.match(html,/data-nav="piggy"[^>]*><span>₽<\/span><small>Копилка<\/small>/);
   assert.match(styles,/grid-template-columns:repeat\(6,1fr\)/);
 });
+
+test('buffer shows opening vacation funds and saves a replacement amount', async () => {
+  const {get,responses,requests} = setup();
+  responses['/api/cashflow'].settings = {
+    start_date:'2026-09-15',start_capital:28000,initial_vacation_reserve:11000,
+  };
+  await get('refreshBtn').listeners.click();
+  assert.match(get('vacationReserveBalance').textContent,/11\D000/);
+  assert.match(get('vacationReserveTotal').textContent,/39\D000/);
+  get('vacationReserveAmount').value = '9000';
+  get('vacationReserveAmount').listeners.input();
+  await get('refreshBtn').listeners.click();
+  assert.equal(get('vacationReserveAmount').value,'9000');
+  await get('vacationReserveForm').listeners.submit({preventDefault(){}});
+  const request = requests.find(r => r.url === '/api/buffer/vacation-reserve');
+  assert.deepEqual(JSON.parse(request.body),{amount:9000});
+  assert.equal(get('saveVacationReserveBtn').disabled,false);
+});

@@ -22,6 +22,7 @@ class Payroll(APIModel):
 class Settings(Payroll):
     currency: str = Field(default='RUB', pattern=r'^[A-Z]{3}$')
     initial_reserve: float = Field(default=0, ge=0)
+    initial_vacation_reserve: float = Field(default=0, ge=0)
     forecast_months: int = Field(default=4, ge=1, le=12)
     cashflow_enabled: bool = False
     cashflow_start_date: date | None = None

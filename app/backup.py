@@ -23,6 +23,7 @@ BACKUP_VERSION = 3
 SETTINGS_COLUMNS = (
     "currency",
     "initial_reserve",
+    "initial_vacation_reserve",
     "forecast_months",
     "payroll_enabled",
     "salary_gross",
@@ -99,6 +100,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             values = {
                 "currency": str(settings.get("currency", "RUB"))[:6].upper(),
                 "initial_reserve": float(settings.get("initial_reserve", 0)),
+                "initial_vacation_reserve": float(settings.get("initial_vacation_reserve", 0)),
                 "forecast_months": int(settings.get("forecast_months", 4)),
                 "payroll_enabled": int(bool(settings.get("payroll_enabled", 0))),
                 "salary_gross": float(settings.get("salary_gross", 0)),
