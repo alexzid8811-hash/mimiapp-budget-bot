@@ -13,7 +13,6 @@ from .savings import check_piggy_history, piggy_effect
 from .auth import TelegramUser, current_user
 from .budget import add_months
 from .cashflow import calculate_cashflow_plan
-from .money import amount, cents
 
 
 app = base.app
@@ -26,10 +25,6 @@ class CashflowSettingsIn(APIModel):
     start_capital: float = Field(default=0, ge=0)
 
 
-class VacationReserveIn(APIModel):
-    amount: float = Field(ge=0)
-
-
 class PiggyBankMovementIn(APIModel):
     amount: float = Field(gt=0)
     movement_date: date = Field(default_factory=clock.today)
@@ -38,7 +33,7 @@ class PiggyBankMovementIn(APIModel):
 
 def cashflow_settings(user_id: int) -> dict:
     data = legacy.one(
-        "SELECT cashflow_enabled,cashflow_start_date,initial_reserve,initial_vacation_reserve,forecast_months "
+        "SELECT cashflow_enabled,cashflow_start_date,initial_reserve,forecast_months "
         "FROM settings WHERE user_id=?",
         (user_id,),
     ) or {}
@@ -46,7 +41,6 @@ def cashflow_settings(user_id: int) -> dict:
         "cashflow_enabled": int(data.get("cashflow_enabled") or 0),
         "start_date": data.get("cashflow_start_date") or clock.today().isoformat(),
         "start_capital": float(data.get("initial_reserve") or 0),
-        "initial_vacation_reserve": float(data.get("initial_vacation_reserve") or 0),
         "forecast_months": int(data.get("forecast_months") or 4),
     }
 
@@ -61,6 +55,22 @@ def planned_income_map(user_id: int, start: date, end: date) -> dict[date, float
 
 def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
     return planning.mandatory_map(user_id, start, end)
+
+
+def received_vacation_pay(user_id: int, start_date: date, through: date) -> float:
+    """Vacation pay entered in Settings that already belongs to this budget.
+
+    The start-period boundary includes a payment received shortly before the
+    selected calculation date, while excluding unrelated old vacations.
+    Future payments remain normal forecast income until their payment date.
+    """
+    period_start = planning.user_period(user_id, start_date).start
+    row = legacy.one(
+        "SELECT COALESCE(SUM(amount),0) AS total FROM vacations "
+        "WHERE user_id=? AND payment_date>=? AND payment_date<=?",
+        (user_id, period_start.isoformat(), through.isoformat()),
+    )
+    return round(float(row["total"]) if row else 0.0, 2)
 
 
 
@@ -162,9 +172,8 @@ def cashflow_snapshot(user_id: int) -> dict:
         return {"enabled": False, "settings": settings}
 
     start_date = min(date.fromisoformat(settings["start_date"]), today)
-    # Separate opening funds, already received before the calculation starts.
-    # Saving this balance replaces it; it never creates another income event.
-    start_capital = float(settings["start_capital"]) + settings["initial_vacation_reserve"]
+    vacation_pay_received = received_vacation_pay(user_id, start_date, today)
+    start_capital = float(settings["start_capital"]) + vacation_pay_received
     months = max(1, min(12, int(settings["forecast_months"])))
     horizon_end = add_months(today, months)
 
@@ -229,6 +238,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         "today": today.isoformat(),
         "horizon_end": horizon_end.isoformat(),
         "current_cash": current_cash,
+        "vacation_reserve": vacation_pay_received,
         "piggy_bank_balance": piggy_bank_balance(user_id),
         "daily_target": plan.daily_target,
         "available_today": plan.available_today,
@@ -273,18 +283,6 @@ def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
     return cashflow_snapshot(uid)
 
 
-@app.put("/api/buffer/vacation-reserve")
-def save_vacation_reserve(payload: VacationReserveIn, user: TelegramUser = Depends(current_user)) -> dict:
-    uid = legacy.user_ready(user)
-    with legacy.connect() as con:
-        con.execute(
-            "UPDATE settings SET initial_vacation_reserve=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
-            (amount(cents(payload.amount)), uid),
-        )
-        con.execute("DELETE FROM reserve_movements WHERE user_id=? AND source='auto'", (uid,))
-    return cashflow_settings(uid)
-
-
 @app.get("/api/buffer")
 def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
@@ -299,6 +297,7 @@ def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
         "daily_target": snapshot["daily_target"],
         "available_today": snapshot["available_today"],
         "buffer_balance": snapshot["buffer_balance"],
+        "vacation_reserve": snapshot["vacation_reserve"],
         "capital_shortfall": snapshot["capital_shortfall"],
         "periods": snapshot["periods"],
     }

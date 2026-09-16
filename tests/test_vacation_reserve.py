@@ -4,7 +4,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import clock
-from app.backup import export_user_data, restore_user_data
 from app.cashflow_app import app, cashflow_snapshot
 from app.db import connect, ensure_user, init_db
 
@@ -17,79 +16,67 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr("app.russian_calendar._remote_year", lambda _: None)
     init_db()
     ensure_user(1)
-    ensure_user(2)
     with TestClient(app) as client:
+        assert client.put("/api/payroll-settings", json={
+            "payroll_enabled": True, "salary_gross": 100000,
+        }).status_code == 200
         assert client.put("/api/cashflow-settings", json={
             "cashflow_enabled": True, "start_date": "2026-09-15", "start_capital": 28000,
         }).status_code == 200
         yield client
 
 
-def test_opening_vacation_money_counted_once_and_separate_from_payroll(client):
-    assert client.put("/api/payroll-settings", json={
-        "payroll_enabled": True, "salary_gross": 100000,
-    }).status_code == 200
-    assert client.post("/api/vacations", json={
-        "start_date": "2026-09-07", "end_date": "2026-09-13",
-        "amount": 11000, "payment_date": "2026-09-04",
-    }).status_code == 200
-    payroll_before = client.get("/api/payroll-settings").json()
-    future_before = cashflow_snapshot(1)["timeline"]
-    assert cashflow_snapshot(1)["current_cash"] == 28000
+def vacation_payload(amount=11000, payment_date="2026-09-11"):
+    return {
+        "start_date": "2026-09-07", "end_date": "2026-09-08",
+        "amount": amount, "payment_date": payment_date,
+    }
 
-    for _ in range(2):
-        response = client.put("/api/buffer/vacation-reserve", json={"amount": 11000})
-        assert response.status_code == 200
-        assert response.json()["start_capital"] == 28000
-        flow = cashflow_snapshot(1)
-        assert flow["current_cash"] == 39000
-        assert flow["piggy_bank_balance"] == 0
-        assert flow["buffer_balance"] > 11000
-        assert [(r["date"], r["income"]) for r in flow["timeline"]] == [
-            (r["date"], r["income"]) for r in future_before
-        ]
-    assert client.get("/api/payroll-settings").json() == payroll_before
-    assert client.get("/api/buffer").json()["settings"]["initial_vacation_reserve"] == 11000
+
+def test_vacation_from_settings_automatically_appears_in_buffer(client):
+    payroll_before = client.get("/api/payroll-settings").json()
+    created = client.post("/api/vacations", json=vacation_payload())
+    assert created.status_code == 200
+    vacation_id = created.json()["id"]
+
+    flow = cashflow_snapshot(1)
+    assert flow["vacation_reserve"] == 11000
+    assert flow["current_cash"] == 39000
+    assert client.get("/api/buffer").json()["vacation_reserve"] == 11000
+    payroll_after = client.get("/api/payroll-settings").json()
+    assert payroll_after["settings"] == payroll_before["settings"]
+    assert payroll_after["preview"]["advance"] < payroll_before["preview"]["advance"]
     with connect() as con:
         assert con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
-        assert con.execute("SELECT initial_vacation_reserve FROM settings WHERE user_id=2").fetchone()[0] == 0
 
-    # Saving the ordinary settings must not reset the separate reserve.
-    client.put("/api/cashflow-settings", json={
-        "cashflow_enabled": True, "start_date": "2026-09-15", "start_capital": 28000,
-    })
-    assert cashflow_snapshot(1)["current_cash"] == 39000
-    assert client.post("/api/transactions", json={
-        "type": "expense", "amount": 1000, "tx_date": "2026-09-16",
-    }).status_code == 200
-    assert cashflow_snapshot(1)["current_cash"] == 38000
-    client.put("/api/buffer/vacation-reserve", json={"amount": 0})
-    assert cashflow_snapshot(1)["current_cash"] == 27000
+    updated = client.put(f"/api/vacations/{vacation_id}", json=vacation_payload(amount=9000))
+    assert updated.status_code == 200
+    assert cashflow_snapshot(1)["vacation_reserve"] == 9000
+    assert cashflow_snapshot(1)["current_cash"] == 37000
 
-
-def test_invalid_reserve_does_not_change_saved_balance(client):
-    client.put("/api/buffer/vacation-reserve", json={"amount": 11000})
-    for value in (-1, "NaN", "Infinity"):
-        assert client.put("/api/buffer/vacation-reserve", json={"amount": value}).status_code == 422
-    assert cashflow_snapshot(1)["current_cash"] == 39000
-
-
-def test_reserve_backup_and_old_backup_default(client):
-    client.put("/api/buffer/vacation-reserve", json={"amount": 11000})
-    backup = export_user_data(1)
-    assert backup["data"]["settings"]["initial_vacation_reserve"] == 11000
-    client.put("/api/buffer/vacation-reserve", json={"amount": 5})
-    restore_user_data(1, backup)
-    assert cashflow_snapshot(1)["current_cash"] == 39000
-    del backup["data"]["settings"]["initial_vacation_reserve"]
-    restore_user_data(1, backup)
+    assert client.delete(f"/api/vacations/{vacation_id}").status_code == 200
+    assert cashflow_snapshot(1)["vacation_reserve"] == 0
     assert cashflow_snapshot(1)["current_cash"] == 28000
 
 
-def test_existing_database_migrates_without_changing_start_capital(client):
+def test_future_vacation_pay_is_forecast_then_becomes_buffer_money(client, monkeypatch):
+    created = client.post("/api/vacations", json=vacation_payload(payment_date="2026-09-20"))
+    assert created.status_code == 200
+    flow = cashflow_snapshot(1)
+    assert flow["vacation_reserve"] == 0
+    assert sum(row["income"] for row in flow["timeline"] if row["date"] == "2026-09-20") >= 11000
+
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 20))
+    flow = cashflow_snapshot(1)
+    assert flow["vacation_reserve"] == 11000
+    assert flow["current_cash"] == 39000
+    assert not any(row["date"] == "2026-09-20" and row["income"] >= 11000 for row in flow["timeline"])
+
+
+def test_old_vacation_and_obsolete_manual_column_are_not_added(client):
+    assert client.post("/api/vacations", json=vacation_payload(payment_date="2026-08-01")).status_code == 200
     with connect() as con:
-        con.execute("ALTER TABLE settings DROP COLUMN initial_vacation_reserve")
-    init_db()
-    init_db()
-    assert cashflow_snapshot(1)["current_cash"] == 28000
-    assert cashflow_snapshot(1)["settings"]["initial_vacation_reserve"] == 0
+        con.execute("UPDATE settings SET initial_vacation_reserve=99999 WHERE user_id=1")
+    flow = cashflow_snapshot(1)
+    assert flow["vacation_reserve"] == 0
+    assert flow["current_cash"] == 28000
