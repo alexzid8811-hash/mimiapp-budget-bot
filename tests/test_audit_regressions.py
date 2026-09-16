@@ -181,6 +181,10 @@ def test_paid_bill_actual_amount_can_return_remainder_to_budget_or_piggy(client)
     assert event['planned_amount'] == 10000
     assert event['remainder_destination'] == 'piggy'
     assert event['remainder_amount'] == 3000
+    transaction = next(row for row in client.get('/api/transactions').json() if row['id'] == payment['id'])
+    assert transaction['bill_planned_amount'] == 10000
+    assert transaction['remainder_destination'] == 'piggy'
+    assert transaction['remainder_amount'] == 3000
 
 
 def test_bill_remainder_edit_rolls_back_if_it_would_overdraw_piggy(client):

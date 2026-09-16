@@ -291,9 +291,12 @@ def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
 def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) -> list[dict]:
     uid = user_ready(user)
     return rows(
-        "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title "
+        "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title, "
+        "p.amount AS remainder_amount, "
+        "CASE WHEN p.id IS NULL THEN 'budget' ELSE 'piggy' END AS remainder_destination "
         "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
         "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id AND b.user_id=t.user_id "
+        "LEFT JOIN piggy_bank_movements p ON p.user_id=t.user_id AND p.bill_payment_id=t.id "
         "WHERE t.user_id=? ORDER BY tx_date DESC,id DESC LIMIT ?",
         (uid, min(max(limit, 1), 300)),
     )

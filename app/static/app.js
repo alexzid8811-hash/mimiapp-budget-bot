@@ -103,7 +103,10 @@ function renderTransactions() {
   el.innerHTML = state.transactions.map(t => {
     const isExpense = t.type === "expense";
     const title = t.bill_title || t.note || t.category_title || (isExpense ? "Расход" : "Доход");
-    return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions"><button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
+    const editPayment = t.bill_rule_id
+      ? `<button class="tiny" onclick="editBillPayment(${t.id})">Изменить</button>`
+      : '';
+    return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
   }).join("");
 }
 
@@ -208,12 +211,14 @@ $("incomeTxForm").addEventListener("submit", async (e) => {
 window.deleteTx = async (id) => { if (!confirm("Удалить операцию?")) return; await api(`/api/transactions/${id}`, {method:"DELETE"}); await loadAll(); };
 window.payBill = async (id, due) => { try { await api(`/api/bills/${id}/pay`, {method:"POST", body:JSON.stringify({due_date:due})}); toast("Отмечено оплачено"); await loadAll(); } catch(e){ toast(e.message); } };
 window.editBillPayment = paymentId => {
-  const payment = state.plan.find(item => item.payment_id === paymentId);
+  const payment = state.plan.find(item => item.payment_id === paymentId)
+    || state.transactions.find(item => item.id === paymentId && item.bill_rule_id);
   if (!payment) return;
   $("billPaymentId").value = paymentId;
   $("billPaymentAmount").value = payment.amount;
   $("billRemainderDestination").value = payment.remainder_destination || "budget";
-  $("billPaymentPlanned").textContent = `Запланировано: ${money(payment.planned_amount ?? payment.amount)}`;
+  const planned = payment.planned_amount ?? payment.bill_planned_amount ?? payment.amount;
+  $("billPaymentPlanned").textContent = `Запланировано: ${money(planned)}`;
   $("billPaymentDialog").showModal();
 };
 

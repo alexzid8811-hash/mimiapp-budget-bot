@@ -100,15 +100,15 @@ test('older reload responses cannot overwrite newer values', async () => {
   assert.match(get('dailyAvailable').textContent,/5,25/);
 });
 
-test('paid bill can be edited and its remainder sent to piggy bank', async () => {
+test('paid bill can be edited from transaction history and its remainder sent to piggy bank', async () => {
   const {sandbox,get,requests,responses} = setup();
-  responses['/api/plan'] = [{
-    id: 3, payment_id: 17, title: 'Коммуналка', due_date: '2026-09-10',
-    amount: 10000, planned_amount: 10000, paid: true,
+  responses['/api/transactions'] = [{
+    id: 17, bill_rule_id: 3, bill_title: 'Коммуналка', tx_date: '2026-08-10',
+    type: 'expense', amount: 10000, bill_planned_amount: 10000,
     remainder_destination: 'budget', remainder_amount: 0,
   }];
   await get('refreshBtn').listeners.click();
-  assert.match(get('planList').innerHTML,/Изменить/);
+  assert.match(get('transactionsList').innerHTML,/Изменить/);
 
   sandbox.window.editBillPayment(17);
   assert.equal(get('billPaymentAmount').value,10000);
