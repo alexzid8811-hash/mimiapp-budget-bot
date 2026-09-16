@@ -40,9 +40,7 @@ def test_vacation_from_settings_automatically_appears_in_buffer(client):
     vacation_id = created.json()["id"]
 
     flow = cashflow_snapshot(1)
-    assert flow["vacation_reserve"] == 11000
     assert flow["current_cash"] == 39000
-    assert client.get("/api/buffer").json()["vacation_reserve"] == 11000
     payroll_after = client.get("/api/payroll-settings").json()
     assert payroll_after["settings"] == payroll_before["settings"]
     assert payroll_after["preview"]["advance"] < payroll_before["preview"]["advance"]
@@ -51,11 +49,9 @@ def test_vacation_from_settings_automatically_appears_in_buffer(client):
 
     updated = client.put(f"/api/vacations/{vacation_id}", json=vacation_payload(amount=9000))
     assert updated.status_code == 200
-    assert cashflow_snapshot(1)["vacation_reserve"] == 9000
     assert cashflow_snapshot(1)["current_cash"] == 37000
 
     assert client.delete(f"/api/vacations/{vacation_id}").status_code == 200
-    assert cashflow_snapshot(1)["vacation_reserve"] == 0
     assert cashflow_snapshot(1)["current_cash"] == 28000
 
 
@@ -63,12 +59,10 @@ def test_future_vacation_pay_is_forecast_then_becomes_buffer_money(client, monke
     created = client.post("/api/vacations", json=vacation_payload(payment_date="2026-09-20"))
     assert created.status_code == 200
     flow = cashflow_snapshot(1)
-    assert flow["vacation_reserve"] == 0
     assert sum(row["income"] for row in flow["timeline"] if row["date"] == "2026-09-20") >= 11000
 
     monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 20))
     flow = cashflow_snapshot(1)
-    assert flow["vacation_reserve"] == 11000
     assert flow["current_cash"] == 39000
     assert not any(row["date"] == "2026-09-20" and row["income"] >= 11000 for row in flow["timeline"])
 
@@ -78,5 +72,4 @@ def test_old_vacation_and_obsolete_manual_column_are_not_added(client):
     with connect() as con:
         con.execute("UPDATE settings SET initial_vacation_reserve=99999 WHERE user_id=1")
     flow = cashflow_snapshot(1)
-    assert flow["vacation_reserve"] == 0
     assert flow["current_cash"] == 28000

@@ -238,7 +238,6 @@ def cashflow_snapshot(user_id: int) -> dict:
         "today": today.isoformat(),
         "horizon_end": horizon_end.isoformat(),
         "current_cash": current_cash,
-        "vacation_reserve": vacation_pay_received,
         "piggy_bank_balance": piggy_bank_balance(user_id),
         "daily_target": plan.daily_target,
         "available_today": plan.available_today,
@@ -297,7 +296,6 @@ def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
         "daily_target": snapshot["daily_target"],
         "available_today": snapshot["available_today"],
         "buffer_balance": snapshot["buffer_balance"],
-        "vacation_reserve": snapshot["vacation_reserve"],
         "capital_shortfall": snapshot["capital_shortfall"],
         "periods": snapshot["periods"],
     }

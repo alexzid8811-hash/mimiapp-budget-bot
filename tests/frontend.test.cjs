@@ -20,7 +20,7 @@ function setup() {
     '/api/payroll-settings': {settings: {}}, '/api/vacations': [], '/api/transactions': [], '/api/plan': [],
     '/api/dashboard': {daily_available: 999, period: {start:'2026-09-07',end:'2026-09-21',days_left:7}, reserve: {}, forecast: []},
     '/api/cashflow-settings': {cashflow_enabled:1,start_date:'2026-09-01'},
-    '/api/cashflow': {enabled:true,period_budget:100,available_today:5.25,remaining_period:50,buffer_balance:40,current_cash:45.25,vacation_reserve:0,periods:[],horizon_end:'2026-10-15'},
+    '/api/cashflow': {enabled:true,period_budget:100,available_today:5.25,remaining_period:50,buffer_balance:40,current_cash:45.25,periods:[],horizon_end:'2026-10-15'},
     '/api/piggy-bank': {balance:0,movements:[]},
   };
   const sandbox = {
@@ -132,11 +132,7 @@ test('piggy bank has its own page and bottom navigation tab', () => {
   assert.match(styles,/grid-template-columns:repeat\(6,1fr\)/);
 });
 
-test('buffer shows vacation funds from settings without a second input', async () => {
-  const {get,responses} = setup();
-  responses['/api/cashflow'].vacation_reserve = 11000;
-  await get('refreshBtn').listeners.click();
-  assert.match(get('vacationReserveBalance').textContent,/11\D000/);
+test('buffer has no separate vacation reserve card', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
-  assert.doesNotMatch(html,/vacationReserveAmount|saveVacationReserveBtn/);
+  assert.doesNotMatch(html,/Отложено из отпускных|vacationReserve/);
 });

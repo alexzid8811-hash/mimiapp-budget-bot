@@ -50,9 +50,6 @@
     setText("bufferHorizon", data.enabled ? `до ${formatDate(data.horizon_end)}` : "выключен");
     setText("bufferPageBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
-    const vacationReserve = Number(data.vacation_reserve || 0);
-    setText("vacationReserveBalance", formatMoney(vacationReserve));
-
     const shortfall = document.getElementById("bufferShortfall");
     if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
       shortfall.textContent = `Даже без повседневных трат не хватает ${formatMoney(data.capital_shortfall)}. Увеличьте стартовый капитал или скорректируйте обязательные платежи.`;
