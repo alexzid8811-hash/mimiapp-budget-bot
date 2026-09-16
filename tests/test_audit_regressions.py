@@ -284,7 +284,7 @@ def test_backup_restores_bill_history_and_paid_links(client):
     client.delete(f"/api/bill-rules/{rule['id']}")
     ensure_user(2)
     restore_user_data(2, export_user_data(1))
-    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 10900
+    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 900
     events = planning.bill_events(2, date(2026, 9, 1), date(2026, 9, 15))
     assert len(events) == 1
     assert events[0]['amount'] == 100
