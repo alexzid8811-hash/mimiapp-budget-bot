@@ -58,7 +58,6 @@
     $("reservedNow").textContent=money(flow ? periods[0]?.put_aside || 0 : Math.max(0,Number(d.reserve.auto_movement)||0));
     const balance=Number(flow ? flow.buffer_balance : d.reserve.balance)||0;
     const peak=flow ? Math.max(balance,...periods.map(p=>Number(p.buffer)||0)) : Number(d.reserve.future_target)||0;
-    $("reserveTarget").textContent="из "+money(peak);
     $("bufferMeter").style.width=(peak>0?Math.min(100,Math.max(0,balance/peak*100)):0)+"%";
     payroll();navigation(currentPage);
   }
