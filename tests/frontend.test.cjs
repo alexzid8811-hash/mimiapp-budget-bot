@@ -147,6 +147,7 @@ test('layout expands responsively on tablets and desktop screens', () => {
   assert.match(styles,/@media\(min-width:900px\)[\s\S]*\.page\[data-page="home"\]\.active[\s\S]*grid-template-columns/);
   assert.match(styles,/\.page\[data-page="settings"\]\.active[\s\S]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(styles,/max-width:1360px/);
+  assert.match(styles,/body\.wide \.page\[data-page="buffer"\]\{[\s\S]*max-width:none/);
 });
 
 

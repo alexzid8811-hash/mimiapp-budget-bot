@@ -350,6 +350,27 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   .page[data-page="buffer"],
   .page[data-page="piggy"]{width:100%}
   .cards-list{padding-left:20px;padding-right:20px}
+
+  /* The legacy wide-mode selector kept the buffer page at phone width. */
+  body.wide .page[data-page="buffer"]{
+    width:100%;
+    max-width:none;
+    margin-left:0;
+    margin-right:0;
+    padding-left:28px;
+    padding-right:28px;
+  }
+  body.wide .page[data-page="buffer"] .buffer-intro,
+  body.wide .page[data-page="buffer"] .buffer-summary{
+    width:100%;
+    max-width:none;
+  }
+  body.wide .page[data-page="buffer"]>.card,
+  body.wide .page[data-page="buffer"] .plan-table-wrap{
+    width:100%;
+    max-width:none;
+  }
+  body.wide .page[data-page="buffer"] .plan-table{min-width:100%}
 }
 
 @media(min-width:1280px){
