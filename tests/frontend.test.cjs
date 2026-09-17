@@ -177,6 +177,10 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
  assert.doesNotMatch(get('bufferPeriods').innerHTML,/<img/);
  assert.match(get('bufWarn').textContent,/5.000/);
  assert.match(get('planDaily').textContent,/В день везде/);
+ assert.match(get('bufferHead').innerHTML,/Движение буфера/);
+ assert.match(get('bufferPeriods').innerHTML,/5.000,00/);
+ assert.match(get('bufferPeriods').innerHTML,/из буфера/);
+ assert.doesNotMatch(get('bufferPeriods').innerHTML,/−5.000,00/);
 });
 
 test('future received amount can be edited and sent for budget recalculation', async () => {

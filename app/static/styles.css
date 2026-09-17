@@ -251,6 +251,7 @@ h2{font-size:24px}h3{font-size:16px}.eyebrow{display:none}
 .edited-badge{font-size:10px;font-weight:600;color:var(--accent)}
 .dialog-actions{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:8px;align-items:stretch}
 .dialog-actions .big{margin:0}
+.movement-cell span,.movement-cell small{display:block;white-space:nowrap}.movement-cell small{font-size:10px;font-weight:500}
 .paid .row-title{text-decoration:line-through}.paid .row-sub{opacity:.7}
 .empty{text-align:center;padding:22px 8px;color:var(--muted);font-size:13px}
 .pill{background:var(--accent-soft);color:var(--accent);border-radius:99px;padding:5px 10px;font-size:13px;font-weight:600}
