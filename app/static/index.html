@@ -6,101 +6,121 @@
   <meta name="theme-color" content="#10131a" />
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
-  <script src="/static/theme.js?v=20260917-redesign"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260917-redesign" />
+  <script src="/static/theme.js?v=20260917-full-design"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=20260917-full-design" />
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
   <div id="app">
-    <header class="topbar">
-      <div>
-        <div class="eyebrow">Личный бюджет</div>
-        <h1 id="hello">Мой бюджет</h1>
-      </div>
-      <button class="icon-btn" id="refreshBtn" aria-label="Обновить данные">↻</button>
-    </header>
+    <header class="topbar"><div><h1 id="hello">Мой бюджет</h1><div class="sub" id="periodCaption">—</div></div><div class="top-actions"><button class="icon-btn" id="themeBtn" type="button" aria-label="Переключить тему"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg></button><button class="icon-btn" id="refreshBtn" aria-label="Обновить данные"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5"/></svg></button></div></header>
 
     <main>
       <section class="page active" data-page="home">
-        <div class="today-hero">
-          <div class="today-label">Можно потратить сегодня</div>
-          <div class="today-value" id="dailyAvailable">—</div>
-          <div class="today-caption">Сегодня потрачено <strong id="spentToday">—</strong></div>
+
+        <div class="today">
+          <div class="label">Можно потратить сегодня</div>
+          <div class="value num" id="dailyAvailable">—</div>
+          <div class="spend-bar" id="spendBar" role="progressbar" aria-label="Потрачено сегодня" aria-valuemin="0" aria-valuemax="100"><span id="spendFill"></span></div>
+          <div class="spend-caption"><span>Потрачено <b id="spentToday">—</b></span><span>Останется <b id="leftToday">—</b></span></div>
         </div>
-        <button class="primary big" id="quickExpenseBtn">＋ Добавить расход</button>
-        <div class="card period-card">
-          <div class="section-head"><h3>Текущий период</h3><span class="muted" id="periodCaption">—</span></div>
-          <div class="progress"><span id="dayProgress"></span></div>
-          <div class="period-stats">
-            <div><span>Бюджет периода</span><strong id="periodBudget">—</strong></div>
-            <div><span>Осталось на период</span><strong id="remaining">—</strong></div>
-            <div><span>Обязательные платежи</span><strong id="mandatory">—</strong></div>
+        <button class="primary big quick-expense" id="quickExpenseBtn">Добавить расход</button>
+        <div class="card period">
+          <div class="section-head"><h3 id="nextPayTitle">До следующей выплаты</h3><span class="muted" id="nextPayDate">—</span></div>
+          <div class="strip" id="periodStrip" aria-label="Дни периода"></div>
+          <div class="strip-legend"><span id="periodStartLabel">—</span><span class="pay" id="periodEndLabel">—</span></div>
+          <span id="dayProgress" hidden></span>
+          <div class="stats">
+            <div class="stat"><span>Бюджет периода</span><strong id="periodBudget">—</strong></div>
+            <div class="stat"><span>Осталось</span><strong id="remaining">—</strong></div>
+            <div class="stat"><span>Обязательные платежи</span><strong id="mandatory">—</strong></div>
+            <div class="stat"><span>Отложено в буфер</span><strong id="reservedNow">—</strong></div>
           </div>
         </div>
-
         <div class="card">
-          <div class="section-head"><div><div class="eyebrow">Буфер безопасности</div><h2 id="reserveBalance">—</h2></div><span class="pill" id="reserveTarget">цель —</span></div>
-          <p class="muted" id="reserveReason">Прогноз рассчитывается по будущим выплатам и обязательным платежам.</p>
+          <div class="section-head"><h3>Буфер</h3><span class="muted num"><span id="reserveBalance">—</span> <span id="reserveTarget">—</span></span></div>
+          <div class="meter"><span id="bufferMeter"></span></div>
+          <p class="muted" id="reserveReason">—</p>
           <div id="deficitWarning" class="warning hidden"></div>
+          <div id="bufferForecastWarning" class="warning hidden"></div>
         </div>
-
-        <div class="card">
-          <div class="section-head"><h3>Следующие периоды</h3><span class="muted">до 4 мес.</span></div>
-          <div id="forecastList" class="list"></div>
-        </div>
+        <div class="card"><div class="section-head"><h3>Следующие периоды</h3><button class="secondary" data-go="buffer">Все</button></div><div id="forecastList" class="list"></div></div>
       </section>
 
       <section class="page" data-page="operations">
-        <div class="section-head"><div><div class="eyebrow">История</div><h2>Операции</h2></div><button class="secondary" id="addIncomeTxBtn">＋ Доход</button></div>
+        <div class="section-head"><div><h2>Операции</h2></div><button class="secondary" id="addIncomeTxBtn">＋ Доход</button></div>
         <div id="transactionsList" class="list cards-list"></div>
       </section>
 
       <section class="page" data-page="plan">
-        <div class="section-head"><div><div class="eyebrow">Текущий период</div><h2>Обязательные платежи</h2></div></div>
+        <div class="section-head"><div><h2>Обязательные платежи</h2></div></div>
         <p class="muted">Эти суммы уже зарезервированы и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными.</p>
         <div id="planList" class="list cards-list"></div>
       </section>
 
-      <section class="page" data-page="buffer">
-        <div class="section-head"><div><div class="eyebrow">Периоды от выплаты до выплаты</div><h2>Буфер</h2></div><span class="pill" id="bufferHorizon">—</span></div>
-        <p class="muted buffer-intro">Буфер рассчитывается между фактическими датами выплат с переносами по производственному календарю РФ для пятидневной недели. Дневной лимит выделяется на каждый календарный день, включая выходные и праздники. День следующей выплаты относится уже к новому периоду.</p>
 
-        <div id="bufferDisabled" class="warning hidden">Включите безопасный дневной лимит в настройках и укажите стартовый капитал.</div>
+      <section class="page" data-page="buffer"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button></div>
+        <p class="muted buffer-intro">Приложение откладывает деньги из периодов с большими выплатами для будущих обязательных платежей и периодов с меньшими выплатами. Деньги остаются на вашем счёте.</p>
+        <div id="bufferDisabled" class="warning hidden">Включите безопасный дневной лимит в настройках.</div>
         <div class="grid2 buffer-summary">
-          <div class="card compact"><span class="muted">В буфере</span><strong id="bufferPageBalance">—</strong></div>
-          <div class="card compact"><span class="muted">Можно сегодня</span><strong id="bufferPageDaily">—</strong></div>
+          <div class="card"><span class="muted">В буфере</span><strong class="summary-number" id="bufferPageBalance">—</strong></div>
+          <div class="card"><span class="muted">Прогноз до</span><strong class="summary-number" id="bufferHorizon">—</strong></div>
         </div>
+        <div class="muted">Можно сегодня: <strong id="bufferPageDaily">—</strong></div>
         <div id="bufferShortfall" class="warning hidden"></div>
-
-        <div class="card buffer-table-card">
-          <div class="section-head"><h3>План по периодам</h3><span class="muted">автоматически</span></div>
-          <div class="buffer-table-wrap">
-            <table class="buffer-table">
-              <thead><tr><th>Дата</th><th>Вид</th><th>Получено</th><th>Дней</th><th>Обязательные</th><th>Свободно</th><th>В день</th><th>Отложить</th><th>Взять</th><th>Буфер</th></tr></thead>
-              <tbody id="bufferPeriods"><tr><td colspan="10"><div class="empty">Загрузка…</div></td></tr></tbody>
-            </table>
-          </div>
+        <div class="card">
+          <div class="section-head"><h3>План по периодам</h3><span class="muted" id="planDaily">—</span></div>
+          <div class="buf-chart" id="bufChart" role="img" aria-label="Остаток буфера по периодам"></div>
+          <div class="buf-chart-legend"><span>Остаток буфера</span><span id="bufChartEnd">—</span></div>
+          <div class="warning hidden" id="bufWarn"></div>
+          <div class="plan-cards" id="planCards"></div>
+          <div class="plan-table-wrap"><table class="plan-table"><thead id="bufferHead"></thead><tbody id="bufferPeriods"></tbody></table></div>
         </div>
-
       </section>
-
-      <section class="page" data-page="piggy">
-        <div class="section-head"><div><div class="eyebrow">На чёрный день</div><h2>Копилка</h2></div><strong class="piggy-balance" id="piggyBalance">—</strong></div>
-        <div class="card piggy-card">
-          <p class="muted">Копилка отделена от автоматического буфера. Пополнение исключает деньги из доступного бюджета, а снятие возвращает их обратно.</p>
-          <div class="piggy-actions">
-            <button class="primary" id="piggyDepositBtn" type="button">＋ Пополнить</button>
-            <button class="secondary" id="piggyWithdrawBtn" type="button">Снять</button>
-          </div>
-          <div class="section-head piggy-history-head"><h3>История</h3></div>
-          <div id="piggyMovements" class="list"></div>
+      <section class="page" data-page="piggy"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button></div>
+        <div class="card"><span class="muted">В копилке</span><strong class="piggy-balance" id="piggyBalance">—</strong>
+          <p class="muted">Пополнение убирает деньги из дневного бюджета, снятие возвращает их.</p>
+          <div class="piggy-actions"><button class="primary" id="piggyDepositBtn">Пополнить</button><button class="secondary" id="piggyWithdrawBtn">Снять</button></div>
         </div>
+        <div class="card"><h3>История</h3><div id="piggyMovements" class="list"></div></div>
       </section>
 
       <section class="page" data-page="settings">
-        <div class="section-head"><div><div class="eyebrow">Параметры</div><h2>Настройки</h2></div></div>
+        <div class="section-head"><div><h2>Настройки</h2></div></div>
 
         <div class="card">
-          <div class="section-head"><div><div class="eyebrow">Внешний вид</div><h3>Тема оформления</h3></div></div>
+          <div class="section-head">
+            <div><h3>Зарплата и аванс</h3></div>
+            <span class="pill" id="payDaysBadge">7 и 22 числа</span>
+          </div>
+          <label class="checkbox"><input id="payrollEnabled" type="checkbox" /> Считать автоматически</label>
+<div id="payrollFields"><div class="grid2"><label>Оклад до НДФЛ
+              <input id="salaryGross" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="100 000,00" />
+            </label><label>Премия до НДФЛ
+              <input id="bonusGross" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="20 000,00" />
+            </label></div><div class="grid3"><label>День зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label><label>День аванса<input id="advanceDay" type="number" min="1" max="31" /></label><label>НДФЛ, %<input id="taxRate" type="number" min="0" max="100" step="0.1" /></label></div>            <details><summary>Как считается</summary><p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. При отпуске из расчёта исключаются только рабочие дни отпуска. На дату зарплаты приходит остаток оплаты за отработанные дни + чистая премия. Премия автоматически не уменьшается.</p></details>
+            <div id="payrollPreview" class="payroll-preview"></div><label>Применять условия с даты<input id="payrollEffectiveDate" type="date" required /></label>
+            <p class="muted">По умолчанию — с сегодняшнего дня. Прошедшие дни сохраняются. Выберите более раннюю дату только для исправления истории.</p>
+            
+            <button class="primary wide" id="savePayrollBtn" type="button">Сохранить расчёт зарплаты</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Стартовый капитал и буфер</h3><label class="checkbox"><input id="cashflowEnabled" type="checkbox" />Считать безопасный дневной лимит</label><div class="grid3">
+          <label>Капитал на начало дня
+            <input id="initialReserve" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="0,00" />
+          </label>
+          <label>Дата старта<input id="cashflowStartDate" type="date" /></label><label>Прогноз, месяцев
+            <input id="forecastMonths" type="number" min="1" max="12" />
+          </label>
+          </div><button class="primary wide" id="saveCashflowBtn" type="button">Сохранить старт и буфер</button><label>Валюта
+            <select id="currency"><option value="RUB">₽ RUB</option><option value="EUR">€ EUR</option><option value="USD">$ USD</option></select>
+          </label>
+          <button class="primary" id="saveSettingsBtn">Сохранить</button>
+        </div>
+
+        <div class="card">
+          <div class="section-head"><div><h3>Тема оформления</h3></div></div>
           <label>Тема
             <select id="themeMode">
               <option value="auto">Автоматически</option>
@@ -112,33 +132,7 @@
         </div>
 
         <div class="card">
-          <div class="section-head">
-            <div><div class="eyebrow">Автоматический расчёт</div><h3>Зарплата</h3></div>
-            <span class="pill">7 / 22</span>
-          </div>
-          <label class="checkbox"><input id="payrollEnabled" type="checkbox" /> Рассчитывать зарплату и аванс автоматически</label>
-          <div id="payrollFields">
-            <label>Оклад до НДФЛ
-              <input id="salaryGross" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="100 000,00" />
-            </label>
-            <label>Премия до НДФЛ
-              <input id="bonusGross" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="20 000,00" />
-            </label>
-            <div class="grid2">
-              <label>НДФЛ, %<input id="taxRate" type="number" min="0" max="100" step="0.1" /></label>
-              <label>Дата аванса<input id="advanceDay" type="number" min="1" max="31" /></label>
-            </div>
-            <label>Дата зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label>
-            <p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. При отпуске из расчёта исключаются только рабочие дни отпуска. На дату зарплаты приходит остаток оплаты за отработанные дни + чистая премия. Премия автоматически не уменьшается.</p>
-            <label>Применять условия с даты<input id="payrollEffectiveDate" type="date" required /></label>
-            <p class="muted">По умолчанию — с сегодняшнего дня. Прошедшие дни сохраняются. Выберите более раннюю дату только для исправления истории.</p>
-            <div id="payrollPreview" class="payroll-preview"></div>
-            <button class="primary" id="savePayrollBtn" type="button">Сохранить расчёт зарплаты</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="section-head"><div><div class="eyebrow">Разовые выплаты</div><h3>Отпускные</h3></div><button class="secondary" id="addVacationBtn">＋</button></div>
+          <div class="section-head"><div><h3>Отпускные</h3></div><button class="secondary" id="addVacationBtn">＋</button></div>
           <p class="muted">Сумму отпускных вводите вручную. Она учитывается как отдельный доход. Зарплата и аванс уменьшаются только за рабочие дни отпуска — сумма отпускных сама по себе из них не вычитается и долг не переносится.</p>
           <div id="vacationsList" class="list"></div>
         </div>
@@ -151,20 +145,6 @@
         <div class="card">
           <div class="section-head"><h3>Обязательные платежи</h3><button class="secondary" id="addBillRuleBtn">＋</button></div>
           <div id="billRulesList" class="list"></div>
-        </div>
-
-        <div class="card">
-          <h3>Стартовый капитал и прогноз</h3>
-          <label>Стартовый капитал на начало дня
-            <input id="initialReserve" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="0,00" />
-          </label>
-          <label>Горизонт прогноза, месяцев
-            <input id="forecastMonths" type="number" min="1" max="12" />
-          </label>
-          <label>Валюта
-            <select id="currency"><option value="RUB">₽ RUB</option><option value="EUR">€ EUR</option><option value="USD">$ USD</option></select>
-          </label>
-          <button class="primary" id="saveSettingsBtn">Сохранить</button>
         </div>
 
         <div class="card">
@@ -184,19 +164,12 @@
       </section>
     </main>
 
-    <nav class="bottom-nav" aria-label="Разделы">
-      <button class="nav-item active" data-nav="home"><span>⌂</span><small>Главная</small></button>
-      <button class="nav-item" data-nav="operations"><span>≡</span><small>Операции</small></button>
-      <button class="nav-item" data-nav="plan"><span>✓</span><small>План</small></button>
-      <button class="nav-item" data-nav="buffer"><span>◈</span><small>Буфер</small></button>
-      <button class="nav-item" data-nav="piggy"><span>₽</span><small>Копилка</small></button>
-      <button class="nav-item" data-nav="settings"><span>⚙</span><small>Настройки</small></button>
-    </nav>
+    <nav class="bottom-nav" aria-label="Разделы"><div class="nav-inner"><button class="nav-item active" data-nav="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><small>Главная</small></button><button class="nav-item" data-nav="operations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><small>Операции</small></button><button class="nav-item" data-nav="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><small>Платежи</small></button><button class="nav-item" data-nav="buffer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><small>Резервы</small></button><button class="nav-item" data-nav="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><small>Настройки</small></button></div></nav>
   </div>
 
   <dialog id="expenseDialog">
     <form method="dialog" id="expenseForm" class="dialog-card">
-      <div class="section-head"><h2>Новый расход</h2><button class="icon-btn" aria-label="Закрыть" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <div class="section-head"><h2>Новый расход</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <label>Сумма<input id="expenseAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Категория<select id="expenseCategory"></select></label>
       <label>Дата<input id="expenseDate" type="date" required /></label>
@@ -207,7 +180,7 @@
 
   <dialog id="incomeTxDialog">
     <form method="dialog" id="incomeTxForm" class="dialog-card">
-      <div class="section-head"><h2>Дополнительный доход</h2><button class="icon-btn" aria-label="Закрыть" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <div class="section-head"><h2>Дополнительный доход</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <label>Сумма<input id="incomeTxAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="incomeTxDate" type="date" required /></label>
       <label>Комментарий<input id="incomeTxNote" maxlength="200" placeholder="Премия, возврат..." /></label>
@@ -217,7 +190,7 @@
 
   <dialog id="vacationDialog">
     <form method="dialog" id="vacationForm" class="dialog-card">
-      <div class="section-head"><h2 id="vacationDialogTitle">Отпуск</h2><button class="icon-btn" aria-label="Закрыть" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <div class="section-head"><h2 id="vacationDialogTitle">Отпуск</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="vacationId" type="hidden" />
       <div class="grid2">
         <label>Начало<input id="vacationStart" type="date" required /></label>
@@ -233,7 +206,7 @@
 
   <dialog id="ruleDialog">
     <form method="dialog" id="ruleForm" class="dialog-card">
-      <div class="section-head"><h2 id="ruleDialogTitle">Правило</h2><button class="icon-btn" aria-label="Закрыть" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <div class="section-head"><h2 id="ruleDialogTitle">Правило</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="ruleMode" type="hidden" />
       <input id="ruleId" type="hidden" />
       <label>Название<input id="ruleTitle" required maxlength="80" /></label>
@@ -253,7 +226,7 @@
 
   <dialog id="piggyDialog">
     <form method="dialog" id="piggyForm" class="dialog-card">
-      <div class="section-head"><h2 id="piggyDialogTitle">Копилка</h2><button class="icon-btn" aria-label="Закрыть" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <div class="section-head"><h2 id="piggyDialogTitle">Копилка</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="piggyDirection" type="hidden" value="deposit" />
       <label>Сумма<input id="piggyAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="piggyDate" type="date" required /></label>
@@ -264,7 +237,7 @@
 
   <dialog id="billPaymentDialog">
     <form method="dialog" id="billPaymentForm" class="dialog-card">
-      <div class="section-head"><h2>Фактическая сумма платежа</h2><button class="icon-btn" aria-label="Закрыть" type="button" onclick="this.closest('dialog').close()">×</button></div>
+      <div class="section-head"><h2>Фактическая сумма платежа</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="billPaymentId" type="hidden" />
       <p id="billPaymentPlanned" class="muted"></p>
       <label>Оплачено фактически<input id="billPaymentAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
@@ -279,13 +252,15 @@
     </form>
   </dialog>
 
-  <div id="toast" class="toast"></div>
-  <script src="/static/budget-date.js?v=20260917-redesign"></script>
-  <script src="/static/money-input.js?v=20260917-redesign"></script>
-  <script src="/static/app.js?v=20260917-redesign"></script>
-  <script src="/static/cashflow-ui.js?v=20260917-redesign"></script>
-  <script src="/static/buffer-ui.js?v=20260917-redesign"></script>
-  <script src="/static/backup.js?v=20260917-redesign"></script>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/budget-date.js?v=20260917-full-design"></script>
+  <script src="/static/money-input.js?v=20260917-full-design"></script>
+  <script src="/static/app.js?v=20260917-full-design"></script>
+  <script src="/static/cashflow-ui.js?v=20260917-full-design"></script>
+  <script src="/static/buffer-ui.js?v=20260917-full-design"></script>
+  <script src="/static/design-ui.js?v=20260917-full-design"></script>
+  <script src="/static/backup.js?v=20260917-full-design"></script>
 </body>
 </html>
+
 

@@ -58,31 +58,45 @@
       shortfall.classList.add("hidden");
     }
 
+
     const body = document.getElementById("bufferPeriods");
-    if (!data.enabled || !data.periods?.length) {
+    const cards = document.getElementById("planCards");
+    const chart = document.getElementById("bufChart");
+    const warning = document.getElementById("bufWarn");
+    const homeWarning = document.getElementById("bufferForecastWarning");
+    warning.classList.add("hidden"); homeWarning.classList.add("hidden");
+    chart.innerHTML = ""; setText("bufChartEnd", "—"); setText("planDaily", "");
+    const periods = data.enabled ? data.periods || [] : [];
+    if (!periods.length) {
       const message = data.enabled ? "Нет периодов для прогноза." : "План появится после включения расчёта в настройках.";
-      body.innerHTML = `<tr><td colspan="10"><div class="empty">${message}</div></td></tr>`;
+      body.innerHTML = `<tr><td colspan="9"><div class="empty">${message}</div></td></tr>`;
+      cards.innerHTML = `<div class="empty">${message}</div>`;
+      document.getElementById("bufferHead").innerHTML = "";
       return;
     }
-
-    const labels = ["Дата", "Вид", "Получено", "Дней", "Обязательные", "Свободно", "В день", "Отложить", "Взять", "Буфер"];
-    body.innerHTML = data.periods.map((period, index) => {
-      const cells = [
-        `${formatDate(period.start)} — ${formatDate(period.end)}`,
-        safe(period.kind),
-        formatMoney(period.received),
-        period.days,
-        formatMoney(period.mandatory),
-        formatMoney(period.free),
-        formatMoney(period.daily),
-        period.put_aside > 0 ? formatMoney(period.put_aside) : "—",
-        period.take > 0 ? formatMoney(period.take) : "—",
-        formatMoney(period.buffer),
-      ];
-      return `<tr class="${index === 0 ? "current-row" : ""}">${cells.map((cell, i) => {
-        const color = i === 7 && period.put_aside > 0 ? "positive" : i === 8 && period.take > 0 ? "negative" : "";
-        return `<td data-label="${labels[i]}" class="${color}">${cell}</td>`;
-      }).join("")}</tr>`;
+    const max = Math.max(0, ...periods.map(p => Number(p.buffer) || 0));
+    const commonDaily = periods.every(p => Number(p.daily) === Number(periods[0].daily));
+    setText("planDaily", commonDaily ? "В день везде " + formatMoney(periods[0].daily) : "Дневной лимит по периодам");
+    chart.innerHTML = periods.map((p,i) => `<div class="bar ${i===0?"cur":p.buffer<max*.1?"low":""}" style="height:${max>0?Math.max(3,Math.max(0,Number(p.buffer))/max*100):3}%" title="${safe(formatDate(p.start)+" — "+formatDate(p.end)+": "+formatMoney(p.buffer))}"></div>`).join("");
+    const last = periods[periods.length-1];
+    setText("bufChartEnd", formatDate(last.end)+": "+formatMoney(last.buffer));
+    const worst = periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
+    if(worst.length) {
+      const text = "Больше всего возьмёте из буфера в периоды "+worst.map(p=>formatDate(p.start)+" — "+formatDate(p.end)).join(" и ")+": "+formatMoney(worst.reduce((a,p)=>a+Number(p.take),0))+". К концу прогноза останется "+formatMoney(last.buffer)+".";
+      warning.textContent=text;homeWarning.textContent=text;
+      warning.classList.remove("hidden");homeWarning.classList.remove("hidden");
+    }
+    const movement = p => p.take>0 ? ["neg","−"+formatMoney(p.take),"взять"] : p.put_aside>0 ? ["pos","+"+formatMoney(p.put_aside),"отложить"] : ["zero","—","без движения"];
+    const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
+    cards.innerHTML = periods.map((p,i)=>{
+      const [c,m,label]=movement(p);
+      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>Получено</span><b>${formatMoney(p.received)}</b></div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>${commonDaily?"":`<div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div>`}<div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+    }).join("");
+    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период","Выплата","Дней","Получено","Обязательные","Свободно",...(commonDaily?[]:["В день"]),"В буфер","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
+    body.innerHTML = periods.map((p,i)=>{
+      const [c,m]=movement(p);
+      const cells=[formatDate(p.start)+" — "+formatDate(p.end),safe(p.kind),Number(p.days),formatMoney(p.received),formatMoney(p.mandatory),formatMoney(p.free),...(commonDaily?[]:[formatMoney(p.daily)])];
+      return `<tr class="${i===0?"cur":""}">${cells.map(c=>`<td class="num">${c}</td>`).join("")}<td class="num sep ${c}">${m}</td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
   }
 
@@ -167,3 +181,4 @@
   document.querySelector('[data-nav="piggy"]')?.addEventListener("click", () => refresh());
   window.refreshBuffer = refresh;
 })();
+

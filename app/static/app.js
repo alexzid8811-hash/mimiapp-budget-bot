@@ -62,6 +62,7 @@ async function loadAll() {
     window.applyCashflowSettings?.(cashflowSettings);
     window.applyCashflow?.(cashflow);
     await window.refreshBuffer?.(cashflow);
+    window.budgetDesign?.render(state);
   } catch (e) { toast(e.message); }
 }
 
@@ -183,7 +184,8 @@ function escapeHtml(s) { return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'
 
 function switchPage(page) {
   document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.dataset.page === page));
-  document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x.dataset.nav === page));
+  document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x.dataset.nav === (page === 'piggy' ? 'buffer' : page)));
+  window.budgetDesign?.navigation(page);
   window.scrollTo({top:0, behavior:'smooth'});
 }
 
@@ -353,3 +355,4 @@ $("addCategoryBtn").addEventListener("click", async () => {
 });
 
 window.addEventListener("DOMContentLoaded", () => loadAll(), { once: true });
+

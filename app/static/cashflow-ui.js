@@ -53,46 +53,11 @@
   }
 
   function injectSettingsUI() {
-    if (document.getElementById("cashflowEnabled")) return;
-    const capitalInput = document.getElementById("initialReserve");
-    const card = capitalInput?.closest(".card");
-    if (!card) return;
-
-    const title = card.querySelector("h3");
-    if (title) title.textContent = "Стартовый капитал и буфер";
-
-    const capitalLabel = capitalInput.closest("label");
-    if (capitalLabel) {
-      const textNode = [...capitalLabel.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
-      if (textNode) textNode.textContent = "Стартовый капитал на начало дня\n            ";
+    const save = document.getElementById("saveCashflowBtn");
+    if (save && !save.dataset?.bound) {
+      save.addEventListener("click", saveCashflowSettings);
+      if (save.dataset) save.dataset.bound = "true";
     }
-
-    const enableLabel = document.createElement("label");
-    enableLabel.className = "checkbox";
-    enableLabel.innerHTML = '<input id="cashflowEnabled" type="checkbox" /> Не уходить в минус: считать безопасный дневной лимит';
-
-    const dateLabel = document.createElement("label");
-    dateLabel.innerHTML = `Дата старта расчёта<input id="cashflowStartDate" type="date" value="${todayISO()}" />`;
-
-    const help = document.createElement("p");
-    help.className = "muted";
-    help.textContent = "Стартовый капитал — деньги без отпускных, которыми вы располагаете на начало выбранного дня. Отпускные приложение учитывает автоматически из раздела выше. Всё сверх безопасной суммы на день останется для будущих обязательных платежей и слабых выплат.";
-
-    const save = document.createElement("button");
-    save.className = "primary";
-    save.id = "saveCashflowBtn";
-    save.type = "button";
-    save.textContent = "Сохранить старт и буфер";
-
-    card.insertBefore(enableLabel, capitalLabel);
-    card.insertBefore(dateLabel, capitalLabel);
-    capitalLabel.insertAdjacentElement("afterend", help);
-    help.insertAdjacentElement("afterend", save);
-
-    const reserveHeading = document.getElementById("reserveBalance")?.closest(".section-head")?.querySelector(".eyebrow");
-    if (reserveHeading) reserveHeading.textContent = "Буфер безопасности";
-
-    save.addEventListener("click", saveCashflowSettings);
   }
 
   function applyCashflow(flow) {
@@ -163,3 +128,4 @@
 
   injectSettingsUI();
 })();
+

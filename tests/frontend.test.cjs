@@ -8,7 +8,8 @@ function setup() {
   const elements = new Map(), requests = [];
   const get = id => {
     if (!elements.has(id)) elements.set(id, {
-      value: '', checked: false, textContent: '', innerHTML: '', style: {}, listeners: {},
+      value: '', checked: false, textContent: '', innerHTML: '', style: {}, listeners: {}, dataset: {},
+      setAttribute() {}, removeAttribute() {}, replaceChildren() {}, appendChild() {},
       classList: {add() {}, remove() {}, toggle() {}},
       addEventListener(type, fn) { this.listeners[type] = fn; },
       showModal() {}, close() {},
@@ -27,14 +28,14 @@ function setup() {
     console, URLSearchParams, Intl, Date, Number, JSON,
     setTimeout: () => 0, setInterval: () => 0, clearInterval() {},
     window: {location:{hash:'',search:''},addEventListener(){}},
-    document: {getElementById:get, querySelectorAll:()=>[],querySelector:()=>null},
+    document: {addEventListener(){}, body:{classList:{toggle(){}}}, createElement:()=>({}),getElementById:get, querySelectorAll:()=>[],querySelector:()=>null},
     fetch: async (url, options) => {
       requests.push({url,body:options?.body});
       return {ok:true,status:200,json:async()=>responses[url] ?? {}};
     },
   };
   vm.createContext(sandbox);
-  for (const name of ['budget-date.js','app.js','cashflow-ui.js','buffer-ui.js']) {
+  for (const name of ['budget-date.js','app.js','cashflow-ui.js','buffer-ui.js','design-ui.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static',name),'utf8'),sandbox);
   }
   return {sandbox, get, requests, responses};
@@ -121,18 +122,47 @@ test('paid bill can be edited from transaction history and its remainder sent to
   assert.deepEqual(JSON.parse(request.body), {amount:8000,remainder_destination:'piggy'});
 });
 
-test('piggy bank has its own page and bottom navigation tab', () => {
+test('piggy bank remains accessible through reserves tabs', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
   const styles = fs.readFileSync(path.join(__dirname,'../app/static/styles.css'),'utf8');
   const bufferStart = html.indexOf('data-page="buffer"');
   const piggyStart = html.indexOf('data-page="piggy"');
   const settingsStart = html.indexOf('data-page="settings"');
   assert.ok(bufferStart >= 0 && piggyStart > bufferStart && settingsStart > piggyStart);
-  assert.match(html,/data-nav="piggy"[^>]*><span>₽<\/span><small>Копилка<\/small>/);
-  assert.match(styles,/grid-template-columns:repeat\(6,1fr\)/);
+  assert.match(html,/data-seg="piggy"/);
+  assert.match(styles,/grid-template-columns:repeat\(5,1fr\)/);
 });
 
 test('buffer has no separate vacation reserve card', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
   assert.doesNotMatch(html,/Отложено из отпускных|vacationReserve/);
+});
+
+
+test('redesign uses today target without subtracting expenses twice and preserves overspending', async () => {
+ const {get,responses}=setup();
+ responses['/api/dashboard'].spent_today=2190;
+ Object.assign(responses['/api/cashflow'],{today_target:1272.13,available_today:-917.87});
+ await get('refreshBtn').listeners.click();
+ assert.match(get('dailyAvailable').textContent,/-917,87/);
+ assert.match(get('leftToday').textContent,/-917,87/);
+ assert.equal(get('spendFill').style.width,'100%');
+ Object.assign(responses['/api/cashflow'],{today_target:4255,available_today:2975});
+ responses['/api/dashboard'].spent_today=1280;
+ await get('refreshBtn').listeners.click();
+ assert.match(get('dailyAvailable').textContent,/4.255,00/);
+ assert.match(get('leftToday').textContent,/2.975,00/);
+});
+
+test('buffer renders responsive cards and table, escaping user-provided labels', async () => {
+ const {get,responses}=setup();
+ responses['/api/cashflow'].periods=[
+ {start:'2026-09-07',end:'2026-09-21',kind:'<img src=x>',days:15,received:30000,mandatory:5000,free:25000,daily:1000,put_aside:10000,take:0,buffer:10000},
+ {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',days:15,received:20000,mandatory:10000,free:10000,daily:1000,put_aside:0,take:5000,buffer:5000}
+ ];
+ await get('refreshBtn').listeners.click();
+ assert.match(get('planCards').innerHTML,/&lt;img/);
+ assert.doesNotMatch(get('bufferPeriods').innerHTML,/<img/);
+ assert.match(get('bufWarn').textContent,/5.000/);
+ assert.match(get('planDaily').textContent,/В день везде/);
 });
