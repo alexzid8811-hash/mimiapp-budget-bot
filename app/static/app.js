@@ -89,7 +89,6 @@ function renderDashboard() {
   $("cardBuffer").textContent = money(d.reserve.balance);
   $("cardPiggy").textContent = "—";
   $("cardReservesTotal").textContent = money(d.reserve.balance);
-  $("reserveTarget").textContent = `цель ${money(d.reserve.future_target)}`;
   const movement = Number(d.reserve.auto_movement || 0);
   $("reserveReason").textContent = movement > 0
     ? `${d.reserve.reason}: ${money(movement)} автоматически исключено из свободного бюджета.`
