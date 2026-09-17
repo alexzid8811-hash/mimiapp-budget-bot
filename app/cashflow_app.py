@@ -148,19 +148,88 @@ def cashflow_period_rows(
     spent_today: float = 0,
     income_overrides: dict[date, float] | None = None,
 ) -> list[dict]:
+    """Build buffer rows without rewriting periods before an edited payment.
+
+    A correction starts a new daily-budget segment on that payment date.  Its
+    reduced (or increased) safe limit is applied only to that period and later
+    ones; rows before it retain the plan that was already shown to the user.
+    """
     periods = cashflow_periods(user_id, today, horizon_end)
     income = planned_income_map(user_id, today + timedelta(days=1), horizon_end)
     mandatory = planned_mandatory_map(user_id, today + timedelta(days=1), horizon_end)
     overrides = income_overrides or {}
+    daily_by_period = [round(daily_target, 2) for _ in periods]
+    if periods and today_target is not None:
+        daily_by_period[0] = round(today_target, 2)
+
+    # Apply edits in chronological order.  Later edits deliberately do not
+    # participate in an earlier segment calculation, otherwise changing (for
+    # example) December would retroactively change September--November.
+    for index, item in enumerate(periods):
+        period_start = item["date"]
+        if index == 0 or period_start not in overrides:
+            continue
+
+        balance_before = round(opening_balance_before_today_spend, 2)
+        for previous_index, previous in enumerate(periods[:index]):
+            previous_start = previous["date"]
+            previous_end = previous["end"]
+            planned_income = round(
+                sum(value for day, value in income.items() if previous_start <= day <= previous_end),
+                2,
+            )
+            effective_income = (
+                overrides[previous_start]
+                if previous_index > 0 and previous_start in overrides
+                else planned_income
+            )
+            bills = round(
+                sum(value for day, value in mandatory.items() if previous_start <= day <= previous_end),
+                2,
+            )
+            balance_before = round(
+                balance_before + effective_income - bills
+                - daily_by_period[previous_index] * ((previous_end - previous_start).days + 1),
+                2,
+            )
+
+        # calculate_cashflow_plan treats its opening amount as already
+        # containing today's flows, so add the payment and bills on the first
+        # day of this new segment explicitly.
+        opening = round(
+            balance_before
+            + overrides[period_start]
+            - float(income.get(period_start, 0.0))
+            - float(mandatory.get(period_start, 0.0)),
+            2,
+        )
+        segment_income = {
+            day: value for day, value in income.items()
+            if period_start < day <= horizon_end
+        }
+        segment_mandatory = {
+            day: value for day, value in mandatory.items()
+            if period_start < day <= horizon_end
+        }
+        segment_plan = calculate_cashflow_plan(
+            today=period_start,
+            horizon_end=horizon_end,
+            opening_balance_before_today_spend=opening,
+            spent_today=0,
+            income_by_date=segment_income,
+            mandatory_by_date=segment_mandatory,
+        )
+        for later_index in range(index, len(daily_by_period)):
+            daily_by_period[later_index] = round(segment_plan.daily_target, 2)
+
     buffer_before = 0.0
     result: list[dict] = []
-
     for index, item in enumerate(periods):
         period_start = item["date"]
         period_end = item["end"]
         days = (period_end - period_start).days + 1
         planned_income = round(
-            sum(amount for day, amount in income.items() if period_start <= day <= period_end), 2
+            sum(value for day, value in income.items() if period_start <= day <= period_end), 2
         )
         overridden = index > 0 and period_start in overrides
         effective_income = overrides[period_start] if overridden else planned_income
@@ -168,18 +237,11 @@ def cashflow_period_rows(
             (opening_balance_before_today_spend if index == 0 else 0.0) + effective_income, 2
         )
         bills = round(
-            sum(amount for day, amount in mandatory.items() if period_start <= day <= period_end), 2
+            sum(value for day, value in mandatory.items() if period_start <= day <= period_end), 2
         )
         free = round(received - bills, 2)
-        # The current-period buffer is protected by the original daily
-        # allowance. An overspend changes future limits, not this buffer.
-        current_period_target = daily_target if today_target is None else today_target
-        planned_spending = round(
-            (current_period_target * days)
-            if index == 0
-            else daily_target * days,
-            2,
-        )
+        period_daily = daily_by_period[index]
+        planned_spending = round(period_daily * days, 2)
         raw_after = round(buffer_before + free - planned_spending, 2)
         buffer_after = round(max(0.0, raw_after), 2)
         put_aside = round(max(0.0, buffer_after - buffer_before), 2)
@@ -198,7 +260,7 @@ def cashflow_period_rows(
                 "days": days,
                 "mandatory": bills,
                 "free": free,
-                "daily": round(daily_target, 2),
+                "daily": period_daily,
                 "put_aside": put_aside,
                 "take": take,
                 "buffer": buffer_after,
@@ -207,7 +269,6 @@ def cashflow_period_rows(
         )
         buffer_before = raw_after
     return result
-
 
 def cashflow_snapshot(user_id: int) -> dict:
     settings = cashflow_settings(user_id)
@@ -253,10 +314,6 @@ def cashflow_snapshot(user_id: int) -> dict:
         for income_day in list(income_future):
             if overridden_start <= income_day <= overridden_end:
                 income_future.pop(income_day)
-    if tomorrow <= horizon_end:
-        income_future = apply_cashflow_income_overrides(
-            user_id, today=today, horizon_end=horizon_end, income=income_future
-        )
     mandatory_future = planned_mandatory_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
 
     plan = calculate_cashflow_plan(
