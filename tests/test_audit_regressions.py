@@ -81,6 +81,18 @@ def test_period_table_includes_overspend(client):
     assert result[0]['buffer'] == 0
 
 
+def test_overspend_does_not_reduce_current_period_buffer(client):
+    before = cashflow_period_rows(
+        1, today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
+        opening_balance_before_today_spend=1000, daily_target=100, today_target=100,
+    )
+    after = cashflow_period_rows(
+        1, today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
+        opening_balance_before_today_spend=1000, daily_target=20, today_target=100, spent_today=900,
+    )
+    assert after[0]['buffer'] == before[0]['buffer']
+
+
 def test_actual_cash_and_unpaid_obligations_are_separate(client):
     bill = client.post('/api/bill-rules', json={
         'title': 'Подписка', 'amount': 100, 'day_of_month': 15,
