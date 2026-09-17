@@ -76,8 +76,9 @@
     setText("reserveTarget", `на счету ${formatMoney(flow.current_cash)}`);
 
     const piggyBalance = Number(flow.piggy_bank_balance || 0);
-    setText("cardCash", formatMoney(flow.current_cash));
-    setText("cardPeriodMoney", formatMoney(flow.remaining_period));
+    // The physical card holds only the spending money for this period.
+    // Buffer and piggy-bank money are kept on a separate account.
+    setText("cardCash", formatMoney(flow.remaining_period));
     setText("cardBuffer", formatMoney(flow.buffer_balance));
     setText("cardPiggy", formatMoney(piggyBalance));
     setText("cardReservesTotal", formatMoney(Number(flow.buffer_balance || 0) + piggyBalance));
