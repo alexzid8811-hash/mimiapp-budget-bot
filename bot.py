@@ -11,8 +11,7 @@ from app.reminders import pending_bill_reminders, record_bill_reminder
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "")
-REMINDER_DAYS = max(0, int(os.getenv("REMINDER_DAYS", "3")))
-REMINDER_CHECK_SECONDS = max(60, int(os.getenv("REMINDER_CHECK_SECONDS", "3600")))
+REMINDER_CHECK_SECONDS = max(60, int(os.getenv("REMINDER_CHECK_SECONDS", "60")))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -44,7 +43,13 @@ def reminder_text(reminder: dict) -> str:
 
 
 async def send_bill_reminders(application) -> None:
-    for reminder in pending_bill_reminders(clock.today(), REMINDER_DAYS):
+    now = clock.now()
+    current_time = now.strftime("%H:%M")
+    for reminder in pending_bill_reminders(now.date()):
+        # Using >= keeps reminders reliable after a short bot restart or a
+        # delayed polling cycle.
+        if current_time < reminder["reminder_time"]:
+            continue
         try:
             await application.bot.send_message(
                 chat_id=reminder["user_id"], text=reminder_text(reminder)
