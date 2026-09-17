@@ -152,6 +152,18 @@ def discretionary_spent(user_id: int, start: date, end: date) -> float:
         return round(float(r[0]), 2)
 
 
+def paid_mandatory_spent(user_id: int, start: date, end: date) -> float:
+    """Actual obligatory payments, booked on the date money left the account."""
+    with connect() as con:
+        r = con.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM transactions "
+            "WHERE user_id=? AND type='expense' AND bill_rule_id IS NOT NULL "
+            "AND tx_date BETWEEN ? AND ?",
+            (user_id, start.isoformat(), end.isoformat()),
+        ).fetchone()
+        return round(float(r[0]), 2)
+
+
 def reserve_balance_before(user_id: int, before_period: date) -> float:
     settings = one("SELECT initial_reserve FROM settings WHERE user_id=?", (user_id,)) or {}
     with connect() as con:
@@ -305,6 +317,8 @@ def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) ->
 @app.post("/api/transactions")
 def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
+    if payload.tx_date > clock.today():
+        raise HTTPException(422, "Дата операции не может быть в будущем")
     with connect() as con:
         require_category(con, uid, payload.category_id)
         cur = con.execute(
@@ -312,6 +326,34 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
             (uid, payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id, payload.note),
         )
         tx_id = cur.lastrowid
+    invalidate_current_auto_reserve(uid)
+    return one("SELECT * FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)) or {}
+
+
+@app.put("/api/transactions/{tx_id}")
+def update_transaction(
+    tx_id: int, payload: TransactionIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = user_ready(user)
+    if payload.tx_date > clock.today():
+        raise HTTPException(422, "Дата операции не может быть в будущем")
+    with connect() as con:
+        require_category(con, uid, payload.category_id)
+        current = con.execute(
+            "SELECT bill_rule_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
+        ).fetchone()
+        if current is None:
+            raise HTTPException(404, "Операция не найдена")
+        if current["bill_rule_id"] is not None:
+            raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
+        con.execute(
+            "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=? "
+            "WHERE id=? AND user_id=?",
+            (
+                payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
+                payload.note, tx_id, uid,
+            ),
+        )
     invalidate_current_auto_reserve(uid)
     return one("SELECT * FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)) or {}
 
@@ -361,7 +403,7 @@ def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(
                 "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,bill_planned_amount) "
                 "VALUES(?, 'expense', ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    uid, event["amount"], payload.due_date.isoformat(), event.get("category_id"),
+                    uid, event["amount"], clock.today().isoformat(), event.get("category_id"),
                     event["title"], bill_id, payload.due_date.isoformat(), event["amount"],
                 ),
             )
@@ -409,7 +451,7 @@ def edit_bill_payment(
                 (uid, payment_id),
             ).fetchone()
             if saved_cents:
-                movement_date = min(due_date, clock.today()).isoformat()
+                movement_date = str(payment["tx_date"])
                 note = f"Остаток от обязательного платежа: {payment['note']}"[:160]
                 if existing:
                     con.execute(

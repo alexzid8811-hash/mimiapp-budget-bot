@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS settings (
     advance_day INTEGER NOT NULL DEFAULT 22,
     cashflow_enabled INTEGER NOT NULL DEFAULT 0,
     cashflow_start_date TEXT,
+    cashflow_start_capital REAL NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -175,10 +176,22 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
         "advance_day": "INTEGER NOT NULL DEFAULT 22",
         "cashflow_enabled": "INTEGER NOT NULL DEFAULT 0",
         "cashflow_start_date": "TEXT",
+        # Kept separate from the legacy automatic reserve.  Older versions
+        # used initial_reserve for both meanings, which made the displayed
+        # account balance and the buffer contradict each other.
+        "cashflow_start_capital": "REAL",
     }
     for name, ddl in additions.items():
         if name not in columns:
             con.execute(f"ALTER TABLE settings ADD COLUMN {name} {ddl}")
+    # One-time migration for existing databases.  The old vacation reserve
+    # was money already present at the cash-flow start, so fold it into the
+    # new start-capital field exactly once.  NULL marks an unmigrated row.
+    con.execute(
+        "UPDATE settings SET cashflow_start_capital="
+        "COALESCE(initial_reserve,0)+COALESCE(initial_vacation_reserve,0),"
+        "initial_vacation_reserve=0 WHERE cashflow_start_capital IS NULL"
+    )
 
 
 def _ensure_payment_columns(con: sqlite3.Connection) -> None:

@@ -33,14 +33,14 @@ def vacation_payload(amount=11000, payment_date="2026-09-11"):
     }
 
 
-def test_vacation_from_settings_automatically_appears_in_buffer(client):
+def test_vacation_changes_payroll_but_is_not_double_counted_as_cash(client):
     payroll_before = client.get("/api/payroll-settings").json()
     created = client.post("/api/vacations", json=vacation_payload())
     assert created.status_code == 200
     vacation_id = created.json()["id"]
 
     flow = cashflow_snapshot(1)
-    assert flow["current_cash"] == 39000
+    assert flow["current_cash"] == 28000
     payroll_after = client.get("/api/payroll-settings").json()
     assert payroll_after["settings"] == payroll_before["settings"]
     assert payroll_after["preview"]["advance"] < payroll_before["preview"]["advance"]
@@ -49,13 +49,13 @@ def test_vacation_from_settings_automatically_appears_in_buffer(client):
 
     updated = client.put(f"/api/vacations/{vacation_id}", json=vacation_payload(amount=9000))
     assert updated.status_code == 200
-    assert cashflow_snapshot(1)["current_cash"] == 37000
+    assert cashflow_snapshot(1)["current_cash"] == 28000
 
     assert client.delete(f"/api/vacations/{vacation_id}").status_code == 200
     assert cashflow_snapshot(1)["current_cash"] == 28000
 
 
-def test_future_vacation_pay_is_forecast_then_becomes_buffer_money(client, monkeypatch):
+def test_future_vacation_pay_requires_actual_receipt_after_payment_day(client, monkeypatch):
     created = client.post("/api/vacations", json=vacation_payload(payment_date="2026-09-20"))
     assert created.status_code == 200
     flow = cashflow_snapshot(1)
@@ -63,8 +63,12 @@ def test_future_vacation_pay_is_forecast_then_becomes_buffer_money(client, monke
 
     monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 20))
     flow = cashflow_snapshot(1)
-    assert flow["current_cash"] == 39000
+    assert flow["current_cash"] == 28000
     assert not any(row["date"] == "2026-09-20" and row["income"] >= 11000 for row in flow["timeline"])
+    assert client.post("/api/transactions", json={
+        "type": "income", "amount": 11000, "tx_date": "2026-09-20", "note": "Отпускные",
+    }).status_code == 200
+    assert cashflow_snapshot(1)["current_cash"] == 39000
 
 
 def test_old_vacation_and_obsolete_manual_column_are_not_added(client):

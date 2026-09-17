@@ -108,7 +108,8 @@ def test_snapshot_uses_every_day_until_shifted_next_payment(uid, monkeypatch, pa
     with connect() as con:
         con.execute(
             "UPDATE settings SET cashflow_enabled=1,cashflow_start_date='2026-02-20',"
-            "initial_reserve=10000,forecast_months=1,payroll_enabled=? WHERE user_id=?",
+            "initial_reserve=10000,cashflow_start_capital=10000,"
+            "forecast_months=1,payroll_enabled=? WHERE user_id=?",
             (payroll_enabled, uid),
         )
     snapshot = flow.cashflow_snapshot(uid)

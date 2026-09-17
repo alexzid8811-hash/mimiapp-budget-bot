@@ -26,6 +26,7 @@ class Settings(Payroll):
     forecast_months: int = Field(default=4, ge=1, le=12)
     cashflow_enabled: bool = False
     cashflow_start_date: date | None = None
+    cashflow_start_capital: float | None = Field(default=None, ge=0)
 
     @model_validator(mode='after')
     def valid_start(self):
@@ -77,6 +78,8 @@ class Transaction(Record):
     def bill_fields(self):
         if self.bill_rule_id is not None and (self.type != 'expense' or self.bill_due_date is None):
             raise ValueError('Неверная связь обязательного платежа')
+        if self.tx_date > clock.today():
+            raise ValueError('Дата операции в будущем')
         return self
 
 
@@ -140,7 +143,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')

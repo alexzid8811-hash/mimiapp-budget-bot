@@ -37,14 +37,14 @@ class CashflowIncomeOverrideIn(APIModel):
 
 def cashflow_settings(user_id: int) -> dict:
     data = legacy.one(
-        "SELECT cashflow_enabled,cashflow_start_date,initial_reserve,forecast_months "
+        "SELECT cashflow_enabled,cashflow_start_date,cashflow_start_capital,forecast_months "
         "FROM settings WHERE user_id=?",
         (user_id,),
     ) or {}
     return {
         "cashflow_enabled": int(data.get("cashflow_enabled") or 0),
         "start_date": data.get("cashflow_start_date") or clock.today().isoformat(),
-        "start_capital": float(data.get("initial_reserve") or 0),
+        "start_capital": float(data.get("cashflow_start_capital") or 0),
         "forecast_months": int(data.get("forecast_months") or 4),
     }
 
@@ -58,24 +58,7 @@ def planned_income_map(user_id: int, start: date, end: date) -> dict[date, float
 
 
 def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    return planning.mandatory_map(user_id, start, end)
-
-
-def received_vacation_pay(user_id: int, start_date: date, through: date) -> float:
-    """Vacation pay entered in Settings that already belongs to this budget.
-
-    The start-period boundary includes a payment received shortly before the
-    selected calculation date, while excluding unrelated old vacations.
-    Future payments remain normal forecast income until their payment date.
-    """
-    period_start = planning.user_period(user_id, start_date).start
-    row = legacy.one(
-        "SELECT COALESCE(SUM(amount),0) AS total FROM vacations "
-        "WHERE user_id=? AND payment_date>=? AND payment_date<=?",
-        (user_id, period_start.isoformat(), through.isoformat()),
-    )
-    return round(float(row["total"]) if row else 0.0, 2)
-
+    return planning.unpaid_mandatory_map(user_id, start, end)
 
 
 def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
@@ -188,7 +171,12 @@ def cashflow_period_rows(
         free = round(received - bills, 2)
         # Today's overspend reduces the recalculated allowance for the days
         # ahead.  It must not be presented as a withdrawal from the buffer.
-        planned_spending = round(daily_target * days, 2)
+        planned_spending = round(
+            (max(spent_today, daily_target) + daily_target * max(0, days - 1))
+            if index == 0
+            else daily_target * days,
+            2,
+        )
         raw_after = round(buffer_before + free - planned_spending, 2)
         buffer_after = round(max(0.0, raw_after), 2)
         put_aside = round(max(0.0, buffer_after - buffer_before), 2)
@@ -225,8 +213,10 @@ def cashflow_snapshot(user_id: int) -> dict:
         return {"enabled": False, "settings": settings}
 
     start_date = min(date.fromisoformat(settings["start_date"]), today)
-    vacation_pay_received = received_vacation_pay(user_id, start_date, today)
-    start_capital = float(settings["start_capital"]) + vacation_pay_received
+    # The start capital is the complete real account balance at the beginning
+    # of the selected date.  Money received before that moment (including
+    # vacation pay) must already be inside it and must never be added again.
+    start_capital = float(settings["start_capital"])
     months = max(1, min(12, int(settings["forecast_months"])))
     horizon_end = add_months(today, months)
 
@@ -235,19 +225,31 @@ def cashflow_snapshot(user_id: int) -> dict:
     # silently inflate the real balance carried from the starting capital.
     confirmed_overrides = cashflow_income_overrides(user_id, start_date, today)
     actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
-    mandatory_history = planned_mandatory_map(user_id, start_date, today)
+    paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
+    unpaid_mandatory_history = planned_mandatory_map(user_id, start_date, today)
     spent_history = legacy.discretionary_spent(user_id, start_date, today)
 
     piggy_effect = piggy_bank_effect(user_id, start_date, today)
     current_cash = round(
-        start_capital + actual_income_history - sum(mandatory_history.values()) - spent_history - piggy_effect,
+        start_capital + actual_income_history - paid_mandatory_history - spent_history - piggy_effect,
         2,
     )
+    reserved_mandatory = round(sum(unpaid_mandatory_history.values()), 2)
+    available_cash = round(current_cash - reserved_mandatory, 2)
     spent_today = legacy.discretionary_spent(user_id, today, today)
-    opening_before_today_spend = round(current_cash + spent_today, 2)
+    opening_before_today_spend = round(available_cash + spent_today, 2)
 
     tomorrow = today + timedelta(days=1)
     income_future = planned_income_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
+    # A period override is the corrected total income for that whole payday
+    # period.  Once its start date arrives, it becomes confirmed cash.  Remove
+    # the remaining planned items from the same period so vacation pay or an
+    # additional rule inside it cannot be counted for a second time.
+    for overridden_start in confirmed_overrides:
+        overridden_end = planning.user_period(user_id, overridden_start).end
+        for income_day in list(income_future):
+            if overridden_start <= income_day <= overridden_end:
+                income_future.pop(income_day)
     if tomorrow <= horizon_end:
         income_future = apply_cashflow_income_overrides(
             user_id, today=today, horizon_end=horizon_end, income=income_future
@@ -266,6 +268,11 @@ def cashflow_snapshot(user_id: int) -> dict:
     period = planning.user_period(user_id, today)
     spent_period = legacy.discretionary_spent(user_id, max(period.start, start_date), today)
     days_left = max(1, (period.end - today).days + 1)
+    mandatory_period = round(
+        reserved_mandatory
+        + sum(value for day, value in mandatory_future.items() if day <= period.end),
+        2,
+    )
     remaining_period = round(max(0.0, plan.available_today) + plan.daily_target * max(0, days_left - 1), 2)
     period_budget = round(spent_period + remaining_period, 2)
     next_income = next((row for row in plan.timeline if row["income"] > 0), None)
@@ -299,6 +306,9 @@ def cashflow_snapshot(user_id: int) -> dict:
         "today": today.isoformat(),
         "horizon_end": horizon_end.isoformat(),
         "current_cash": current_cash,
+        "available_cash": available_cash,
+        "reserved_mandatory": reserved_mandatory,
+        "mandatory_period": mandatory_period,
         "piggy_bank_balance": piggy_bank_balance(user_id),
         "daily_target": plan.daily_target,
         "today_target": plan.today_target,
@@ -330,7 +340,8 @@ def save_cashflow_settings(payload: CashflowSettingsIn, user: TelegramUser = Dep
         raise HTTPException(422, "Дата старта не может быть в будущем")
     with legacy.connect() as con:
         con.execute(
-            "UPDATE settings SET cashflow_enabled=?,cashflow_start_date=?,initial_reserve=?,updated_at=CURRENT_TIMESTAMP "
+            "UPDATE settings SET cashflow_enabled=?,cashflow_start_date=?,cashflow_start_capital=?,"
+            "initial_vacation_reserve=0,updated_at=CURRENT_TIMESTAMP "
             "WHERE user_id=?",
             (int(payload.cashflow_enabled), payload.start_date.isoformat(), payload.start_capital, uid),
         )

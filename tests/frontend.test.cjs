@@ -10,6 +10,7 @@ function setup() {
     if (!elements.has(id)) elements.set(id, {
       value: '', checked: false, textContent: '', innerHTML: '', style: {}, listeners: {}, dataset: {},
       setAttribute() {}, removeAttribute() {}, replaceChildren() {}, appendChild() {},
+      reset() {},
       classList: {add() {}, remove() {}, toggle() {}},
       addEventListener(type, fn) { this.listeners[type] = fn; },
       showModal() {}, close() {},
@@ -35,7 +36,7 @@ function setup() {
     },
   };
   vm.createContext(sandbox);
-  for (const name of ['budget-date.js','app.js','cashflow-ui.js','buffer-ui.js','design-ui.js']) {
+  for (const name of ['budget-date.js','money-input.js','app.js','cashflow-ui.js','buffer-ui.js','design-ui.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static',name),'utf8'),sandbox);
   }
   return {sandbox, get, requests, responses};
@@ -199,4 +200,14 @@ test('future received amount can be edited and sent for budget recalculation', a
 
  const request=requests.find(row=>row.url==='/api/cashflow/income-overrides/2026-09-22');
  assert.deepEqual(JSON.parse(request.body),{amount:41000});
+});
+
+test('localized money is parsed before expense submission', async () => {
+  const {get,requests} = setup();
+  get('expenseAmount').value = '2 070,00';
+  get('expenseDate').value = '2026-09-15';
+  get('expenseCategory').value = '1';
+  await get('expenseForm').listeners.submit({preventDefault(){},target:get('expenseForm')});
+  const request = requests.find(item => item.url === '/api/transactions' && item.body);
+  assert.equal(JSON.parse(request.body).amount,2070);
 });

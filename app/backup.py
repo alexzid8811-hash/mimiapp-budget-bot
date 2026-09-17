@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 4
+BACKUP_VERSION = 5
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -33,6 +33,7 @@ SETTINGS_COLUMNS = (
     "advance_day",
     "cashflow_enabled",
     "cashflow_start_date",
+    "cashflow_start_capital",
 )
 
 TABLE_COLUMNS = {
@@ -98,10 +99,15 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
+            # Versions before v5 stored the cash-flow start balance in
+            # initial_reserve and a second, now obsolete, vacation field.
+            legacy_start_capital = float(settings.get("initial_reserve", 0)) + float(
+                settings.get("initial_vacation_reserve", 0)
+            )
             values = {
                 "currency": str(settings.get("currency", "RUB"))[:6].upper(),
                 "initial_reserve": float(settings.get("initial_reserve", 0)),
-                "initial_vacation_reserve": float(settings.get("initial_vacation_reserve", 0)),
+                "initial_vacation_reserve": 0.0,
                 "forecast_months": int(settings.get("forecast_months", 4)),
                 "payroll_enabled": int(bool(settings.get("payroll_enabled", 0))),
                 "salary_gross": float(settings.get("salary_gross", 0)),
@@ -111,6 +117,11 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 "advance_day": int(settings.get("advance_day", 22)),
                 "cashflow_enabled": int(bool(settings.get("cashflow_enabled", 0))),
                 "cashflow_start_date": settings.get("cashflow_start_date"),
+                "cashflow_start_capital": float(
+                    settings["cashflow_start_capital"]
+                    if settings.get("cashflow_start_capital") is not None
+                    else legacy_start_capital
+                ),
             }
             assignments = ",".join(f"{column}=?" for column in SETTINGS_COLUMNS)
             con.execute(

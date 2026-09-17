@@ -42,6 +42,10 @@ function currency() { return state.bootstrap?.settings?.currency || "RUB"; }
 function money(v) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), maximumFractionDigits: 2 }).format(Number(v || 0));
 }
+function moneyValue(id) {
+  const value = $(id)?.value || "0";
+  return window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(value) : Number(value) || 0;
+}
 function fmtDate(s) { return new Intl.DateTimeFormat("ru-RU", { day:"numeric", month:"short" }).format(new Date(`${s}T12:00:00`)); }
 function fmtMonth(year, month) { return new Intl.DateTimeFormat("ru-RU", { month:"long", year:"numeric" }).format(new Date(year, month - 1, 1)); }
 function todayISO() { return window.budgetDate.today(); }
@@ -106,7 +110,7 @@ function renderTransactions() {
     const title = t.bill_title || t.note || t.category_title || (isExpense ? "Расход" : "Доход");
     const editPayment = t.bill_rule_id
       ? `<button class="tiny" onclick="editBillPayment(${t.id})">Изменить</button>`
-      : '';
+      : `<button class="tiny" onclick="editTransaction(${t.id})">Изменить</button>`;
     return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
   }).join("");
 }
@@ -191,13 +195,40 @@ function switchPage(page) {
 
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.nav)));
 $("refreshBtn").addEventListener("click", () => loadAll());
-$("quickExpenseBtn").addEventListener("click", () => { $("expenseDate").value = todayISO(); $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50); });
-$("addIncomeTxBtn").addEventListener("click", () => { $("incomeTxDate").value = todayISO(); $("incomeTxDialog").showModal(); });
+let editingTransactionId = null;
+$("quickExpenseBtn").addEventListener("click", () => {
+  editingTransactionId = null; $("expenseForm").reset(); $("expenseDate").value = todayISO();
+  $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50);
+});
+$("addIncomeTxBtn").addEventListener("click", () => {
+  editingTransactionId = null; $("incomeTxForm").reset(); $("incomeTxDate").value = todayISO();
+  $("incomeTxDialog").showModal();
+});
+
+window.editTransaction = id => {
+  const transaction = state.transactions.find(item => item.id === id && !item.bill_rule_id);
+  if (!transaction) return;
+  editingTransactionId = id;
+  if (transaction.type === "expense") {
+    $("expenseAmount").value = transaction.amount;
+    $("expenseDate").value = transaction.tx_date;
+    $("expenseCategory").value = transaction.category_id || "";
+    $("expenseNote").value = transaction.note || "";
+    $("expenseDialog").showModal();
+  } else {
+    $("incomeTxAmount").value = transaction.amount;
+    $("incomeTxDate").value = transaction.tx_date;
+    $("incomeTxNote").value = transaction.note || "";
+    $("incomeTxDialog").showModal();
+  }
+};
 
 $("expenseForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
-    await api("/api/transactions", { method:"POST", body: JSON.stringify({ type:"expense", amount:Number($("expenseAmount").value), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:$("expenseNote").value }) });
+    const path = editingTransactionId ? `/api/transactions/${editingTransactionId}` : "/api/transactions";
+    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"expense", amount:moneyValue("expenseAmount"), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:$("expenseNote").value }) });
+    editingTransactionId = null;
     $("expenseDialog").close(); e.target.reset(); toast("Расход записан"); await loadAll();
   } catch(e2) { toast(e2.message); }
 });
@@ -205,7 +236,9 @@ $("expenseForm").addEventListener("submit", async (e) => {
 $("incomeTxForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
-    await api("/api/transactions", { method:"POST", body: JSON.stringify({ type:"income", amount:Number($("incomeTxAmount").value), tx_date:$("incomeTxDate").value, category_id:null, note:$("incomeTxNote").value }) });
+    const path = editingTransactionId ? `/api/transactions/${editingTransactionId}` : "/api/transactions";
+    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"income", amount:moneyValue("incomeTxAmount"), tx_date:$("incomeTxDate").value, category_id:null, note:$("incomeTxNote").value }) });
+    editingTransactionId = null;
     $("incomeTxDialog").close(); e.target.reset(); toast("Доход записан"); await loadAll();
   } catch(e2) { toast(e2.message); }
 });
@@ -270,7 +303,7 @@ $("vacationForm").addEventListener("submit", async (e) => {
   const body = {
     start_date: $("vacationStart").value,
     end_date: $("vacationEnd").value,
-    amount: Number($("vacationAmount").value),
+    amount: moneyValue("vacationAmount"),
     payment_date: $("vacationPaymentDate").value,
     note: $("vacationNote").value,
   };
@@ -306,8 +339,8 @@ $("ruleForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const mode = $("ruleMode").value, id = $("ruleId").value;
   let body;
-  if (mode === "income") body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), kind:$("ruleKind").value, is_payday:$("ruleIsPayday").checked, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
-  else body = { title:$("ruleTitle").value, amount:Number($("ruleAmount").value), day_of_month:Number($("ruleDay").value), category_id:$("ruleBillCategory").value ? Number($("ruleBillCategory").value) : null, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
+  if (mode === "income") body = { title:$("ruleTitle").value, amount:moneyValue("ruleAmount"), day_of_month:Number($("ruleDay").value), kind:$("ruleKind").value, is_payday:$("ruleIsPayday").checked, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
+  else body = { title:$("ruleTitle").value, amount:moneyValue("ruleAmount"), day_of_month:Number($("ruleDay").value), category_id:$("ruleBillCategory").value ? Number($("ruleBillCategory").value) : null, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
   const base = mode === "income" ? "/api/income-rules" : "/api/bill-rules";
   try { await api(id ? `${base}/${id}` : base, {method:id?"PUT":"POST", body:JSON.stringify(body)}); $("ruleDialog").close(); toast("Сохранено"); await loadAll(); } catch(err){ toast(err.message); }
 });
@@ -315,7 +348,9 @@ $("ruleForm").addEventListener("submit", async (e) => {
 function generalSettingsPayload() {
   return {
     currency: $("currency").value,
-    initial_reserve: Number($("initialReserve").value || 0),
+    // The legacy reserve is no longer the cash-flow start capital.  Preserve
+    // it here; the dedicated button below saves the visible start amount.
+    initial_reserve: Number(state.bootstrap?.settings?.initial_reserve || 0),
     forecast_months: Number($("forecastMonths").value || 4),
   };
 }
@@ -324,8 +359,8 @@ function payrollSettingsPayload() {
   return {
     effective_date: $("payrollEffectiveDate").value,
     payroll_enabled: $("payrollEnabled").checked,
-    salary_gross: Number($("salaryGross").value || 0),
-    bonus_gross: Number($("bonusGross").value || 0),
+    salary_gross: moneyValue("salaryGross"),
+    bonus_gross: moneyValue("bonusGross"),
     tax_rate: Number($("taxRate").value || 0),
     salary_day: Number($("salaryDay").value || 7),
     advance_day: Number($("advanceDay").value || 22),
@@ -355,4 +390,3 @@ $("addCategoryBtn").addEventListener("click", async () => {
 });
 
 window.addEventListener("DOMContentLoaded", () => loadAll(), { once: true });
-

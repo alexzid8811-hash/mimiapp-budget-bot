@@ -182,6 +182,22 @@ def mandatory_map(uid, start, end):
     return {day: amount(value) for day, value in totals.items()}
 
 
+def unpaid_mandatory_map(uid, start, end):
+    """Planned obligations that have not already left the account.
+
+    Paid bill transactions are real cash movements and are accounted for by
+    their transaction date.  Keeping them in the forecast as well would spend
+    the same money twice, especially when a future bill is paid early.
+    """
+    totals = {}
+    for event in bill_events(uid, start, end):
+        if event.get('paid'):
+            continue
+        day = date.fromisoformat(event['due_date'])
+        totals[day] = totals.get(day, 0) + cents(event['amount'])
+    return {day: amount(value) for day, value in totals.items()}
+
+
 def bill_planned_amount(uid, bill_id, due_date):
     """Return the historical planned amount for one bill occurrence."""
     for left, right, conditions in condition_segments(uid, due_date, due_date):

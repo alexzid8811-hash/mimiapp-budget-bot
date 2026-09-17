@@ -71,10 +71,14 @@
     setText("periodBudget", formatMoney(flow.period_budget));
     setText("dailyAvailable", formatMoney(flow.available_today));
     setText("remaining", formatMoney(flow.remaining_period));
+    setText("mandatory", formatMoney(flow.mandatory_period));
     setText("reserveBalance", formatMoney(flow.buffer_balance));
     setText("reserveTarget", `на счету ${formatMoney(flow.current_cash)}`);
 
     let reason = flow.reason || "";
+    if (Number(flow.reserved_mandatory || 0) > 0) {
+      reason += ` На обязательные платежи зарезервировано ${formatMoney(flow.reserved_mandatory)}.`;
+    }
     if (flow.next_income) {
       const d = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" })
         .format(new Date(`${flow.next_income.date}T12:00:00`));
@@ -106,6 +110,7 @@
     injectSettingsUI();
     document.getElementById("cashflowEnabled").checked = Boolean(settings.cashflow_enabled);
     document.getElementById("cashflowStartDate").value = settings.start_date || todayISO();
+    document.getElementById("initialReserve").value = settings.start_capital ?? 0;
   };
 
   async function saveCashflowSettings() {
@@ -119,7 +124,7 @@
           start_capital: parseMoneyField("initialReserve"),
         }),
       });
-      if (typeof toast === "function") toast("Стартовый капитал и буфер сохранены");
+      if (typeof toast === "function") toast("Стартовый капитал сохранён");
       await loadAll();
     } catch (err) {
       if (typeof toast === "function") toast(err.message);
@@ -128,4 +133,3 @@
 
   injectSettingsUI();
 })();
-

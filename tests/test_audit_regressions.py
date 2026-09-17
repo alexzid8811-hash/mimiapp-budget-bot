@@ -25,7 +25,8 @@ def client(tmp_path, monkeypatch):
     ensure_user(1)
     with connect() as con:
         con.execute("UPDATE income_rules SET amount=10000 WHERE user_id=1 AND kind='salary'")
-        con.execute("UPDATE settings SET cashflow_enabled=1,cashflow_start_date='2026-09-01',initial_reserve=1000,forecast_months=1 WHERE user_id=1")
+        con.execute("UPDATE settings SET cashflow_enabled=1,cashflow_start_date='2026-09-01',"
+                    "initial_reserve=1000,cashflow_start_capital=1000,forecast_months=1 WHERE user_id=1")
     with TestClient(app) as value:
         yield value
 
@@ -77,7 +78,69 @@ def test_rounding_never_spends_nonexistent_kopecks():
 def test_period_table_includes_overspend(client):
     result = cashflow_period_rows(1, today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
                                  opening_balance_before_today_spend=1000, daily_target=20, spent_today=900)
-    assert result[0]['buffer'] == 880
+    assert result[0]['buffer'] == 0
+
+
+def test_actual_cash_and_unpaid_obligations_are_separate(client):
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Подписка', 'amount': 100, 'day_of_month': 15,
+        'effective_date': '2026-09-01',
+    }).json()
+    before = cashflow_snapshot(1)
+    assert before['current_cash'] == 1000
+    assert before['reserved_mandatory'] == 100
+    assert before['available_cash'] == 900
+    assert before['mandatory_period'] == 100
+
+    assert client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-15'}).status_code == 200
+    after = cashflow_snapshot(1)
+    assert after['current_cash'] == 900
+    assert after['reserved_mandatory'] == 0
+    assert after['available_cash'] == 900
+    assert after['mandatory_period'] == 0
+
+
+def test_early_bill_payment_is_not_charged_again_on_due_date(client):
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Будущий счёт', 'amount': 100, 'day_of_month': 20,
+        'effective_date': '2026-09-01',
+    }).json()
+    payment = client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-20'})
+    assert payment.status_code == 200
+    assert payment.json()['tx_date'] == '2026-09-15'
+    snapshot = cashflow_snapshot(1)
+    assert snapshot['current_cash'] == 900
+    assert all(row['mandatory'] == 0 for row in snapshot['timeline'] if row['date'] == '2026-09-20')
+
+
+def test_manual_transaction_can_be_edited_but_not_future_dated(client):
+    created = client.post('/api/transactions', json={
+        'type': 'expense', 'amount': 50, 'tx_date': '2026-09-15', 'note': 'Кофе',
+    })
+    assert created.status_code == 200
+    tx_id = created.json()['id']
+    edited = client.put(f'/api/transactions/{tx_id}', json={
+        'type': 'expense', 'amount': 75, 'tx_date': '2026-09-14', 'note': 'Кофе и десерт',
+    })
+    assert edited.status_code == 200
+    assert edited.json()['amount'] == 75
+    assert edited.json()['tx_date'] == '2026-09-14'
+    assert client.post('/api/transactions', json={
+        'type': 'income', 'amount': 100, 'tx_date': '2026-09-16',
+    }).status_code == 422
+
+
+def test_legacy_vacation_reserve_migrates_into_start_capital(client):
+    backup = export_user_data(1)
+    backup['backup_version'] = 4
+    backup['data']['settings'].pop('cashflow_start_capital')
+    backup['data']['settings']['initial_reserve'] = 28000
+    backup['data']['settings']['initial_vacation_reserve'] = 11000
+    restore_user_data(1, backup)
+    settings = export_user_data(1)['data']['settings']
+    assert settings['cashflow_start_capital'] == 39000
+    assert settings['initial_vacation_reserve'] == 0
+    assert cashflow_snapshot(1)['current_cash'] == 39000
 
 
 def test_future_received_amount_override_recalculates_entire_cashflow(client, monkeypatch):
@@ -259,6 +322,21 @@ def test_bill_remainder_edit_rolls_back_if_it_would_overdraw_piggy(client):
     assert saved == 2000
 
 
+def test_confirmed_period_override_replaces_later_income_in_same_period(client, monkeypatch):
+    assert client.post('/api/income-rules', json={
+        'title': 'Доход внутри периода', 'amount': 500, 'day_of_month': 25,
+        'kind': 'other', 'effective_date': '2026-09-01',
+    }).status_code == 200
+    assert client.put(
+        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 12000}
+    ).status_code == 200
+
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    snapshot = cashflow_snapshot(1)
+    assert snapshot['current_cash'] == 13000
+    assert not any(row['date'] == '2026-09-25' and row['income'] for row in snapshot['timeline'])
+
+
 def test_bill_remainder_link_survives_backup_restore(client):
     bill = client.post('/api/bill-rules', json={
         'title': 'Коммуналка', 'amount': 10000, 'day_of_month': 10, 'effective_date': '2026-09-01'
@@ -304,7 +382,7 @@ def test_backup_restores_cashflow_income_overrides(client):
         '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
     ).status_code == 200
     backup = export_user_data(1)
-    assert backup['backup_version'] == 4
+    assert backup['backup_version'] == 5
     assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
     ensure_user(2)
     restore_user_data(2, backup)
