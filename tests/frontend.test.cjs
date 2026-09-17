@@ -138,6 +138,17 @@ test('buffer has no separate vacation reserve card', () => {
   assert.doesNotMatch(html,/Отложено из отпускных|vacationReserve/);
 });
 
+test('layout expands responsively on tablets and desktop screens', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
+  const styles = fs.readFileSync(path.join(__dirname,'../app/static/styles.css'),'utf8');
+  assert.match(html,/class="card home-buffer"/);
+  assert.match(html,/class="card home-forecast"/);
+  assert.match(styles,/#app\{width:100%;max-width:none/);
+  assert.match(styles,/@media\(min-width:900px\)[\s\S]*\.page\[data-page="home"\]\.active[\s\S]*grid-template-columns/);
+  assert.match(styles,/\.page\[data-page="settings"\]\.active[\s\S]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(styles,/max-width:1360px/);
+});
+
 
 test('redesign uses today target without subtracting expenses twice and preserves overspending', async () => {
  const {get,responses}=setup();

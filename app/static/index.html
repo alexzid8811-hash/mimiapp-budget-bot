@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-full-design"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260917-payment-layout" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260917-responsive" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -36,14 +36,14 @@
             <div class="stat"><span>Отложено в буфер</span><strong id="reservedNow">—</strong></div>
           </div>
         </div>
-        <div class="card">
+        <div class="card home-buffer">
           <div class="section-head"><h3>Буфер</h3><span class="muted num"><span id="reserveBalance">—</span> <span id="reserveTarget">—</span></span></div>
           <div class="meter"><span id="bufferMeter"></span></div>
           <p class="muted" id="reserveReason">—</p>
           <div id="deficitWarning" class="warning hidden"></div>
           <div id="bufferForecastWarning" class="warning hidden"></div>
         </div>
-        <div class="card"><div class="section-head"><h3>Следующие периоды</h3><button class="secondary" data-go="buffer">Все</button></div><div id="forecastList" class="list"></div></div>
+        <div class="card home-forecast"><div class="section-head"><h3>Следующие периоды</h3><button class="secondary" data-go="buffer">Все</button></div><div id="forecastList" class="list"></div></div>
       </section>
 
       <section class="page" data-page="operations">
