@@ -86,7 +86,6 @@ function renderDashboard() {
   $("spentToday").textContent = money(d.spent_today);
   // Fallback values until the detailed cash-flow snapshot loads.
   $("cardCash").textContent = money(d.remaining);
-  $("cardPeriodMoney").textContent = money(d.remaining);
   $("cardBuffer").textContent = money(d.reserve.balance);
   $("cardPiggy").textContent = "—";
   $("cardReservesTotal").textContent = money(d.reserve.balance);
