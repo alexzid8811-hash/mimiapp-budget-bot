@@ -38,3 +38,15 @@ def test_missed_three_day_window_still_sends_a_reminder(tmp_path, monkeypatch):
         con.execute("INSERT INTO bill_rules(user_id,title,amount,day_of_month) VALUES(1,'Связь',500,19)")
     reminder = pending_bill_reminders(date(2026, 9, 17), 3)[0]
     assert reminder["days_left"] == 2
+
+
+def test_user_reminder_settings_control_window_and_time(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "reminders.sqlite3"))
+    init_db()
+    ensure_user(1)
+    with connect() as con:
+        con.execute("UPDATE settings SET reminder_days=1,reminder_time='18:30' WHERE user_id=1")
+        con.execute("INSERT INTO bill_rules(user_id,title,amount,day_of_month) VALUES(1,'Связь',500,19)")
+    assert pending_bill_reminders(date(2026, 9, 17)) == []
+    reminder = pending_bill_reminders(date(2026, 9, 18))[0]
+    assert (reminder["days_left"], reminder["reminder_time"]) == (1, "18:30")
