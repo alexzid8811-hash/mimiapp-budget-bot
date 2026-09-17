@@ -144,6 +144,7 @@ def cashflow_period_rows(
     horizon_end: date,
     opening_balance_before_today_spend: float,
     daily_target: float,
+    today_target: float | None = None,
     spent_today: float = 0,
     income_overrides: dict[date, float] | None = None,
 ) -> list[dict]:
@@ -170,10 +171,11 @@ def cashflow_period_rows(
             sum(amount for day, amount in mandatory.items() if period_start <= day <= period_end), 2
         )
         free = round(received - bills, 2)
-        # Today's overspend reduces the recalculated allowance for the days
-        # ahead.  It must not be presented as a withdrawal from the buffer.
+        # The current-period buffer is protected by the original daily
+        # allowance. An overspend changes future limits, not this buffer.
+        current_period_target = daily_target if today_target is None else today_target
         planned_spending = round(
-            (max(spent_today, daily_target) + daily_target * max(0, days - 1))
+            (current_period_target * days)
             if index == 0
             else daily_target * days,
             2,
@@ -274,7 +276,11 @@ def cashflow_snapshot(user_id: int) -> dict:
         + sum(value for day, value in mandatory_future.items() if day <= period.end),
         2,
     )
-    remaining_period = round(max(0.0, plan.available_today) + plan.daily_target * max(0, days_left - 1), 2)
+    # Keep the current pay-period allocation intact. The negative part of
+    # today's allowance is a real overspend and must reduce the card money,
+    # never the protected buffer.
+    period_allocation = round(plan.today_target * days_left, 2)
+    remaining_period = round(max(0.0, period_allocation - spent_period), 2)
     period_budget = round(spent_period + remaining_period, 2)
     next_income = next((row for row in plan.timeline if row["income"] > 0), None)
 
@@ -295,6 +301,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         horizon_end=horizon_end,
         opening_balance_before_today_spend=opening_before_today_spend,
         daily_target=plan.daily_target,
+        today_target=plan.today_target,
         spent_today=spent_today,
         income_overrides=cashflow_income_overrides(user_id, tomorrow, horizon_end)
         if tomorrow <= horizon_end
