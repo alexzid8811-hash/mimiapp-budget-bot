@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS piggy_bank_movements (
     amount REAL NOT NULL CHECK(amount > 0),
     movement_date TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'external' CHECK(source IN ('external','daily_budget')),
     bill_payment_id INTEGER REFERENCES transactions(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -205,6 +206,16 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
             "ALTER TABLE piggy_bank_movements ADD COLUMN bill_payment_id INTEGER "
             "REFERENCES transactions(id) ON DELETE CASCADE"
         )
+    if "source" not in piggy_columns:
+        con.execute(
+            "ALTER TABLE piggy_bank_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'external'"
+        )
+    # A remainder explicitly redirected from a paid bill belongs to the
+    # spending budget.  Plain historical deposits remain external savings.
+    con.execute(
+        "UPDATE piggy_bank_movements SET source='daily_budget' "
+        "WHERE bill_payment_id IS NOT NULL AND source='external'"
+    )
     con.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_piggy_bill_payment "
         "ON piggy_bank_movements(user_id, bill_payment_id) WHERE bill_payment_id IS NOT NULL"

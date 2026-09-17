@@ -109,6 +109,7 @@ class Piggy(Record):
     amount: float = Field(gt=0)
     movement_date: date
     note: str = Field(default='', max_length=160)
+    source: Literal['external', 'daily_budget'] = 'external'
     bill_payment_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode='after')
@@ -143,7 +144,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')

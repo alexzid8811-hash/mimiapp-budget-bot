@@ -164,7 +164,8 @@
     }
     list.innerHTML = piggy.movements.map(item => {
       const deposit = item.direction === "deposit";
-      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${deposit ? "Пополнение" : "Снятие"}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div><div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div></div></div>`;
+      const title = deposit && item.source === "daily_budget" ? "Из остатка дня" : deposit ? "Пополнение" : "Снятие";
+      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div><div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div></div></div>`;
     }).join("");
   }
 
@@ -181,12 +182,13 @@
     }
   }
 
-  function openMovement(direction) {
+  function openMovement(direction, source = "external") {
     document.getElementById("piggyDirection").value = direction;
+    document.getElementById("piggySource").value = source;
     document.getElementById("piggyDialogTitle").textContent =
-      direction === "deposit" ? "Пополнить копилку" : "Снять из копилки";
+      source === "daily_budget" ? "Перенести остаток дня" : direction === "deposit" ? "Пополнить копилку" : "Снять из копилки";
     document.getElementById("savePiggyBtn").textContent =
-      direction === "deposit" ? "Пополнить" : "Снять";
+      source === "daily_budget" ? "Перенести" : direction === "deposit" ? "Пополнить" : "Снять";
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
@@ -194,6 +196,7 @@
   }
 
   document.getElementById("piggyDepositBtn")?.addEventListener("click", () => openMovement("deposit"));
+  document.getElementById("piggyTransferBtn")?.addEventListener("click", () => openMovement("deposit", "daily_budget"));
   document.getElementById("piggyWithdrawBtn")?.addEventListener("click", () => openMovement("withdraw"));
   document.getElementById("piggyForm")?.addEventListener("submit", async event => {
     event.preventDefault();
@@ -207,11 +210,12 @@
           amount,
           movement_date: document.getElementById("piggyDate").value,
           note: document.getElementById("piggyNote").value,
+          source: document.getElementById("piggySource").value,
         }),
       });
       document.getElementById("piggyDialog").close();
       if (typeof toast === "function") {
-        toast(direction === "deposit" ? "Копилка пополнена" : "Деньги возвращены в бюджет");
+        toast(direction === "deposit" ? "Копилка пополнена" : "Снято из копилки");
       }
       await loadAll();
     } catch (error) {

@@ -29,6 +29,7 @@ class PiggyBankMovementIn(APIModel):
     amount: float = Field(gt=0)
     movement_date: date = Field(default_factory=clock.today)
     note: str = Field(default="", max_length=160)
+    source: Literal["external", "daily_budget"] = "external"
 
 
 class CashflowIncomeOverrideIn(APIModel):
@@ -80,7 +81,7 @@ def piggy_bank_effect(user_id: int, start: date, end: date) -> float:
 
 def piggy_bank_snapshot(user_id: int, limit: int = 80) -> dict:
     movements = legacy.rows(
-        "SELECT id,direction,amount,movement_date,note,created_at FROM piggy_bank_movements "
+        "SELECT id,direction,amount,movement_date,note,source,created_at FROM piggy_bank_movements "
         "WHERE user_id=? ORDER BY movement_date DESC,id DESC LIMIT ?",
         (user_id, min(max(limit, 1), 300)),
     )
@@ -431,11 +432,18 @@ def add_piggy_bank_movement(
 ) -> dict:
     if payload.movement_date > clock.today():
         raise HTTPException(422, "Дата операции не может быть в будущем")
+    if direction == "withdraw" and payload.source == "daily_budget":
+        raise HTTPException(422, "Возврат в дневной бюджет пока выполняется отдельной операцией")
+    if direction == "deposit" and payload.source == "daily_budget":
+        flow = cashflow_snapshot(user_id)
+        available = float(flow.get("available_today", 0)) if flow.get("enabled") else 0.0
+        if payload.amount > max(0.0, available):
+            raise HTTPException(422, "Нельзя перенести больше неизрасходованного остатка за день")
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         movement_id = con.execute(
-            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note) VALUES(?,?,?,?,?)",
-            (user_id, direction, payload.amount, payload.movement_date.isoformat(), payload.note),
+            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source) VALUES(?,?,?,?,?,?)",
+            (user_id, direction, payload.amount, payload.movement_date.isoformat(), payload.note, payload.source),
         ).lastrowid
         try:
             check_piggy_history(con, user_id)
@@ -443,7 +451,7 @@ def add_piggy_bank_movement(
             raise HTTPException(422, str(exc)) from exc
     legacy.invalidate_current_auto_reserve(user_id)
     return legacy.one(
-        "SELECT id,direction,amount,movement_date,note,created_at "
+        "SELECT id,direction,amount,movement_date,note,source,created_at "
         "FROM piggy_bank_movements WHERE id=? AND user_id=?",
         (movement_id, user_id),
     ) or {}

@@ -455,13 +455,13 @@ def edit_bill_payment(
                 note = f"Остаток от обязательного платежа: {payment['note']}"[:160]
                 if existing:
                     con.execute(
-                        "UPDATE piggy_bank_movements SET amount=?,movement_date=?,note=? WHERE id=?",
+                        "UPDATE piggy_bank_movements SET amount=?,movement_date=?,note=?,source='daily_budget' WHERE id=?",
                         (saved_amount, movement_date, note, existing["id"]),
                     )
                 else:
                     con.execute(
                         "INSERT INTO piggy_bank_movements"
-                        "(user_id,direction,amount,movement_date,note,bill_payment_id) VALUES(?, 'deposit', ?, ?, ?, ?)",
+                        "(user_id,direction,amount,movement_date,note,source,bill_payment_id) VALUES(?, 'deposit', ?, ?, ?, 'daily_budget', ?)",
                         (uid, saved_amount, movement_date, note, payment_id),
                     )
             elif existing:

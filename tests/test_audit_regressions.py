@@ -382,7 +382,7 @@ def test_backup_restores_cashflow_income_overrides(client):
         '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
     ).status_code == 200
     backup = export_user_data(1)
-    assert backup['backup_version'] == 5
+    assert backup['backup_version'] == 6
     assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
     ensure_user(2)
     restore_user_data(2, backup)
@@ -433,13 +433,13 @@ def test_invalid_backup_references_rejected(client):
     assert client.get('/api/dashboard').status_code == 200
 
 
-def test_legacy_dashboard_tracks_piggy(client):
+def test_legacy_dashboard_only_tracks_explicit_daily_budget_piggy_transfers(client):
     client.put('/api/cashflow-settings', json={'cashflow_enabled': False, 'start_date': '2026-09-01', 'start_capital': 1000})
     before = client.get('/api/dashboard').json()['remaining']
     client.post('/api/piggy-bank/deposit', json={'amount': 1000, 'movement_date': '2026-09-15'})
-    assert client.get('/api/dashboard').json()['remaining'] == before - 1000
+    assert client.get('/api/dashboard').json()['remaining'] == before
     client.post('/api/piggy-bank/withdraw', json={'amount': 400, 'movement_date': '2026-09-15'})
-    assert client.get('/api/dashboard').json()['remaining'] == before - 600
+    assert client.get('/api/dashboard').json()['remaining'] == before
 
 
 @pytest.mark.parametrize('operation', ['expense', 'new_bill', 'edit_bill'])

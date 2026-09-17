@@ -3,9 +3,14 @@ from .money import cents, amount
 
 
 def piggy_effect(uid, start, end):
+    """Return only explicit transfers between the spending budget and piggy bank.
+
+    External deposits and withdrawals change the piggy-bank balance, but are
+    intentionally invisible to daily-budget calculations.
+    """
     with connect() as con:
         total = sum(cents(r['amount']) * (1 if r['direction'] == 'deposit' else -1)
-                    for r in con.execute('SELECT direction,amount FROM piggy_bank_movements WHERE user_id=? AND movement_date BETWEEN ? AND ?',
+                    for r in con.execute("SELECT direction,amount FROM piggy_bank_movements WHERE user_id=? AND source='daily_budget' AND movement_date BETWEEN ? AND ?",
                                          (uid, start.isoformat(), end.isoformat())))
     return amount(total)
 

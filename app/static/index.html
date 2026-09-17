@@ -78,8 +78,8 @@
       </section>
       <section class="page" data-page="piggy"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button></div>
         <div class="card"><span class="muted">В копилке</span><strong class="piggy-balance" id="piggyBalance">—</strong>
-          <p class="muted">Пополнение убирает деньги из дневного бюджета, снятие возвращает их.</p>
-          <div class="piggy-actions"><button class="primary" id="piggyDepositBtn">Пополнить</button><button class="secondary" id="piggyWithdrawBtn">Снять</button></div>
+          <p class="muted">Копилка ведётся отдельно и не влияет на дневной бюджет без вашего перевода.</p>
+          <div class="piggy-actions"><button class="primary" id="piggyDepositBtn">Внести отдельно</button><button class="secondary" id="piggyTransferBtn">Перенести остаток дня</button><button class="secondary" id="piggyWithdrawBtn">Снять</button></div>
         </div>
         <div class="card"><h3>История</h3><div id="piggyMovements" class="list"></div></div>
       </section>
@@ -228,6 +228,7 @@
     <form method="dialog" id="piggyForm" class="dialog-card">
       <div class="section-head"><h2 id="piggyDialogTitle">Копилка</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="piggyDirection" type="hidden" value="deposit" />
+      <input id="piggySource" type="hidden" value="external" />
       <label>Сумма<input id="piggyAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="piggyDate" type="date" required /></label>
       <label>Комментарий<input id="piggyNote" maxlength="160" placeholder="Необязательно" /></label>
@@ -268,7 +269,7 @@
   <script src="/static/money-input.js?v=20260917-full-design"></script>
   <script src="/static/app.js?v=20260917-full-design"></script>
   <script src="/static/cashflow-ui.js?v=20260917-full-design"></script>
-  <script src="/static/buffer-ui.js?v=20260917-buffer-movement"></script>
+  <script src="/static/buffer-ui.js?v=20260917-piggy-separate"></script>
   <script src="/static/design-ui.js?v=20260917-full-design"></script>
   <script src="/static/backup.js?v=20260917-full-design"></script>
 </body>

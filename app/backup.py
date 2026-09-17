@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 5
+BACKUP_VERSION = 6
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -47,7 +47,7 @@ TABLE_COLUMNS = {
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
     "piggy_bank_movements": (
-        "id", "direction", "amount", "movement_date", "note", "bill_payment_id", "created_at"
+        "id", "direction", "amount", "movement_date", "note", "source", "bill_payment_id", "created_at"
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
@@ -195,9 +195,9 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             for row in data["piggy_bank_movements"]:
                 con.execute(
                     "INSERT INTO piggy_bank_movements"
-                    "(user_id,direction,amount,movement_date,note,bill_payment_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                    "(user_id,direction,amount,movement_date,note,source,bill_payment_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
                     (
-                        user_id, row['direction'], row['amount'], row['movement_date'], row['note'],
+                        user_id, row['direction'], row['amount'], row['movement_date'], row['note'], row.get('source', 'external'),
                         transaction_ids.get(row.get('bill_payment_id')), _created_at(row),
                     ),
                 )
