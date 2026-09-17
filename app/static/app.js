@@ -84,10 +84,12 @@ function renderDashboard() {
   $("dailyAvailable").textContent = money(d.daily_available);
   $("periodCaption").textContent = `${fmtDate(d.period.start)} — ${fmtDate(d.period.end)} · ${d.period.days_left} дн.`;
   $("spentToday").textContent = money(d.spent_today);
-  $("remaining").textContent = money(d.remaining);
-  $("periodBudget").textContent = money(d.period_budget);
-  $("mandatory").textContent = money(d.mandatory);
-  $("reserveBalance").textContent = money(d.reserve.balance);
+  // Fallback values until the detailed cash-flow snapshot loads.
+  $("cardCash").textContent = money(d.remaining);
+  $("cardPeriodMoney").textContent = money(d.remaining);
+  $("cardBuffer").textContent = money(d.reserve.balance);
+  $("cardPiggy").textContent = "—";
+  $("cardReservesTotal").textContent = money(d.reserve.balance);
   $("reserveTarget").textContent = `цель ${money(d.reserve.future_target)}`;
   const movement = Number(d.reserve.auto_movement || 0);
   $("reserveReason").textContent = movement > 0
