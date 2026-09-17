@@ -149,6 +149,17 @@ CREATE TABLE IF NOT EXISTS plan_history (
     snapshot TEXT NOT NULL,
     UNIQUE(user_id, effective_date)
 );
+
+-- One row means that this particular recurring bill occurrence was already
+-- delivered to the owner in Telegram. The due date is part of the key so a
+-- reminder for October never suppresses the same bill in November.
+CREATE TABLE IF NOT EXISTS bill_reminders (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bill_rule_id INTEGER NOT NULL,
+    due_date TEXT NOT NULL,
+    sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(user_id, bill_rule_id, due_date)
+);
 """
 
 
