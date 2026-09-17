@@ -15,6 +15,13 @@
     return media?.matches ? "dark" : "light";
   }
 
+  function applySafeArea() {
+    const contentInset = Number(tg?.contentSafeAreaInset?.top);
+    const safeInset = Number(tg?.safeAreaInset?.top);
+    const top = Number.isFinite(contentInset) ? contentInset : Number.isFinite(safeInset) ? safeInset : 0;
+    document.documentElement.style.setProperty("--app-safe-top", `${Math.max(0, top)}px`);
+  }
+
   function apply(mode = savedMode(), persist = false) {
     const safeMode = MODES.has(mode) ? mode : "auto";
     const resolved = resolvedTheme(safeMode);
@@ -29,6 +36,7 @@
     if (select && select.value !== safeMode) select.value = safeMode;
   }
 
+  applySafeArea();
   apply();
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -41,6 +49,9 @@
   tg?.onEvent?.("themeChanged", () => {
     if (savedMode() === "auto") apply("auto");
   });
+  tg?.onEvent?.("safeAreaChanged", applySafeArea);
+  tg?.onEvent?.("contentSafeAreaChanged", applySafeArea);
+  tg?.onEvent?.("viewportChanged", applySafeArea);
   media?.addEventListener?.("change", () => {
     if (savedMode() === "auto") apply("auto");
   });
