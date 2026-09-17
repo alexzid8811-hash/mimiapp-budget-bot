@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-full-design"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260917-home-balances" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260917-buffer-movement" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -36,16 +36,6 @@
             <div class="stat"><span>Отложено в буфер</span><strong id="reservedNow">—</strong></div>
           </div>
         </div>
-        <section class="card home-balances" aria-label="Деньги и резервы">
-          <div class="section-head"><h3>Деньги и резервы</h3></div>
-          <div class="balance-grid">
-            <div class="balance-item"><span>На карте</span><strong class="num" id="currentCash">—</strong></div>
-            <div class="balance-item"><span>На дни периода</span><strong class="num" id="periodDaysMoney">—</strong></div>
-            <div class="balance-item"><span>В буфере сейчас</span><strong class="num" id="currentBuffer">—</strong></div>
-            <div class="balance-item"><span>В копилке</span><strong class="num" id="currentPiggy">—</strong></div>
-          </div>
-          <div class="balance-total"><span>Итого: буфер + копилка</span><strong class="num" id="reservesTotal">—</strong></div>
-        </section>
         <div class="card home-buffer">
           <div class="section-head"><h3>Буфер</h3><span class="muted num"><span id="reserveBalance">—</span> <span id="reserveTarget">—</span></span></div>
           <div class="meter"><span id="bufferMeter"></span></div>
@@ -72,7 +62,7 @@
         <p class="muted buffer-intro">Приложение откладывает деньги из периодов с большими выплатами для будущих обязательных платежей и периодов с меньшими выплатами. Деньги остаются на вашем счёте.</p>
         <div id="bufferDisabled" class="warning hidden">Включите безопасный дневной лимит в настройках.</div>
         <div class="grid2 buffer-summary">
-          <div class="card"><span class="muted">В буфере</span><strong class="summary-number" id="bufferPageBalance">—</strong></div>
+          <div class="card"><span class="muted">В буфере сейчас</span><strong class="summary-number" id="bufferPageBalance">—</strong></div>
           <div class="card"><span class="muted">Прогноз до</span><strong class="summary-number" id="bufferHorizon">—</strong></div>
         </div>
         <div class="muted">Можно сегодня: <strong id="bufferPageDaily">—</strong></div>
@@ -278,7 +268,7 @@
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
   <script src="/static/app.js?v=20260917-full-design"></script>
-  <script src="/static/cashflow-ui.js?v=20260917-home-balances"></script>
+  <script src="/static/cashflow-ui.js?v=20260917-full-design"></script>
   <script src="/static/buffer-ui.js?v=20260917-piggy-separate"></script>
   <script src="/static/design-ui.js?v=20260917-full-design"></script>
   <script src="/static/backup.js?v=20260917-full-design"></script>
