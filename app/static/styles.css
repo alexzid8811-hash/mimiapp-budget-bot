@@ -396,3 +396,6 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 @media (min-width: 680px) {
   .balance-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+
+.stats .stat-total{grid-column:1 / -1;display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.stats .stat-total strong{margin-top:0}
