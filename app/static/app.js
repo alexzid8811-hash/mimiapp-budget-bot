@@ -140,6 +140,8 @@ function renderSettings() {
   $("initialReserve").value = settings.initial_reserve ?? 0;
   $("forecastMonths").value = settings.forecast_months ?? 4;
   $("currency").value = settings.currency || "RUB";
+  $("reminderDays").value = settings.reminder_days ?? 3;
+  $("reminderTime").value = settings.reminder_time || "10:00";
 
   $("payrollEnabled").checked = Boolean(payroll.payroll_enabled);
   $("salaryGross").value = payroll.salary_gross ?? 0;
@@ -347,6 +349,8 @@ function generalSettingsPayload() {
     // it here; the dedicated button below saves the visible start amount.
     initial_reserve: Number(state.bootstrap?.settings?.initial_reserve || 0),
     forecast_months: Number($("forecastMonths").value || 4),
+    reminder_days: Number($("reminderDays").value || 0),
+    reminder_time: $("reminderTime").value || "10:00",
   };
 }
 
@@ -366,6 +370,14 @@ $("saveSettingsBtn").addEventListener("click", async () => {
   try {
     await api("/api/settings", {method:"PUT", body:JSON.stringify(generalSettingsPayload())});
     toast("Настройки сохранены");
+    await loadAll();
+  } catch(e) { toast(e.message); }
+});
+
+$("saveReminderSettingsBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/settings", {method:"PUT", body:JSON.stringify(generalSettingsPayload())});
+    toast("Уведомления сохранены");
     await loadAll();
   } catch(e) { toast(e.message); }
 });
