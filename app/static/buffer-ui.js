@@ -101,13 +101,13 @@
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     cards.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
-      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>${commonDaily?"":`<div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div>`}<div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div><div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
-    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период","Выплата","Дней","Деньги периода","Обязательные","Свободно",...(commonDaily?[]:["В день"]),"Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
+    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период","Выплата","Дней","Деньги периода","Обязательные","Свободно","В день","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
       const cells=[formatDate(p.start)+" — "+formatDate(p.end),safe(p.kind),Number(p.days)];
-      const tail=[formatMoney(p.mandatory),formatMoney(p.free),...(commonDaily?[]:[formatMoney(p.daily)])];
+      const tail=[formatMoney(p.mandatory),formatMoney(p.free),formatMoney(p.daily)];
       return `<tr class="${i===0?"cur":""}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
   }
