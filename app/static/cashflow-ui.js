@@ -76,11 +76,11 @@
     setText("reserveTarget", `на счету ${formatMoney(flow.current_cash)}`);
 
     const piggyBalance = Number(flow.piggy_bank_balance || 0);
-    setText("currentCash", formatMoney(flow.current_cash));
-    setText("periodDaysMoney", formatMoney(flow.remaining_period));
-    setText("currentBuffer", formatMoney(flow.buffer_balance));
-    setText("currentPiggy", formatMoney(piggyBalance));
-    setText("reservesTotal", formatMoney(Number(flow.buffer_balance || 0) + piggyBalance));
+    setText("cardCash", formatMoney(flow.current_cash));
+    setText("cardPeriodMoney", formatMoney(flow.remaining_period));
+    setText("cardBuffer", formatMoney(flow.buffer_balance));
+    setText("cardPiggy", formatMoney(piggyBalance));
+    setText("cardReservesTotal", formatMoney(Number(flow.buffer_balance || 0) + piggyBalance));
 
     let reason = flow.reason || "";
     if (Number(flow.reserved_mandatory || 0) > 0) {
