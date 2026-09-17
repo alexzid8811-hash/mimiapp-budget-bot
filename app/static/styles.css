@@ -276,3 +276,18 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .top-actions{flex-shrink:0}.topbar>div:first-child{min-width:0}
 .row-main{flex:1}.row-text{flex:1}
 @media(max-width:380px){.pc-flow{gap:5px}.pc-flow span{font-size:10px}}
+
+/* Prevent payment status text from squeezing the description on phones. */
+#planList .list-row > div { min-width:0; }
+#planList .list-row > .row-main { flex:1 1 55%; }
+#planList .list-row > .row-main + div { flex:0 1 45%; text-align:right; }
+#planList .row-title { white-space:normal; overflow-wrap:anywhere; }
+#planList .row-sub { overflow-wrap:break-word; }
+@media(max-width:600px) {
+  #planList .list-row { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; padding:16px 0; }
+  #planList .row-main { width:100%; align-items:flex-start; }
+  #planList .row-text { min-width:0; }
+  #planList .list-row > .row-main + div { padding-left:50px; text-align:left; }
+  #planList .amount { text-align:left; white-space:normal; overflow-wrap:anywhere; font-size:16px; }
+  #planList .tiny { margin-top:8px; min-height:40px; }
+}
