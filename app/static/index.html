@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-full-design"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260917-buffer-movement" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260917-reserves-summary-v2" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -29,11 +29,12 @@
           <div class="strip" id="periodStrip" aria-label="Дни периода"></div>
           <div class="strip-legend"><span id="periodStartLabel">—</span><span class="pay" id="periodEndLabel">—</span></div>
           <span id="dayProgress" hidden></span>
-          <div class="stats">
-            <div class="stat"><span>Бюджет периода</span><strong id="periodBudget">—</strong></div>
-            <div class="stat"><span>Осталось</span><strong id="remaining">—</strong></div>
-            <div class="stat"><span>Обязательные платежи</span><strong id="mandatory">—</strong></div>
-            <div class="stat"><span>Отложено в буфер</span><strong id="reservedNow">—</strong></div>
+          <div class="stats" aria-label="Деньги и резервы">
+            <div class="stat"><span>Сумма на карте</span><strong id="cardCash">—</strong></div>
+            <div class="stat"><span>Деньги на дни периода</span><strong id="cardPeriodMoney">—</strong></div>
+            <div class="stat"><span>Буфер сейчас</span><strong id="cardBuffer">—</strong></div>
+            <div class="stat"><span>Копилка</span><strong id="cardPiggy">—</strong></div>
+            <div class="stat stat-total"><span>Итого: буфер + копилка</span><strong id="cardReservesTotal">—</strong></div>
           </div>
         </div>
         <div class="card home-buffer">
@@ -268,7 +269,7 @@
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
   <script src="/static/app.js?v=20260917-full-design"></script>
-  <script src="/static/cashflow-ui.js?v=20260917-full-design"></script>
+  <script src="/static/cashflow-ui.js?v=20260917-reserves-summary-v2"></script>
   <script src="/static/buffer-ui.js?v=20260917-piggy-separate"></script>
   <script src="/static/design-ui.js?v=20260917-full-design"></script>
   <script src="/static/backup.js?v=20260917-full-design"></script>
