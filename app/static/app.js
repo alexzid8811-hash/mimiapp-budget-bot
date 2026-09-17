@@ -171,8 +171,6 @@ function renderSettings() {
   $("vacationsList").innerHTML = state.vacations.length ? state.vacations.map(v => `
     <div class="list-row"><div class="row-text"><div class="row-title">Отпуск ${fmtDate(v.start_date)} — ${fmtDate(v.end_date)}</div><div class="row-sub">Выплата ${fmtDate(v.payment_date)}${v.note ? ` · ${escapeHtml(v.note)}` : ''}</div></div><div><div class="amount income">${money(v.amount)}</div><div class="actions"><button class="tiny" onclick="editVacation(${v.id})">Изм.</button><button class="tiny danger" onclick="deleteVacation(${v.id})">×</button></div></div></div>`).join("") : `<div class="empty">Отпуска пока не добавлены.</div>`;
 
-  const incomeRules = Boolean(payroll.payroll_enabled) ? b.income_rules.filter(r => r.kind === 'other') : b.income_rules;
-  $("incomeRulesList").innerHTML = incomeRules.length ? incomeRules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">${r.active ? 'активно' : 'выключено'}</div></div><div><div class="amount income">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editIncomeRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteIncomeRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Дополнительных регулярных доходов пока нет.</div>`;
   $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">ежемесячно</div></div><div><div class="amount expense">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
   $("categoriesList").innerHTML = b.categories.map(c => `<span class="chip">${escapeHtml(c.emoji)} ${escapeHtml(c.title)}</span>`).join("");
 }
@@ -328,11 +326,8 @@ function openRule(mode, rule = null) {
   $("ruleBillCategory").value = rule?.category_id || "";
   $("ruleDialog").showModal();
 }
-$("addIncomeRuleBtn").addEventListener("click", () => openRule("income"));
 $("addBillRuleBtn").addEventListener("click", () => openRule("bill"));
-window.editIncomeRule = id => openRule("income", state.bootstrap.income_rules.find(x => x.id === id));
 window.editBillRule = id => openRule("bill", state.bootstrap.bill_rules.find(x => x.id === id));
-window.deleteIncomeRule = async id => { if(!confirm("Удалить доход?")) return; await api(`/api/income-rules/${id}`, {method:"DELETE"}); await loadAll(); };
 window.deleteBillRule = async id => { if(!confirm("Удалить платеж?")) return; await api(`/api/bill-rules/${id}`, {method:"DELETE"}); await loadAll(); };
 
 $("ruleForm").addEventListener("submit", async (e) => {
