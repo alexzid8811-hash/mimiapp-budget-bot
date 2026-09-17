@@ -301,6 +301,15 @@ def cashflow_snapshot(user_id: int) -> dict:
         else {},
     )
 
+    # "В буфере сейчас" is money that can stay on the separate buffer
+    # account after the whole current pay period has been funded.  The
+    # calculation in CashflowPlan only subtracts today's allowance, which is
+    # useful for the daily-limit screen but overstates the balance that may be
+    # moved to the buffer account.  The first period row already reserves the
+    # daily budget for every remaining day of the current period and excludes
+    # piggy-bank movements.
+    buffer_balance_now = periods[0]["buffer"] if periods else plan.buffer_balance
+
     return {
         "enabled": True,
         "settings": settings,
@@ -314,7 +323,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         "daily_target": plan.daily_target,
         "today_target": plan.today_target,
         "available_today": plan.available_today,
-        "buffer_balance": plan.buffer_balance,
+        "buffer_balance": buffer_balance_now,
         "capital_shortfall": plan.capital_shortfall,
         "period_budget": period_budget,
         "remaining_period": remaining_period,
