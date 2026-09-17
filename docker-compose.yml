@@ -20,5 +20,8 @@ services:
     environment:
       BOT_TOKEN: ${BOT_TOKEN:-}
       MINI_APP_URL: ${MINI_APP_URL:-}
+      BUDGET_TIMEZONE: ${BUDGET_TIMEZONE:-Europe/Moscow}
+      REMINDER_DAYS: ${REMINDER_DAYS:-3}
+      REMINDER_CHECK_SECONDS: ${REMINDER_CHECK_SECONDS:-3600}
     depends_on:
       - web
