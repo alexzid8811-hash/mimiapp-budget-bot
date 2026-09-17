@@ -36,6 +36,16 @@
             <div class="stat"><span>Отложено в буфер</span><strong id="reservedNow">—</strong></div>
           </div>
         </div>
+        <section class="card home-balances" aria-label="Деньги и резервы">
+          <div class="section-head"><h3>Деньги и резервы</h3></div>
+          <div class="balance-grid">
+            <div class="balance-item"><span>На карте</span><strong class="num" id="currentCash">—</strong></div>
+            <div class="balance-item"><span>На дни периода</span><strong class="num" id="periodDaysMoney">—</strong></div>
+            <div class="balance-item"><span>В буфере сейчас</span><strong class="num" id="currentBuffer">—</strong></div>
+            <div class="balance-item"><span>В копилке</span><strong class="num" id="currentPiggy">—</strong></div>
+          </div>
+          <div class="balance-total"><span>Итого: буфер + копилка</span><strong class="num" id="reservesTotal">—</strong></div>
+        </section>
         <div class="card home-buffer">
           <div class="section-head"><h3>Буфер</h3><span class="muted num"><span id="reserveBalance">—</span> <span id="reserveTarget">—</span></span></div>
           <div class="meter"><span id="bufferMeter"></span></div>
