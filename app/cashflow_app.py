@@ -196,10 +196,14 @@ def cashflow_period_rows(
         # calculate_cashflow_plan treats its opening amount as already
         # containing today's flows, so add the payment and bills on the first
         # day of this new segment explicitly.
+        period_planned_income = sum(
+            value for day, value in income.items() if period_start <= day <= item["end"]
+        )
         opening = round(
             balance_before
+            + float(income.get(period_start, 0.0))
             + overrides[period_start]
-            - float(income.get(period_start, 0.0))
+            - period_planned_income
             - float(mandatory.get(period_start, 0.0)),
             2,
         )
