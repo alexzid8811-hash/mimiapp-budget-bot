@@ -42,6 +42,13 @@
     if (element) element.textContent = value;
   }
 
+  function receivedMarkup(period, compact = false) {
+    const value = `<span>${formatMoney(period.received)}</span>`;
+    if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
+    const badge = period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
+    return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.start}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
+  }
+
   function renderBuffer() {
     const data = bufferState.buffer;
     if (!data) return;
@@ -90,15 +97,56 @@
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     cards.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
-      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>Получено</span><b>${formatMoney(p.received)}</b></div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>${commonDaily?"":`<div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div>`}<div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>Получено</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>${commonDaily?"":`<div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div>`}<div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период","Выплата","Дней","Получено","Обязательные","Свободно",...(commonDaily?[]:["В день"]),"В буфер","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = periods.map((p,i)=>{
       const [c,m]=movement(p);
-      const cells=[formatDate(p.start)+" — "+formatDate(p.end),safe(p.kind),Number(p.days),formatMoney(p.received),formatMoney(p.mandatory),formatMoney(p.free),...(commonDaily?[]:[formatMoney(p.daily)])];
-      return `<tr class="${i===0?"cur":""}">${cells.map(c=>`<td class="num">${c}</td>`).join("")}<td class="num sep ${c}">${m}</td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
+      const cells=[formatDate(p.start)+" — "+formatDate(p.end),safe(p.kind),Number(p.days)];
+      const tail=[formatMoney(p.mandatory),formatMoney(p.free),...(commonDaily?[]:[formatMoney(p.daily)])];
+      return `<tr class="${i===0?"cur":""}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num sep ${c}">${m}</td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
   }
+
+  window.editCashflowIncome = periodStart => {
+    const period = bufferState.buffer?.periods?.find(item => item.start === periodStart);
+    if (!period?.received_editable) return;
+    document.getElementById("cashflowIncomePeriodStart").value = period.start;
+    document.getElementById("cashflowIncomeAmount").value = period.received;
+    document.getElementById("cashflowIncomeCaption").textContent =
+      `${formatDate(period.start)} — ${formatDate(period.end)} · по расчёту ${formatMoney(period.planned_received)}`;
+    document.getElementById("resetCashflowIncomeBtn").hidden = !period.income_overridden;
+    document.getElementById("cashflowIncomeDialog").showModal();
+  };
+
+  document.getElementById("cashflowIncomeForm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const periodStart = document.getElementById("cashflowIncomePeriodStart").value;
+    const raw = document.getElementById("cashflowIncomeAmount").value;
+    const amount = window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(raw) : Number(raw);
+    try {
+      await request(`/api/cashflow/income-overrides/${periodStart}`, {
+        method: "PUT", body: JSON.stringify({ amount }),
+      });
+      document.getElementById("cashflowIncomeDialog").close();
+      if (typeof toast === "function") toast("Сумма выплаты изменена, бюджет пересчитан");
+      await loadAll();
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  });
+
+  document.getElementById("resetCashflowIncomeBtn")?.addEventListener("click", async () => {
+    const periodStart = document.getElementById("cashflowIncomePeriodStart").value;
+    try {
+      await request(`/api/cashflow/income-overrides/${periodStart}`, { method: "DELETE" });
+      document.getElementById("cashflowIncomeDialog").close();
+      if (typeof toast === "function") toast("Возвращён автоматический расчёт выплаты");
+      await loadAll();
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  });
 
   function renderPiggy() {
     const piggy = bufferState.piggy || { balance: 0, movements: [] };
@@ -181,4 +229,3 @@
   document.querySelector('[data-nav="piggy"]')?.addEventListener("click", () => refresh());
   window.refreshBuffer = refresh;
 })();
-

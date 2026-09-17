@@ -178,3 +178,21 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
  assert.match(get('bufWarn').textContent,/5.000/);
  assert.match(get('planDaily').textContent,/В день везде/);
 });
+
+test('future received amount can be edited and sent for budget recalculation', async () => {
+ const {sandbox,get,requests,responses}=setup();
+ responses['/api/cashflow'].periods=[
+  {start:'2026-09-15',end:'2026-09-21',kind:'сейчас',days:7,received:26246.45,planned_received:26246.45,received_editable:false,income_overridden:false,mandatory:0,free:26246.45,daily:1000,put_aside:0,take:0,buffer:10000},
+  {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',days:15,received:39395.22,planned_received:39395.22,received_editable:true,income_overridden:false,mandatory:10000,free:29395.22,daily:1000,put_aside:10000,take:0,buffer:20000}
+ ];
+ await get('refreshBtn').listeners.click();
+ assert.match(get('planCards').innerHTML,/editCashflowIncome\('2026-09-22'\)/);
+
+ sandbox.window.editCashflowIncome('2026-09-22');
+ assert.equal(get('cashflowIncomeAmount').value,39395.22);
+ get('cashflowIncomeAmount').value='41000';
+ await get('cashflowIncomeForm').listeners.submit({preventDefault(){}});
+
+ const request=requests.find(row=>row.url==='/api/cashflow/income-overrides/2026-09-22');
+ assert.deepEqual(JSON.parse(request.body),{amount:41000});
+});

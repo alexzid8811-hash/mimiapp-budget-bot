@@ -128,6 +128,18 @@ CREATE TABLE IF NOT EXISTS piggy_bank_movements (
 CREATE INDEX IF NOT EXISTS ix_piggy_bank_user_date
 ON piggy_bank_movements(user_id, movement_date DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS cashflow_income_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    period_start TEXT NOT NULL,
+    amount REAL NOT NULL CHECK(amount >= 0),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS ix_cashflow_income_overrides_user_date
+ON cashflow_income_overrides(user_id, period_start);
+
 CREATE TABLE IF NOT EXISTS plan_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

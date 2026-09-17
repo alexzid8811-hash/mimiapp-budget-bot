@@ -115,6 +115,12 @@ class Piggy(Record):
         return self
 
 
+class CashflowIncomeOverride(Record):
+    period_start: date
+    amount: float = Field(ge=0)
+    updated_at: datetime | None = None
+
+
 class Conditions(APIModel):
     settings: Payroll
     income_rules: list[Income]
@@ -129,11 +135,12 @@ class History(APIModel):
 
 MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'transactions': Transaction, 'vacations': Vacation, 'reserve_movements': Reserve,
-          'piggy_bank_movements': Piggy, 'plan_history': History}
+          'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
+          'plan_history': History}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -142,7 +149,10 @@ def validate_backup(payload):
         raise ValueError('В резервной копии нет настроек')
     data = {'settings': Settings.model_validate(source['settings']).model_dump(mode='json')}
     for table, model in MODELS.items():
-        records = source.get(table, [] if payload['backup_version'] == 1 and table in ('piggy_bank_movements', 'plan_history') else None)
+        optional_legacy_tables = {'cashflow_income_overrides'}
+        if payload['backup_version'] == 1:
+            optional_legacy_tables.update({'piggy_bank_movements', 'plan_history'})
+        records = source.get(table, [] if table in optional_legacy_tables else None)
         if not isinstance(records, list):
             raise ValueError(f'Повреждён раздел {table}')
         data[table] = [model.model_validate(r).model_dump(mode='json') for r in records]

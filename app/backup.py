@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 3
+BACKUP_VERSION = 4
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -48,6 +48,7 @@ TABLE_COLUMNS = {
     "piggy_bank_movements": (
         "id", "direction", "amount", "movement_date", "note", "bill_payment_id", "created_at"
     ),
+    "cashflow_income_overrides": ("id", "period_start", "amount", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
 }
 
@@ -94,7 +95,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            for table in ("transactions", "piggy_bank_movements", "plan_history", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             values = {
@@ -187,6 +188,15 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     (
                         user_id, row['direction'], row['amount'], row['movement_date'], row['note'],
                         transaction_ids.get(row.get('bill_payment_id')), _created_at(row),
+                    ),
+                )
+            for row in data["cashflow_income_overrides"]:
+                con.execute(
+                    "INSERT INTO cashflow_income_overrides"
+                    "(user_id,period_start,amount,updated_at) VALUES(?,?,?,?)",
+                    (
+                        user_id, row["period_start"], row["amount"],
+                        row.get("updated_at") or datetime.now(timezone.utc).isoformat(),
                     ),
                 )
             for row in data["plan_history"]:

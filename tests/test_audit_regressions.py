@@ -80,6 +80,53 @@ def test_period_table_includes_overspend(client):
     assert result[0]['buffer'] == 880
 
 
+def test_future_received_amount_override_recalculates_entire_cashflow(client, monkeypatch):
+    with connect() as con:
+        con.execute(
+            "UPDATE income_rules SET amount=39395.22 WHERE user_id=1 AND kind='advance'"
+        )
+
+    before = cashflow_snapshot(1)
+    planned = next(row for row in before['periods'] if row['start'] == '2026-09-22')
+    assert planned['received'] == 39395.22
+    assert planned['income_overridden'] is False
+
+    response = client.put(
+        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
+    )
+    assert response.status_code == 200
+    after = cashflow_snapshot(1)
+    corrected = next(row for row in after['periods'] if row['start'] == '2026-09-22')
+    assert corrected['planned_received'] == 39395.22
+    assert corrected['received'] == 41000
+    assert corrected['free'] == 41000
+    assert corrected['income_overridden'] is True
+    # The near-term balance is still the limiting factor for the daily amount,
+    # but the corrected receipt must flow through the rest of the forecast.
+    assert after['daily_target'] == before['daily_target']
+    assert after['projected_end_balance'] == round(
+        before['projected_end_balance'] + 41000 - 39395.22, 2
+    )
+
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    assert cashflow_snapshot(1)['current_cash'] == 42000
+
+
+def test_income_override_can_be_reset_and_current_row_cannot_be_edited(client):
+    assert client.put(
+        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
+    ).status_code == 200
+    assert client.delete('/api/cashflow/income-overrides/2026-09-22').status_code == 200
+    restored = next(
+        row for row in cashflow_snapshot(1)['periods'] if row['start'] == '2026-09-22'
+    )
+    assert restored['income_overridden'] is False
+    assert restored['received'] == restored['planned_received']
+    assert client.put(
+        '/api/cashflow/income-overrides/2026-09-15', json={'amount': 41000}
+    ).status_code == 422
+
+
 def test_income_edits_and_deletes_preserve_past(client):
     rule = salary_rule()
     before = cashflow_snapshot(1)['current_cash']
@@ -250,6 +297,22 @@ def test_backup_restores_piggy_to_new_and_existing_users(client):
     client.post('/api/piggy-bank/deposit', json={'amount': 100, 'movement_date': '2026-09-13'})
     restore_user_data(1, backup)
     assert piggy_bank_balance(1) == 300
+
+
+def test_backup_restores_cashflow_income_overrides(client):
+    assert client.put(
+        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
+    ).status_code == 200
+    backup = export_user_data(1)
+    assert backup['backup_version'] == 4
+    assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
+    ensure_user(2)
+    restore_user_data(2, backup)
+    corrected = next(
+        row for row in cashflow_snapshot(2)['periods'] if row['start'] == '2026-09-22'
+    )
+    assert corrected['received'] == 41000
+    assert corrected['income_overridden'] is True
 
 
 def test_backup_remaps_archived_rule_history(client):

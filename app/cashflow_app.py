@@ -31,6 +31,10 @@ class PiggyBankMovementIn(APIModel):
     note: str = Field(default="", max_length=160)
 
 
+class CashflowIncomeOverrideIn(APIModel):
+    amount: float = Field(ge=0)
+
+
 def cashflow_settings(user_id: int) -> dict:
     data = legacy.one(
         "SELECT cashflow_enabled,cashflow_start_date,initial_reserve,forecast_months "
@@ -104,6 +108,51 @@ def payday_boundaries(user_id: int, start: date, end: date) -> list[dict]:
     return planning.payday_boundaries(user_id, start, end)
 
 
+def cashflow_income_overrides(user_id: int, start: date, end: date) -> dict[date, float]:
+    values = legacy.rows(
+        "SELECT period_start,amount FROM cashflow_income_overrides "
+        "WHERE user_id=? AND period_start BETWEEN ? AND ?",
+        (user_id, start.isoformat(), end.isoformat()),
+    )
+    return {date.fromisoformat(row["period_start"]): round(float(row["amount"]), 2) for row in values}
+
+
+def cashflow_periods(user_id: int, today: date, horizon_end: date) -> list[dict]:
+    starts = [{"date": today, "kind": "сейчас"}, *payday_boundaries(user_id, today + timedelta(days=1), horizon_end)]
+    return [
+        {
+            **item,
+            "end": starts[index + 1]["date"] - timedelta(days=1)
+            if index + 1 < len(starts)
+            else horizon_end,
+        }
+        for index, item in enumerate(starts)
+        if item["date"] <= horizon_end
+    ]
+
+
+def apply_cashflow_income_overrides(
+    user_id: int,
+    *,
+    today: date,
+    horizon_end: date,
+    income: dict[date, float],
+) -> dict[date, float]:
+    """Adjust future income so each edited period has the requested total."""
+    adjusted = dict(income)
+    overrides = cashflow_income_overrides(user_id, today + timedelta(days=1), horizon_end)
+    for period in cashflow_periods(user_id, today, horizon_end)[1:]:
+        period_start = period["date"]
+        if period_start not in overrides:
+            continue
+        period_end = period["end"]
+        planned = round(
+            sum(amount for day, amount in income.items() if period_start <= day <= period_end), 2
+        )
+        _add(adjusted, period_start, overrides[period_start] - planned)
+    return adjusted
+
+
 def cashflow_period_rows(
     user_id: int,
     *,
@@ -112,29 +161,26 @@ def cashflow_period_rows(
     opening_balance_before_today_spend: float,
     daily_target: float,
     spent_today: float = 0,
+    income_overrides: dict[date, float] | None = None,
 ) -> list[dict]:
-    boundaries = payday_boundaries(user_id, today + timedelta(days=1), horizon_end)
-    starts = [{"date": today, "kind": "сейчас"}, *boundaries]
+    periods = cashflow_periods(user_id, today, horizon_end)
     income = planned_income_map(user_id, today + timedelta(days=1), horizon_end)
     mandatory = planned_mandatory_map(user_id, today + timedelta(days=1), horizon_end)
+    overrides = income_overrides or {}
     buffer_before = 0.0
     result: list[dict] = []
 
-    for index, item in enumerate(starts):
+    for index, item in enumerate(periods):
         period_start = item["date"]
-        period_end = (
-            starts[index + 1]["date"] - timedelta(days=1)
-            if index + 1 < len(starts)
-            else horizon_end
-        )
-        if period_start > horizon_end:
-            break
+        period_end = item["end"]
         days = (period_end - period_start).days + 1
         planned_income = round(
             sum(amount for day, amount in income.items() if period_start <= day <= period_end), 2
         )
+        overridden = index > 0 and period_start in overrides
+        effective_income = overrides[period_start] if overridden else planned_income
         received = round(
-            (opening_balance_before_today_spend if index == 0 else 0.0) + planned_income, 2
+            (opening_balance_before_today_spend if index == 0 else 0.0) + effective_income, 2
         )
         bills = round(
             sum(amount for day, amount in mandatory.items() if period_start <= day <= period_end), 2
@@ -153,6 +199,11 @@ def cashflow_period_rows(
                 "end": period_end.isoformat(),
                 "kind": item["kind"],
                 "received": received,
+                "planned_received": round(
+                    (opening_balance_before_today_spend if index == 0 else 0.0) + planned_income, 2
+                ),
+                "income_overridden": overridden,
+                "received_editable": index > 0,
                 "days": days,
                 "mandatory": bills,
                 "free": free,
@@ -182,7 +233,8 @@ def cashflow_snapshot(user_id: int) -> dict:
     # Past scheduled income is only a forecast until the user records that it
     # was actually received. Otherwise an unpaid salary/vacation payment would
     # silently inflate the real balance carried from the starting capital.
-    actual_income_history = legacy.actual_income(user_id, start_date, today)
+    confirmed_overrides = cashflow_income_overrides(user_id, start_date, today)
+    actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
     mandatory_history = planned_mandatory_map(user_id, start_date, today)
     spent_history = legacy.discretionary_spent(user_id, start_date, today)
 
@@ -196,6 +248,10 @@ def cashflow_snapshot(user_id: int) -> dict:
 
     tomorrow = today + timedelta(days=1)
     income_future = planned_income_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
+    if tomorrow <= horizon_end:
+        income_future = apply_cashflow_income_overrides(
+            user_id, today=today, horizon_end=horizon_end, income=income_future
+        )
     mandatory_future = planned_mandatory_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
 
     plan = calculate_cashflow_plan(
@@ -232,6 +288,9 @@ def cashflow_snapshot(user_id: int) -> dict:
         opening_balance_before_today_spend=opening_before_today_spend,
         daily_target=plan.daily_target,
         spent_today=spent_today,
+        income_overrides=cashflow_income_overrides(user_id, tomorrow, horizon_end)
+        if tomorrow <= horizon_end
+        else {},
     )
 
     return {
@@ -302,6 +361,52 @@ def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
         "capital_shortfall": snapshot["capital_shortfall"],
         "periods": snapshot["periods"],
     }
+
+
+def editable_cashflow_period(user_id: int, period_start: date) -> bool:
+    today = clock.today()
+    settings = cashflow_settings(user_id)
+    horizon_end = add_months(today, max(1, min(12, int(settings["forecast_months"]))))
+    return any(
+        period["date"] == period_start
+        for period in cashflow_periods(user_id, today, horizon_end)[1:]
+    )
+
+
+@app.put("/api/cashflow/income-overrides/{period_start}")
+def save_cashflow_income_override(
+    period_start: date,
+    payload: CashflowIncomeOverrideIn,
+    user: TelegramUser = Depends(current_user),
+) -> dict:
+    uid = legacy.user_ready(user)
+    if not editable_cashflow_period(uid, period_start):
+        raise HTTPException(422, "Можно изменить только будущую выплату из текущего прогноза")
+    with legacy.connect() as con:
+        con.execute(
+            "INSERT INTO cashflow_income_overrides(user_id,period_start,amount) VALUES(?,?,?) "
+            "ON CONFLICT(user_id,period_start) DO UPDATE SET "
+            "amount=excluded.amount,updated_at=CURRENT_TIMESTAMP",
+            (uid, period_start.isoformat(), payload.amount),
+        )
+    legacy.invalidate_current_auto_reserve(uid)
+    return get_buffer(user)
+
+
+@app.delete("/api/cashflow/income-overrides/{period_start}")
+def delete_cashflow_income_override(
+    period_start: date, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = legacy.user_ready(user)
+    with legacy.connect() as con:
+        deleted = con.execute(
+            "DELETE FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
+            (uid, period_start.isoformat()),
+        )
+    if deleted.rowcount == 0:
+        raise HTTPException(404, "Корректировка выплаты не найдена")
+    legacy.invalidate_current_auto_reserve(uid)
+    return get_buffer(user)
 
 
 @app.get("/api/piggy-bank")
