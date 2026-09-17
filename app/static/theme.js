@@ -21,11 +21,12 @@
     const reportedTop = Number.isFinite(contentInset) && contentInset > 0
       ? contentInset
       : Number.isFinite(safeInset) && safeInset > 0 ? safeInset : 0;
-    // Some iOS Telegram builds report 0 before the native header is measured.
-    // Keep content below its Close/menu controls until a real inset arrives.
-    const telegramFallback = tg ? 72 : 0;
-    const top = Math.max(reportedTop, telegramFallback);
-    document.documentElement.style.setProperty("--app-safe-top", `${top}px`);
+    const fullscreen = Boolean(tg?.isFullscreen);
+    document.documentElement.classList.toggle("telegram-fullscreen", fullscreen);
+    // iOS Telegram can report zero in fullscreen while its Close/menu controls
+    // are still drawn above the WebView. Reserve that header only in fullscreen.
+    const fallback = fullscreen && tg ? 86 : 0;
+    document.documentElement.style.setProperty("--app-safe-top", `${Math.max(reportedTop, fallback)}px`);
   }
 
   function apply(mode = savedMode(), persist = false) {
@@ -62,6 +63,7 @@
   tg?.onEvent?.("safeAreaChanged", applySafeArea);
   tg?.onEvent?.("contentSafeAreaChanged", applySafeArea);
   tg?.onEvent?.("viewportChanged", applySafeArea);
+  tg?.onEvent?.("fullscreenChanged", applySafeArea);
   media?.addEventListener?.("change", () => {
     if (savedMode() === "auto") apply("auto");
   });
