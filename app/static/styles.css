@@ -399,3 +399,14 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 
 .stats .stat-total{grid-column:1 / -1;display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .stats .stat-total strong{margin-top:0}
+
+
+/* Keep multi-line labels and their controls aligned in settings cards. */
+.aligned-fields{align-items:start}
+.aligned-fields>label{display:grid;grid-template-rows:40px 52px;gap:6px;align-content:start;margin:6px 0;min-width:0}
+.aligned-fields>label>input,.aligned-fields>label>select{height:52px;min-width:0}
+.reminder-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:420px){
+  .start-capital-fields{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .start-capital-fields>label:last-child{grid-column:1 / -1}
+}
