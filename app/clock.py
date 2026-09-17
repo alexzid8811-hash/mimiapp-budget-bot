@@ -9,8 +9,4 @@ def budget_timezone() -> str:
 
 
 def today():
-    return now().date()
-
-
-def now():
-    return datetime.now(ZoneInfo(budget_timezone()))
+    return datetime.now(ZoneInfo(budget_timezone())).date()

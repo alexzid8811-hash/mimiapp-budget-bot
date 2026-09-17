@@ -30,8 +30,6 @@ CREATE TABLE IF NOT EXISTS settings (
     cashflow_enabled INTEGER NOT NULL DEFAULT 0,
     cashflow_start_date TEXT,
     cashflow_start_capital REAL NOT NULL DEFAULT 0,
-    reminder_days INTEGER NOT NULL DEFAULT 3,
-    reminder_time TEXT NOT NULL DEFAULT '10:00',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -151,17 +149,6 @@ CREATE TABLE IF NOT EXISTS plan_history (
     snapshot TEXT NOT NULL,
     UNIQUE(user_id, effective_date)
 );
-
--- One row means that this particular recurring bill occurrence was already
--- delivered to the owner in Telegram. The due date is part of the key so a
--- reminder for October never suppresses the same bill in November.
-CREATE TABLE IF NOT EXISTS bill_reminders (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    bill_rule_id INTEGER NOT NULL,
-    due_date TEXT NOT NULL,
-    sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY(user_id, bill_rule_id, due_date)
-);
 """
 
 
@@ -194,8 +181,6 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
         # used initial_reserve for both meanings, which made the displayed
         # account balance and the buffer contradict each other.
         "cashflow_start_capital": "REAL",
-        "reminder_days": "INTEGER NOT NULL DEFAULT 3",
-        "reminder_time": "TEXT NOT NULL DEFAULT '10:00'",
     }
     for name, ddl in additions.items():
         if name not in columns:
