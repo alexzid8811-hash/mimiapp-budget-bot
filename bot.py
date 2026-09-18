@@ -7,6 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from app import clock
 from app.db import init_db
 from app.reminders import pending_bill_reminders, record_bill_reminder
+from app.morning_reports import pending_morning_reports, record_morning_report
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
@@ -61,9 +62,48 @@ async def send_bill_reminders(application) -> None:
         record_bill_reminder(reminder)
 
 
+def morning_report_text(report: dict) -> str:
+    expenses = "\n".join(f"• {item['title']} — {money(item['amount'])} ₽" for item in report["expenses"])
+    spending = f"Вчера потрачено: {money(report['spent_total'])} ₽"
+    if expenses:
+        spending += "\n" + expenses
+    else:
+        spending += "\nВчера расходов не было."
+    change = "нет данных за предыдущий день" if report["daily_change"] is None else (
+        ("+" if report["daily_change"] >= 0 else "−") + money(abs(report["daily_change"])) + " ₽"
+    )
+    lines = [
+        f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}",
+        "", spending, "",
+        f"До конца периода: {report['period_days_left']} дн. · осталось {money(report['period_remaining'])} ₽",
+        f"На день сегодня: {money(report['daily_amount'])} ₽",
+        f"Изменение дневной суммы: {change}",
+        "", f"Буфер: {money(report['buffer_balance'])} ₽",
+        f"Копилка: {money(report['piggy_balance'])} ₽",
+    ]
+    if report["nearest_due_date"] is None:
+        lines.extend(["", "Ближайших обязательных платежей нет."])
+    else:
+        days = report["nearest_days_left"]
+        when = "сегодня" if days == 0 else "завтра" if days == 1 else f"через {days} дн."
+        lines.extend(["", f"Ближайшие обязательные платежи: {report['nearest_due_date'][8:10]}.{report['nearest_due_date'][5:7]}.{report['nearest_due_date'][:4]} ({when})"])
+        lines.extend(f"• {bill['title']} — {money(bill['amount'])} ₽" for bill in report["nearest_bills"])
+    return "\n".join(lines)
+
+
+async def send_morning_reports(application) -> None:
+    for report in pending_morning_reports(clock.now()):
+        try:
+            await application.bot.send_message(chat_id=report["user_id"], text=morning_report_text(report))
+        except Exception:
+            continue
+        record_morning_report(report)
+
+
 async def reminder_loop(application) -> None:
     while True:
         await send_bill_reminders(application)
+        await send_morning_reports(application)
         await asyncio.sleep(REMINDER_CHECK_SECONDS)
 
 
