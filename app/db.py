@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS settings (
     cashflow_start_capital REAL NOT NULL DEFAULT 0,
     reminder_days INTEGER NOT NULL DEFAULT 3,
     reminder_time TEXT NOT NULL DEFAULT '10:00',
+    morning_report_time TEXT NOT NULL DEFAULT '09:00',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -162,6 +163,14 @@ CREATE TABLE IF NOT EXISTS bill_reminders (
     sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(user_id, bill_rule_id, due_date)
 );
+
+CREATE TABLE IF NOT EXISTS morning_reports (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    report_date TEXT NOT NULL,
+    daily_amount REAL,
+    sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(user_id, report_date)
+);
 """
 
 
@@ -196,6 +205,7 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
         "cashflow_start_capital": "REAL",
         "reminder_days": "INTEGER NOT NULL DEFAULT 3",
         "reminder_time": "TEXT NOT NULL DEFAULT '10:00'",
+        "morning_report_time": "TEXT NOT NULL DEFAULT '09:00'",
     }
     for name, ddl in additions.items():
         if name not in columns:
