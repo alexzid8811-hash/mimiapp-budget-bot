@@ -38,7 +38,7 @@ async function api(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-function currency() { return state.bootstrap?.settings?.currency || "RUB"; }
+function currency() { return "RUB"; }
 function money(v) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), maximumFractionDigits: 2 }).format(Number(v || 0));
 }
@@ -195,7 +195,6 @@ function renderSettings() {
   const payroll = state.payroll?.settings || {};
   $("initialReserve").value = settings.initial_reserve ?? 0;
   $("forecastMonths").value = settings.forecast_months ?? 4;
-  $("currency").value = settings.currency || "RUB";
   const reminderDays = $("reminderDays");
   const reminderTime = $("reminderTime");
   if (reminderDays) reminderDays.value = settings.reminder_days ?? 3;
@@ -405,7 +404,7 @@ $("ruleForm").addEventListener("submit", async (e) => {
 
 function generalSettingsPayload() {
   return {
-    currency: $("currency").value,
+    currency: "RUB",
     // The legacy reserve is no longer the cash-flow start capital.  Preserve
     // it here; the dedicated button below saves the visible start amount.
     initial_reserve: Number(state.bootstrap?.settings?.initial_reserve || 0),
