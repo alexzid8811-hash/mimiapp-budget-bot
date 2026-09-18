@@ -62,6 +62,7 @@ class TransactionIn(APIModel):
     tx_date: date = Field(default_factory=clock.today)
     category_id: int | None = None
     note: str = Field(default="", max_length=200)
+    income_destination: Literal["daily", "buffer", "piggy"] = "daily"
 
 
 class BillPaymentIn(APIModel):
@@ -139,7 +140,8 @@ def period_mandatory(user_id: int, start: date, end: date) -> float:
 def actual_income(user_id: int, start: date, end: date) -> float:
     with connect() as con:
         r = con.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=? AND type='income' AND tx_date BETWEEN ? AND ?",
+            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=? AND type='income' "
+            "AND COALESCE(income_destination,'daily')='daily' AND tx_date BETWEEN ? AND ?",
             (user_id, start.isoformat(), end.isoformat()),
         ).fetchone()
         return round(float(r[0]), 2)
@@ -325,10 +327,19 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
     with connect() as con:
         require_category(con, uid, payload.category_id)
         cur = con.execute(
-            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note) VALUES(?,?,?,?,?,?)",
-            (uid, payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id, payload.note),
+            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination) VALUES(?,?,?,?,?,?,?)",
+            (uid, payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
+             payload.note, payload.income_destination if payload.type == "income" else "daily"),
         )
         tx_id = cur.lastrowid
+        if payload.type == "income" and payload.income_destination == "piggy":
+            con.execute(
+                "INSERT INTO piggy_bank_movements"
+                "(user_id,direction,amount,movement_date,note,source,income_transaction_id) "
+                "VALUES(?, 'deposit', ?, ?, ?, 'external', ?)",
+                (uid, payload.amount, payload.tx_date.isoformat(), payload.note, tx_id),
+            )
+            check_piggy_history(con, uid)
     invalidate_current_auto_reserve(uid)
     return one("SELECT * FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)) or {}
 
@@ -350,13 +361,22 @@ def update_transaction(
         if current["bill_rule_id"] is not None:
             raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
         con.execute(
-            "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=? "
+            "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=? "
             "WHERE id=? AND user_id=?",
             (
                 payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-                payload.note, tx_id, uid,
+                payload.note, payload.income_destination if payload.type == "income" else "daily", tx_id, uid,
             ),
         )
+        con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
+        if payload.type == "income" and payload.income_destination == "piggy":
+            con.execute(
+                "INSERT INTO piggy_bank_movements"
+                "(user_id,direction,amount,movement_date,note,source,income_transaction_id) "
+                "VALUES(?, 'deposit', ?, ?, ?, 'external', ?)",
+                (uid, payload.amount, payload.tx_date.isoformat(), payload.note, tx_id),
+            )
+        check_piggy_history(con, uid)
     invalidate_current_auto_reserve(uid)
     return one("SELECT * FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)) or {}
 
@@ -367,6 +387,7 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
             cur = con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (tx_id, uid))
             if cur.rowcount == 0:
                 raise HTTPException(404, "Operation not found")
