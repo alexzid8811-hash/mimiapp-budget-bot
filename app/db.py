@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     bill_rule_id INTEGER,
     bill_due_date TEXT,
     bill_planned_amount REAL,
+    income_destination TEXT NOT NULL DEFAULT 'daily',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE SET NULL,
     FOREIGN KEY(bill_rule_id) REFERENCES bill_rules(id) ON DELETE SET NULL
@@ -224,6 +225,8 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
     transaction_columns = {row[1] for row in con.execute("PRAGMA table_info(transactions)").fetchall()}
     if "bill_planned_amount" not in transaction_columns:
         con.execute("ALTER TABLE transactions ADD COLUMN bill_planned_amount REAL")
+    if "income_destination" not in transaction_columns:
+        con.execute("ALTER TABLE transactions ADD COLUMN income_destination TEXT NOT NULL DEFAULT 'daily'")
 
     piggy_columns = {row[1] for row in con.execute("PRAGMA table_info(piggy_bank_movements)").fetchall()}
     if "bill_payment_id" not in piggy_columns:
@@ -235,6 +238,16 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
         con.execute(
             "ALTER TABLE piggy_bank_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'external'"
         )
+    if "income_transaction_id" not in piggy_columns:
+        con.execute(
+            "ALTER TABLE piggy_bank_movements ADD COLUMN income_transaction_id INTEGER "
+            "REFERENCES transactions(id) ON DELETE CASCADE"
+        )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_piggy_income_transaction "
+        "ON piggy_bank_movements(user_id, income_transaction_id) "
+        "WHERE income_transaction_id IS NOT NULL"
+    )
     # A remainder explicitly redirected from a paid bill belongs to the
     # spending budget.  Plain historical deposits remain external savings.
     con.execute(
