@@ -124,6 +124,17 @@ def daily_income_in_period(user_id: int, start: date, end: date) -> float:
     )
     return round(float(row["total"]) if row else 0.0, 2)
 
+
+def recorded_income_map(user_id: int, start: date, end: date) -> dict[date, float]:
+    """Manual income transactions that must not be forecast a second time."""
+    rows = legacy.rows(
+        "SELECT tx_date,COALESCE(SUM(amount),0) AS total FROM transactions "
+        "WHERE user_id=? AND type='income' AND tx_date BETWEEN ? AND ? "
+        "GROUP BY tx_date",
+        (user_id, start.isoformat(), end.isoformat()),
+    )
+    return {date.fromisoformat(row["tx_date"]): round(float(row["total"]), 2) for row in rows}
+
 def cashflow_periods(user_id: int, today: date, horizon_end: date) -> list[dict]:
     starts = [{"date": today, "kind": "сейчас"}, *payday_boundaries(user_id, today + timedelta(days=1), horizon_end)]
     return [
@@ -386,6 +397,18 @@ def cashflow_snapshot(user_id: int) -> dict:
         planned_mandatory_map(user_id, anchor_tomorrow, anchor_horizon_end)
         if anchor_tomorrow <= anchor_horizon_end else {}
     )
+    # income_map also returns recorded manual transactions.  For an anchor
+    # before today, today's card income would otherwise appear once in the
+    # opening balance/allocation and once again as forecast income.  Remove it
+    # so the previous buffer remains untouched.
+    for income_day, recorded in recorded_income_map(user_id, period_anchor, today).items():
+        if income_day not in anchor_income:
+            continue
+        corrected = round(anchor_income[income_day] - recorded, 2)
+        if corrected:
+            anchor_income[income_day] = corrected
+        else:
+            anchor_income.pop(income_day)
     anchor_plan = calculate_cashflow_plan(
         today=period_anchor,
         horizon_end=anchor_horizon_end,
