@@ -73,6 +73,7 @@ class Transaction(Record):
     bill_rule_id: int | None = Field(default=None, gt=0)
     bill_due_date: date | None = None
     bill_planned_amount: float | None = Field(default=None, ge=0)
+    income_destination: Literal['daily', 'buffer', 'piggy'] = 'daily'
 
     @model_validator(mode='after')
     def bill_fields(self):
@@ -111,6 +112,7 @@ class Piggy(Record):
     note: str = Field(default='', max_length=160)
     source: Literal['external', 'daily_budget'] = 'external'
     bill_payment_id: int | None = Field(default=None, gt=0)
+    income_transaction_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode='after')
     def not_future(self):
