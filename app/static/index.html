@@ -200,6 +200,14 @@
       <div class="section-head"><h2>Дополнительный доход</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <label>Сумма<input id="incomeTxAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="incomeTxDate" type="date" required /></label>
+      <label>Направить доход
+        <select id="incomeTxDestination">
+          <option value="daily">На ежедневные траты</option>
+          <option value="buffer">В буфер</option>
+          <option value="piggy">В копилку</option>
+        </select>
+      </label>
+      <p class="muted">Ежедневные траты увеличат лимит на день; буфер — остатки в резерве; копилка — только баланс копилки.</p>
       <label>Комментарий<input id="incomeTxNote" maxlength="200" placeholder="Премия, возврат..." /></label>
       <button class="primary big" value="default" id="saveIncomeTxBtn">Записать доход</button>
     </form>
