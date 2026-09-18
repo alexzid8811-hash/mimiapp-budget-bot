@@ -578,4 +578,4 @@ def save_settings(payload: SettingsIn, user: TelegramUser = Depends(current_user
             (payload.currency.upper(), payload.initial_reserve, payload.forecast_months, payload.reminder_days, payload.reminder_time, payload.morning_report_time, uid),
         )
     invalidate_current_auto_reserve(uid)
-    return one("SELECT currency,initial_reserve,forecast_months,reminder_days,reminder_time FROM settings WHERE user_id=?", (uid,)) or {}
+    return one("SELECT currency,initial_reserve,forecast_months,reminder_days,reminder_time,morning_report_time FROM settings WHERE user_id=?", (uid,)) or {}
