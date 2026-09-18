@@ -195,10 +195,11 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             for row in data["piggy_bank_movements"]:
                 con.execute(
                     "INSERT INTO piggy_bank_movements"
-                    "(user_id,direction,amount,movement_date,note,source,bill_payment_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                    "(user_id,direction,amount,movement_date,note,source,bill_payment_id,income_transaction_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, row['direction'], row['amount'], row['movement_date'], row['note'], row.get('source', 'external'),
-                        transaction_ids.get(row.get('bill_payment_id')), _created_at(row),
+                        transaction_ids.get(row.get('bill_payment_id')), transaction_ids.get(row.get('income_transaction_id')),
+                        _created_at(row),
                     ),
                 )
             for row in data["cashflow_income_overrides"]:
