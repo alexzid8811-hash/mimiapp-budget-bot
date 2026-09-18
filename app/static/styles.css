@@ -74,7 +74,7 @@ h1,h2,h3,p{margin:0}
 .page-title{font-size:24px;font-weight:700;letter-spacing:-.02em;margin:8px 0 4px}
 .lead{color:var(--muted);font-size:14px;margin-bottom:14px;max-width:60ch}
 
-.card{background:var(--surface);border-radius:18px;padding:16px;margin:10px 0;box-shadow:var(--shadow)}
+.card{background:var(--surface);border-radius:18px;padding:8px 16px;margin:4px 0;box-shadow:var(--shadow)}
 .card h3{font-size:16px;font-weight:650}
 .section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
 .muted{color:var(--muted);font-size:13px}
@@ -100,7 +100,7 @@ h1,h2,h3,p{margin:0}
 .strip-legend .pay{color:var(--income);font-weight:600}
 
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-radius:14px;overflow:hidden;margin-top:14px}
-.stat{background:var(--surface);padding:12px 14px}
+.stat{background:var(--surface);padding:12px 14px;text-align:center}
 .stat span{display:block;color:var(--muted);font-size:12px}
 .stat strong{display:block;font-size:17px;font-weight:650;margin-top:3px}
 
@@ -116,7 +116,7 @@ h1,h2,h3,p{margin:0}
 
 /* ---------- Списки ---------- */
 .list{display:flex;flex-direction:column}
-.item{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.item{display:flex;align-items:center;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)}
 .item:last-child{border-bottom:0}
 .item .ico{width:38px;height:38px;flex:none;border-radius:11px;background:var(--surface-2);display:grid;place-items:center;font-size:18px}
 .item .txt{flex:1;min-width:0}
@@ -126,7 +126,7 @@ h1,h2,h3,p{margin:0}
 .amt.in{color:var(--income)} .amt.out{color:var(--expense)}
 .item.done{opacity:.55}
 .item.done .t{text-decoration:line-through}
-.day-group{font-size:13px;color:var(--muted);margin:16px 2px 2px}
+.day-group{font-size:13px;color:var(--muted);margin:10px 2px 2px}
 
 /* ---------- Резервы: сегменты + таблица ---------- */
 .segmented{display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border-radius:12px;padding:3px;margin:8px 0 12px}
@@ -237,16 +237,16 @@ label{display:flex;flex-direction:column;gap:6px;margin:12px 0;font-size:13px;co
 input,select,textarea{min-width:0;font-size:16px}
 .grid2,.grid3{align-items:start}.grid2 label,.grid3 label{min-width:0}
 h2{font-size:24px}h3{font-size:16px}.eyebrow{display:none}
-.list-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.list-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)}
 .list-row:last-child{border:0}.row-main{display:flex;align-items:center;gap:12px;min-width:0}
 .row-text{min-width:0}.row-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row-sub{font-size:12.5px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
 .emoji,.movement-icon{width:38px;height:38px;flex:none;border-radius:11px;background:var(--surface-2);display:grid;place-items:center;font-size:18px}
 .amount{font-weight:650;white-space:nowrap;text-align:right}.amount.income,.positive{color:var(--income)}.amount.expense,.negative,.tiny.danger{color:var(--expense)}
 .num,strong,.amount{font-variant-numeric:tabular-nums}
-.cards-list{background:var(--surface);border-radius:18px;padding:4px 14px;margin-top:14px}
+.cards-list{background:var(--surface);border-radius:18px;padding:2px 14px;margin-top:8px}
 .actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px}
-.tiny{border:0;border-radius:9px;padding:7px 10px;min-height:32px;background:var(--surface-2);color:var(--text);cursor:pointer}
+.tiny{border:0;border-radius:9px;padding:7px 10px;min-height:32px;background:var(--surface-2);color:var(--text);cursor:pointer;white-space:nowrap}
 .editable-money{display:inline-flex;flex-direction:column;align-items:flex-end;gap:2px;border:0;border-bottom:1px dashed var(--accent);padding:0 0 2px;background:transparent;color:inherit;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}
 .editable-money::after{content:"Изменить";font-size:10px;font-weight:500;color:var(--accent)}
 .edited-badge{font-size:10px;font-weight:600;color:var(--accent)}
@@ -284,19 +284,30 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .row-main{flex:1}.row-text{flex:1}
 @media(max-width:380px){.pc-flow{gap:5px}.pc-flow span{font-size:10px}}
 
-/* Prevent payment status text from squeezing the description on phones. */
+/* Compact, responsive plan-list rows: title left, amount+button right, never wraps oddly. */
 #planList .list-row > div { min-width:0; }
-#planList .list-row > .row-main { flex:1 1 55%; }
-#planList .list-row > .row-main + div { flex:0 1 45%; text-align:right; }
-#planList .row-title { white-space:normal; overflow-wrap:anywhere; }
-#planList .row-sub { overflow-wrap:break-word; }
-@media(max-width:600px) {
-  #planList .list-row { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; padding:16px 0; }
-  #planList .row-main { width:100%; align-items:flex-start; }
-  #planList .row-text { min-width:0; }
-  #planList .list-row > .row-main + div { padding-left:50px; text-align:left; }
-  #planList .amount { text-align:left; white-space:normal; overflow-wrap:anywhere; font-size:16px; }
-  #planList .tiny { margin-top:8px; min-height:40px; }
+#planList .list-row > .row-main { flex:1 1 auto; min-width:0; }
+#planList .row-title { white-space:normal; overflow-wrap:normal; word-break:normal; }
+#planList .row-sub { overflow-wrap:normal; word-break:normal; }
+#planList .list-row > .row-main + div { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-left:auto; flex:0 0 auto; }
+#planList .tiny { order:-1; }
+#planList .amount { white-space:nowrap; }
+@media(max-width:480px) {
+  #planList .list-row {
+    display:grid;
+    grid-template-columns:38px 1fr auto;
+    grid-template-areas:"icon text amount" "btn btn btn";
+    align-items:center;
+    column-gap:10px;
+    row-gap:4px;
+    padding:6px 0;
+  }
+  #planList .row-main { display:contents; }
+  #planList .emoji { grid-area:icon; }
+  #planList .row-text { grid-area:text; min-width:0; }
+  #planList .list-row > .row-main + div { display:contents; }
+  #planList .amount { grid-area:amount; font-size:14px; }
+  #planList .tiny { grid-area:btn; order:0; width:100%; padding:6px; font-size:13px; min-height:30px; margin:0; }
 }
 
 /* Fluid application shell: phone, tablet and desktop. */
@@ -404,7 +415,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 
 /* Keep multi-line labels and their controls aligned in settings cards. */
 .aligned-fields{align-items:start}
-.aligned-fields>label{display:grid;grid-template-rows:40px 52px;gap:6px;align-content:start;margin:6px 0;min-width:0}
+.aligned-fields>label{display:flex;flex-direction:column;gap:6px;align-content:start;margin:6px 0;min-width:0}
 .aligned-fields>label>input,.aligned-fields>label>select{height:52px;min-width:0}
 .reminder-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
 @media(max-width:420px){
