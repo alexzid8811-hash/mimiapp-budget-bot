@@ -299,31 +299,17 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .row-main{flex:1}.row-text{flex:1}
 @media(max-width:380px){.pc-flow{gap:5px}.pc-flow span{font-size:10px}}
 
-/* Compact, responsive plan-list rows: title left, amount+button right, never wraps oddly. */
-#planList .list-row > div { min-width:0; }
-#planList .list-row > .row-main { flex:1 1 auto; min-width:0; }
-#planList .row-title { white-space:normal; overflow-wrap:normal; word-break:normal; }
-#planList .row-sub { overflow-wrap:normal; word-break:normal; }
-#planList .list-row > .row-main + div { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-left:auto; flex:0 0 auto; }
-#planList .tiny { order:-1; }
-#planList .amount { white-space:nowrap; }
-@media(max-width:480px) {
-  #planList .list-row {
-    display:grid;
-    grid-template-columns:38px 1fr auto;
-    grid-template-areas:"icon text amount" "btn btn btn";
-    align-items:center;
-    column-gap:10px;
-    row-gap:4px;
-    padding:6px 0;
-  }
-  #planList .row-main { display:contents; }
-  #planList .emoji { grid-area:icon; }
-  #planList .row-text { grid-area:text; min-width:0; }
-  #planList .list-row > .row-main + div { display:contents; }
-  #planList .amount { grid-area:amount; font-size:14px; }
-  #planList .tiny { grid-area:btn; order:0; width:100%; padding:6px; font-size:13px; min-height:30px; margin:0; }
-}
+/* Obligatory payment card: title/amount and metadata stay on single lines. */
+#planList .bill-row{display:block;padding:8px 0}
+#planList .bill-row>.row-main{width:100%;align-items:flex-start}
+#planList .bill-row .row-text{min-width:0}
+#planList .bill-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0}
+#planList .bill-heading .row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#planList .bill-heading .amount{flex:none;white-space:nowrap}
+#planList .bill-meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal}
+#planList .bill-payment-action{margin-top:6px}
+#planList .bill-payment-action .tiny{width:100%;padding:6px;font-size:13px;min-height:30px}
+#planList .bill-paid-caption{margin-top:6px;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Fluid application shell: phone, tablet and desktop. */
 html,body{width:100%;max-width:100%;overflow-x:hidden}

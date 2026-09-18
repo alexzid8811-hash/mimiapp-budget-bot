@@ -177,15 +177,15 @@ function renderPlan() {
   el.innerHTML = state.plan.map(p => {
     const planned = Number(p.planned_amount ?? p.amount);
     const paidCaption = Number(p.amount) === planned
-      ? 'оплачено'
-      : `оплачено из ${money(planned)}`;
+      ? 'Оплачено'
+      : `Оплачено из ${money(planned)}`;
     const remainderCaption = Number(p.remainder_amount || 0) > 0
       ? ` · ${money(p.remainder_amount)} в копилке`
       : '';
     const action = p.paid
-      ? `<div class="row-sub">${paidCaption}${remainderCaption}</div><button class="tiny" onclick="editBillPayment(${p.payment_id})">Изменить</button>`
-      : `<button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button>`;
-    return `<div class="list-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · уже учтено в бюджете</div></div></div><div><div class="amount expense">${money(p.amount)}</div>${action}</div></div>`;
+      ? `<div class="bill-payment-action"><button class="tiny" onclick="editBillPayment(${p.payment_id})">Изменить</button><div class="bill-paid-caption">${paidCaption}${remainderCaption}</div></div>`
+      : `<div class="bill-payment-action"><button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button></div>`;
+    return `<div class="list-row bill-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="bill-heading"><div class="row-title">${escapeHtml(p.title)}</div><div class="amount expense">${money(p.amount)}</div></div><div class="row-sub bill-meta">${fmtDate(p.due_date)} · уже учтено в бюджете</div></div></div>${action}</div>`;
   }).join("");
 }
 

@@ -53,6 +53,19 @@ test('refresh renders the safe calculation and buffer, without changing algorith
   assert.match(get('dailyAvailable').textContent,/5,25/);
 });
 
+test('paid bill card keeps title, amount and paid total in horizontal rows', () => {
+  const {sandbox,get} = setup();
+  vm.runInContext(`state.plan=[{
+    id:11,title:'интернет',amount:0,planned_amount:1400,due_date:'2026-09-17',
+    paid:true,payment_id:19,category_emoji:'📌',remainder_amount:0
+  }]; renderPlan();`, sandbox);
+  const html = get('planList').innerHTML;
+  assert.match(html, /bill-heading/);
+  assert.match(html, /интернет<\/div><div class="amount expense">0,00/);
+  assert.match(html, /17 сент\. · уже учтено в бюджете/);
+  assert.match(html, /bill-paid-caption">Оплачено из 1[\s\u00a0]400,00[\s\u00a0]₽<\/div>/);
+});
+
 test('editing manual salary preserves kind, payday flag and active state', async () => {
   const {sandbox,get,requests} = setup();
   vm.runInContext("openRule('income',{id:7,title:'Зарплата',amount:10000,day_of_month:7,kind:'salary',is_payday:true,active:0})",sandbox);
