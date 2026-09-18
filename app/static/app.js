@@ -278,6 +278,7 @@ window.editTransaction = id => {
   } else {
     $("incomeTxAmount").value = transaction.amount;
     $("incomeTxDate").value = transaction.tx_date;
+    $("incomeTxDestination").value = transaction.income_destination || "daily";
     $("incomeTxNote").value = transaction.note || "";
     $("incomeTxDialog").showModal();
   }
@@ -297,7 +298,7 @@ $("incomeTxForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const path = editingTransactionId ? `/api/transactions/${editingTransactionId}` : "/api/transactions";
-    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"income", amount:moneyValue("incomeTxAmount"), tx_date:$("incomeTxDate").value, category_id:null, note:$("incomeTxNote").value }) });
+    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"income", amount:moneyValue("incomeTxAmount"), tx_date:$("incomeTxDate").value, category_id:null, note:$("incomeTxNote").value, income_destination:$("incomeTxDestination").value }) });
     editingTransactionId = null;
     $("incomeTxDialog").close(); e.target.reset(); toast("Доход записан"); await loadAll();
   } catch(e2) { toast(e2.message); }
