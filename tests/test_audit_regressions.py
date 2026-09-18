@@ -93,6 +93,41 @@ def test_overspend_does_not_reduce_current_period_buffer(client):
     assert after[0]['buffer'] == before[0]['buffer']
 
 
+def test_yesterday_overspend_is_not_subtracted_again_after_midnight(client, monkeypatch):
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 17))
+    with connect() as con:
+        con.execute(
+            "UPDATE settings SET cashflow_start_date='2026-09-17',"
+            "cashflow_start_capital=39000 WHERE user_id=1"
+        )
+
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Подписка', 'amount': 1753.55, 'day_of_month': 17,
+        'effective_date': '2026-09-17',
+    }).json()
+    assert client.post(
+        f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-17'}
+    ).status_code == 200
+    before = cashflow_snapshot(1)
+
+    for amount in (120, 1445.83, 713.98):
+        assert client.post('/api/transactions', json={
+            'type': 'expense', 'amount': amount, 'tx_date': '2026-09-17',
+        }).status_code == 200
+
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 18))
+    assert client.post('/api/transactions', json={
+        'type': 'expense', 'amount': 120, 'tx_date': '2026-09-18',
+    }).status_code == 200
+    after = cashflow_snapshot(1)
+
+    total_spent = 120 + 1445.83 + 713.98 + 120
+    assert after['buffer_balance'] == before['buffer_balance']
+    assert after['remaining_period'] == round(before['period_budget'] - total_spent, 2)
+    assert after['current_cash'] == round(39000 - 1753.55 - total_spent, 2)
+    assert after['remaining_period'] + after['buffer_balance'] == after['available_cash']
+
+
 def test_actual_cash_and_unpaid_obligations_are_separate(client):
     bill = client.post('/api/bill-rules', json={
         'title': 'Подписка', 'amount': 100, 'day_of_month': 15,

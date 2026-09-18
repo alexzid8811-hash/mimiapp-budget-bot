@@ -330,19 +330,44 @@ def cashflow_snapshot(user_id: int) -> dict:
     )
 
     period = planning.user_period(user_id, today)
-    spent_period = legacy.discretionary_spent(user_id, max(period.start, start_date), today)
+    period_anchor = max(period.start, start_date)
+    spent_period = legacy.discretionary_spent(user_id, period_anchor, today)
+    transferred_period = piggy_bank_effect(user_id, period_anchor, today)
     days_left = max(1, (period.end - today).days + 1)
     mandatory_period = round(
         reserved_mandatory
         + sum(value for day, value in mandatory_future.items() if day <= period.end),
         2,
     )
-    # Keep the current pay-period allocation intact. The negative part of
-    # today's allowance is a real overspend and must reduce the card money,
-    # never the protected buffer.
-    period_allocation = round(plan.today_target * days_left, 2)
-    remaining_period = round(max(0.0, period_allocation - spent_period), 2)
-    period_budget = round(spent_period + remaining_period, 2)
+    # Reconstruct the allocation made at the beginning of the current period.
+    # Replanning from today's already-reduced cash and then subtracting the
+    # period's expenses once more double-counted yesterday's spending after
+    # midnight.  The original allocation stays fixed until the next payday;
+    # real expenses and explicit daily-budget transfers reduce only the card.
+    anchor_opening = round(available_cash + spent_period + transferred_period, 2)
+    anchor_horizon_end = add_months(period_anchor, months)
+    anchor_tomorrow = period_anchor + timedelta(days=1)
+    anchor_income = (
+        planned_income_map(user_id, anchor_tomorrow, anchor_horizon_end)
+        if anchor_tomorrow <= anchor_horizon_end else {}
+    )
+    anchor_mandatory = (
+        planned_mandatory_map(user_id, anchor_tomorrow, anchor_horizon_end)
+        if anchor_tomorrow <= anchor_horizon_end else {}
+    )
+    anchor_plan = calculate_cashflow_plan(
+        today=period_anchor,
+        horizon_end=anchor_horizon_end,
+        opening_balance_before_today_spend=anchor_opening,
+        spent_today=0,
+        income_by_date=anchor_income,
+        mandatory_by_date=anchor_mandatory,
+    )
+    period_days = (period.end - period_anchor).days + 1
+    period_budget = round(anchor_plan.today_target * period_days, 2)
+    remaining_period = round(
+        max(0.0, period_budget - spent_period - transferred_period), 2
+    )
     next_income = next((row for row in plan.timeline if row["income"] > 0), None)
 
     if plan.capital_shortfall > 0:
@@ -376,7 +401,7 @@ def cashflow_snapshot(user_id: int) -> dict:
     # moved to the buffer account.  The first period row already reserves the
     # daily budget for every remaining day of the current period and excludes
     # piggy-bank movements.
-    buffer_balance_now = periods[0]["buffer"] if periods else plan.buffer_balance
+    buffer_balance_now = round(max(0.0, available_cash - remaining_period), 2)
 
     return {
         "enabled": True,
