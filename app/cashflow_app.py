@@ -113,6 +113,17 @@ def manual_buffer_income(user_id: int, start: date, end: date) -> float:
     )
     return round(float(row["total"]) if row else 0.0, 2)
 
+
+def daily_income_in_period(user_id: int, start: date, end: date) -> float:
+    """Manual income reserved for card spending in this pay period."""
+    row = legacy.one(
+        "SELECT COALESCE(SUM(amount),0) AS total FROM transactions "
+        "WHERE user_id=? AND type='income' AND COALESCE(income_destination,'daily')='daily' "
+        "AND tx_date BETWEEN ? AND ?",
+        (user_id, start.isoformat(), end.isoformat()),
+    )
+    return round(float(row["total"]) if row else 0.0, 2)
+
 def cashflow_periods(user_id: int, today: date, horizon_end: date) -> list[dict]:
     starts = [{"date": today, "kind": "сейчас"}, *payday_boundaries(user_id, today + timedelta(days=1), horizon_end)]
     return [
@@ -356,7 +367,15 @@ def cashflow_snapshot(user_id: int) -> dict:
     # period's expenses once more double-counted yesterday's spending after
     # midnight.  The original allocation stays fixed until the next payday;
     # real expenses and explicit daily-budget transfers reduce only the card.
-    anchor_opening = round(available_cash + spent_period + transferred_period, 2)
+    # Manual income routed to the card belongs entirely to this pay period.
+    # Exclude it from the long-horizon baseline, then add it back only to the
+    # current period budget.  Otherwise the generic forecast would reserve
+    # most of it for future periods and incorrectly increase the buffer.
+    daily_income_period = daily_income_in_period(user_id, period_anchor, today)
+    anchor_opening = round(
+        available_cash + spent_period + transferred_period - daily_income_period,
+        2,
+    )
     anchor_horizon_end = add_months(period_anchor, months)
     anchor_tomorrow = period_anchor + timedelta(days=1)
     anchor_income = (
@@ -376,7 +395,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         mandatory_by_date=anchor_mandatory,
     )
     period_days = (period.end - period_anchor).days + 1
-    period_budget = round(anchor_plan.today_target * period_days, 2)
+    period_budget = round(anchor_plan.today_target * period_days + daily_income_period, 2)
     remaining_period = round(
         max(0.0, period_budget - spent_period - transferred_period), 2
     )
