@@ -102,17 +102,73 @@ function renderDashboard() {
     <div class="list-row"><div class="row-text"><div class="row-title">${fmtDate(p.start)} — ${fmtDate(p.end)}</div><div class="row-sub">Доход ${money(p.income)} · платежи ${money(p.mandatory)}</div></div><div class="amount ${p.net < 0 ? 'expense':'income'}">${p.net >= 0 ? '+' : ''}${money(p.net)}</div></div>`).join("") : `<div class="empty">Добавьте суммы зарплаты и аванса, чтобы увидеть прогноз.</div>`;
 }
 
+const COLLAPSED_TRANSACTION_WEEKS_KEY = "budget-collapsed-transaction-weeks";
+let collapsedTransactionWeeks = (() => {
+  try {
+    const saved = JSON.parse(window.localStorage?.getItem(COLLAPSED_TRANSACTION_WEEKS_KEY) || "[]");
+    return new Set(Array.isArray(saved) ? saved : []);
+  } catch (_) {
+    return new Set();
+  }
+})();
+
+function transactionWeekStart(iso) {
+  const day = new Date(`${iso}T12:00:00`).getDay();
+  return shiftISODate(iso, -((day + 6) % 7));
+}
+
+function transactionWeekTitle(start) {
+  const end = shiftISODate(start, 6);
+  return `${fmtDate(start)} — ${fmtDate(end)}`;
+}
+
+function toggleTransactionWeek(weekStart) {
+  if (collapsedTransactionWeeks.has(weekStart)) collapsedTransactionWeeks.delete(weekStart);
+  else collapsedTransactionWeeks.add(weekStart);
+  try {
+    window.localStorage?.setItem(COLLAPSED_TRANSACTION_WEEKS_KEY, JSON.stringify([...collapsedTransactionWeeks]));
+  } catch (_) {}
+  renderTransactions();
+}
+
+function renderTransactionRow(t) {
+  const isExpense = t.type === "expense";
+  const title = t.bill_title || t.note || t.category_title || (isExpense ? "Расход" : "Доход");
+  const editPayment = t.bill_rule_id
+    ? `<button class="tiny" onclick="editBillPayment(${t.id})">Изменить</button>`
+    : `<button class="tiny" onclick="editTransaction(${t.id})">Изменить</button>`;
+  return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
+}
+
 function renderTransactions() {
   const el = $("transactionsList");
   if (!state.transactions.length) { el.innerHTML = `<div class="empty">Пока нет операций.</div>`; return; }
-  el.innerHTML = state.transactions.map(t => {
-    const isExpense = t.type === "expense";
-    const title = t.bill_title || t.note || t.category_title || (isExpense ? "Расход" : "Доход");
-    const editPayment = t.bill_rule_id
-      ? `<button class="tiny" onclick="editBillPayment(${t.id})">Изменить</button>`
-      : `<button class="tiny" onclick="editTransaction(${t.id})">Изменить</button>`;
-    return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
-  }).join("");
+
+  const weeks = new Map();
+  state.transactions.forEach(t => {
+    const weekStart = transactionWeekStart(t.tx_date);
+    if (!weeks.has(weekStart)) weeks.set(weekStart, []);
+    weeks.get(weekStart).push(t);
+  });
+
+  el.innerHTML = [...weeks.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([weekStart, transactions]) => {
+      const collapsed = collapsedTransactionWeeks.has(weekStart);
+      const expenseTotal = transactions
+        .filter(t => t.type === "expense")
+        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+      const countLabel = transactions.length === 1 ? "1 операция"
+        : transactions.length < 5 ? `${transactions.length} операции`
+        : `${transactions.length} операций`;
+      return `<section class="transaction-week ${collapsed ? "collapsed" : ""}">
+        <button class="transaction-week-toggle" type="button" onclick="toggleTransactionWeek('${weekStart}')" aria-expanded="${!collapsed}">
+          <span><strong>${transactionWeekTitle(weekStart)}</strong><small>${countLabel}</small></span>
+          <span class="transaction-week-summary">${expenseTotal ? `−${money(expenseTotal)}` : ""}<i aria-hidden="true">⌄</i></span>
+        </button>
+        <div class="transaction-week-rows">${transactions.map(renderTransactionRow).join("")}</div>
+      </section>`;
+    }).join("");
 }
 
 function renderPlan() {
