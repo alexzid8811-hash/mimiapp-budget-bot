@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260918-design" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260918-today-breakdown" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -18,10 +18,21 @@
       <section class="page active" data-page="home">
 
         <div class="today">
-          <div class="label">Можно потратить сегодня</div>
-          <div class="value num" id="dailyAvailable">—</div>
+          <div class="today-breakdown">
+            <div class="today-metric today-limit">
+              <span>Сегодня можно потратить</span>
+              <strong class="num" id="dailyAvailable">—</strong>
+            </div>
+            <div class="today-metric">
+              <span>Потрачено</span>
+              <strong class="num" id="spentToday">—</strong>
+            </div>
+            <div class="today-metric">
+              <span>Осталось</span>
+              <strong class="num" id="leftToday">—</strong>
+            </div>
+          </div>
           <div class="spend-bar" id="spendBar" role="progressbar" aria-label="Потрачено сегодня" aria-valuemin="0" aria-valuemax="100"><span id="spendFill"></span></div>
-          <div class="spend-caption"><span>Потрачено <b id="spentToday">—</b></span><span>Останется <b id="leftToday">—</b></span></div>
         </div>
         <button class="primary big quick-expense" id="quickExpenseBtn">Добавить расход</button>
         <div class="card period">
@@ -276,7 +287,7 @@
   <script src="/static/app.js?v=20260917-full-design"></script>
   <script src="/static/cashflow-ui.js?v=20260917-account-split"></script>
   <script src="/static/buffer-ui.js?v=20260917-piggy-separate"></script>
-  <script src="/static/design-ui.js?v=20260917-reserved-now"></script>
+  <script src="/static/design-ui.js?v=20260918-today-breakdown"></script>
   <script src="/static/backup.js?v=20260917-full-design"></script>
 </body>
 </html>
