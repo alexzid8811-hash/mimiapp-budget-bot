@@ -42,12 +42,12 @@ TABLE_COLUMNS = {
     "bill_rules": ("id", "title", "amount", "day_of_month", "category_id", "active", "archived", "created_at"),
     "transactions": (
         "id", "type", "amount", "tx_date", "category_id", "note",
-        "bill_rule_id", "bill_due_date", "bill_planned_amount", "created_at",
+        "bill_rule_id", "bill_due_date", "bill_planned_amount", "income_destination", "created_at",
     ),
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
     "piggy_bank_movements": (
-        "id", "direction", "amount", "movement_date", "note", "source", "bill_payment_id", "created_at"
+        "id", "direction", "amount", "movement_date", "note", "source", "bill_payment_id", "income_transaction_id", "created_at"
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
@@ -164,13 +164,13 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             transaction_ids: dict[Any, int] = {}
             for row in data["transactions"]:
                 cur = con.execute(
-                    "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,bill_planned_amount,created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,bill_planned_amount,income_destination,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["type"]), float(row["amount"]), str(row["tx_date"]),
                         category_ids.get(row.get("category_id")), str(row.get("note") or ""),
                         bill_ids.get(row.get("bill_rule_id")), row.get("bill_due_date"),
-                        row.get("bill_planned_amount"), _created_at(row),
+                        row.get("bill_planned_amount"), row.get("income_destination", "daily"), _created_at(row),
                     ),
                 )
                 transaction_ids[row.get("id")] = int(cur.lastrowid)
