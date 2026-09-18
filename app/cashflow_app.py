@@ -411,6 +411,13 @@ def cashflow_snapshot(user_id: int) -> dict:
     # daily budget for every remaining day of the current period and excludes
     # piggy-bank movements.
     buffer_balance_now = round(max(0.0, available_cash - remaining_period), 2)
+    if periods:
+        # The current-period row must use the same carried limit and protected
+        # buffer as the home screen.  Future rows remain forecast values.
+        periods[0]["daily"] = carried_daily
+        periods[0]["buffer"] = buffer_balance_now
+        periods[0]["put_aside"] = buffer_balance_now
+        periods[0]["take"] = 0.0
 
     return {
         "enabled": True,

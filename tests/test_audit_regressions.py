@@ -130,6 +130,9 @@ def test_yesterday_overspend_is_not_subtracted_again_after_midnight(client, monk
     assert after['today_target'] == expected_today
     assert after['available_today'] == round(expected_today - 120, 2)
     assert after['today_target'] * 4 <= after['remaining_period'] + 120
+    assert after['periods'][0]['daily'] == after['daily_target']
+    assert after['periods'][0]['buffer'] == after['buffer_balance']
+    assert after['periods'][0]['put_aside'] == after['buffer_balance']
 
 
 def test_actual_cash_and_unpaid_obligations_are_separate(client):
