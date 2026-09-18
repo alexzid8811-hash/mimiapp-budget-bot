@@ -102,6 +102,17 @@ def cashflow_income_overrides(user_id: int, start: date, end: date) -> dict[date
     return {date.fromisoformat(row["period_start"]): round(float(row["amount"]), 2) for row in values}
 
 
+
+def manual_buffer_income(user_id: int, start: date, end: date) -> float:
+    """Income deliberately routed to the buffer, not to the daily card budget."""
+    row = legacy.one(
+        "SELECT COALESCE(SUM(amount),0) AS total FROM transactions "
+        "WHERE user_id=? AND type='income' AND COALESCE(income_destination,'daily')='buffer' "
+        "AND tx_date BETWEEN ? AND ?",
+        (user_id, start.isoformat(), end.isoformat()),
+    )
+    return round(float(row["total"]) if row else 0.0, 2)
+
 def cashflow_periods(user_id: int, today: date, horizon_end: date) -> list[dict]:
     starts = [{"date": today, "kind": "сейчас"}, *payday_boundaries(user_id, today + timedelta(days=1), horizon_end)]
     return [
@@ -418,6 +429,16 @@ def cashflow_snapshot(user_id: int) -> dict:
         periods[0]["buffer"] = buffer_balance_now
         periods[0]["put_aside"] = buffer_balance_now
         periods[0]["take"] = 0.0
+
+    # Income explicitly sent to the buffer is kept out of the card's daily
+    # allowance and is added to every reserve balance in the current forecast.
+    manual_buffer = manual_buffer_income(user_id, start_date, today)
+    if manual_buffer:
+        buffer_balance_now = round(buffer_balance_now + manual_buffer, 2)
+        for row in periods:
+            row["buffer"] = round(row["buffer"] + manual_buffer, 2)
+        if periods:
+            periods[0]["put_aside"] = round(periods[0]["put_aside"] + manual_buffer, 2)
 
     return {
         "enabled": True,
