@@ -13,6 +13,7 @@ from .savings import check_piggy_history, piggy_effect
 from .auth import TelegramUser, current_user
 from .budget import add_months
 from .cashflow import calculate_cashflow_plan
+from .money import amount, cents
 
 
 app = base.app
@@ -368,6 +369,14 @@ def cashflow_snapshot(user_id: int) -> dict:
     remaining_period = round(
         max(0.0, period_budget - spent_period - transferred_period), 2
     )
+    # Spread the card money that existed before today's purchases across all
+    # remaining days.  This is the carry-over limit shown to the user.  The
+    # forecast plan may produce a larger number after midnight because it sees
+    # the already-reduced cash balance; exposing that number would promise more
+    # money than is actually left on the card.
+    today_card_before_spend = round(remaining_period + spent_today, 2)
+    carried_daily = amount(cents(today_card_before_spend) // days_left)
+    carried_available_today = round(carried_daily - spent_today, 2)
     next_income = next((row for row in plan.timeline if row["income"] > 0), None)
 
     if plan.capital_shortfall > 0:
@@ -413,9 +422,9 @@ def cashflow_snapshot(user_id: int) -> dict:
         "reserved_mandatory": reserved_mandatory,
         "mandatory_period": mandatory_period,
         "piggy_bank_balance": piggy_bank_balance(user_id),
-        "daily_target": plan.daily_target,
-        "today_target": plan.today_target,
-        "available_today": plan.available_today,
+        "daily_target": carried_daily,
+        "today_target": carried_daily,
+        "available_today": carried_available_today,
         "buffer_balance": buffer_balance_now,
         "capital_shortfall": plan.capital_shortfall,
         "period_budget": period_budget,
