@@ -79,6 +79,7 @@ class SettingsIn(APIModel):
     forecast_months: int = Field(default=4, ge=1, le=12)
     reminder_days: int = Field(default=3, ge=0, le=31)
     reminder_time: str = Field(default="10:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    morning_report_time: str = Field(default="09:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
 def user_ready(user: TelegramUser) -> int:
@@ -247,7 +248,7 @@ def bootstrap(user: TelegramUser = Depends(current_user)) -> dict:
         "budget_timezone": clock.budget_timezone(),
         "today": clock.today().isoformat(),
         "user": {"id": user.id, "first_name": user.first_name, "username": user.username},
-        "settings": one("SELECT currency,initial_reserve,forecast_months,reminder_days,reminder_time FROM settings WHERE user_id=?", (uid,)),
+        "settings": one("SELECT currency,initial_reserve,forecast_months,reminder_days,reminder_time,morning_report_time FROM settings WHERE user_id=?", (uid,)),
         "income_rules": rows("SELECT * FROM income_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
         "bill_rules": rows("SELECT * FROM bill_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
         "categories": rows("SELECT * FROM categories WHERE user_id=? ORDER BY id", (uid,)),
@@ -573,8 +574,8 @@ def save_settings(payload: SettingsIn, user: TelegramUser = Depends(current_user
     uid = user_ready(user)
     with connect() as con:
         con.execute(
-            "UPDATE settings SET currency=?,initial_reserve=?,forecast_months=?,reminder_days=?,reminder_time=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
-            (payload.currency.upper(), payload.initial_reserve, payload.forecast_months, payload.reminder_days, payload.reminder_time, uid),
+            "UPDATE settings SET currency=?,initial_reserve=?,forecast_months=?,reminder_days=?,reminder_time=?,morning_report_time=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+            (payload.currency.upper(), payload.initial_reserve, payload.forecast_months, payload.reminder_days, payload.reminder_time, payload.morning_report_time, uid),
         )
     invalidate_current_auto_reserve(uid)
-    return one("SELECT currency,initial_reserve,forecast_months,reminder_days,reminder_time FROM settings WHERE user_id=?", (uid,)) or {}
+    return one("SELECT currency,initial_reserve,forecast_months,reminder_days,reminder_time,morning_report_time FROM settings WHERE user_id=?", (uid,)) or {}
