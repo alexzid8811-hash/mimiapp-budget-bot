@@ -76,7 +76,7 @@
     const periods = data.enabled ? data.periods || [] : [];
     if (!periods.length) {
       const message = data.enabled ? "Нет периодов для прогноза." : "План появится после включения расчёта в настройках.";
-      body.innerHTML = `<tr><td colspan="9"><div class="empty">${message}</div></td></tr>`;
+      body.innerHTML = `<tr><td colspan="8"><div class="empty">${message}</div></td></tr>`;
       cards.innerHTML = `<div class="empty">${message}</div>`;
       document.getElementById("bufferHead").innerHTML = "";
       return;
@@ -103,10 +103,10 @@
       const [c,m,label]=movement(p);
       return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div><div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
-    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период","Выплата","Дней","Деньги периода","Обязательные","Свободно","В день","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
+    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","В день","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
-      const cells=[formatDate(p.start)+" — "+formatDate(p.end),safe(p.kind),Number(p.days)];
+      const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),formatMoney(p.free),formatMoney(p.daily)];
       return `<tr class="${i===0?"cur":""}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
