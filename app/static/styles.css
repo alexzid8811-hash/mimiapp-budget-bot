@@ -432,3 +432,32 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     padding-top:100px;
   }
 }
+
+
+/* iPhone settings form alignment */
+.aligned-fields>label{
+  display:grid;
+  grid-template-rows:40px 52px;
+  align-items:stretch;
+}
+.aligned-fields>label>input,
+.aligned-fields>label>select,
+.aligned-fields>label>input[type="date"],
+.aligned-fields>label>input[type="time"]{
+  height:52px !important;
+  min-height:52px;
+  max-height:52px;
+  margin:0;
+  padding-top:0 !important;
+  padding-bottom:0 !important;
+  line-height:1.2;
+  -webkit-appearance:none;
+  appearance:none;
+}
+#saveCashflowBtn,
+#saveSettingsBtn{
+  display:block;
+  clear:both;
+}
+#saveCashflowBtn{margin-top:14px}
+#saveSettingsBtn{margin-top:12px}
