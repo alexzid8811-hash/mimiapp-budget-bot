@@ -40,7 +40,7 @@ async function api(path, options = {}) {
 
 function currency() { return "RUB"; }
 function money(v) {
-  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), maximumFractionDigits: 2 }).format(Number(v || 0));
+  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v || 0));
 }
 function moneyValue(id) {
   const value = $(id)?.value || "0";
