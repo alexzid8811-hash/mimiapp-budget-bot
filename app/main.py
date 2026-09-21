@@ -117,20 +117,11 @@ def payday_days(user_id: int) -> list[int]:
 
 
 def period_recurring_income(user_id: int, start: date, end: date) -> float:
-    rules = rows(
-        "SELECT amount,day_of_month,kind,is_payday FROM income_rules WHERE user_id=? AND active=1",
-        (user_id,),
+    """Scheduled income assigned to the daily-budget period that can use it."""
+    return round(
+        sum(planning.budget_income_map(user_id, start, end, include_manual=False).values()),
+        2,
     )
-    total = 0.0
-    for rule in rules:
-        # Match the actual payment dates used by cashflow and period boundaries,
-        # including a January payment moved into the preceding December.
-        shifted = bool(rule["is_payday"]) or rule["kind"] in {"salary", "advance"}
-        for _ in occurrences(
-            [int(rule["day_of_month"])], start, end, move_to_previous_workday=shifted
-        ):
-            total += float(rule["amount"])
-    return round(total, 2)
 
 
 def period_mandatory(user_id: int, start: date, end: date) -> float:
