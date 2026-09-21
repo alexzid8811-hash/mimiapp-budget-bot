@@ -204,9 +204,10 @@ details p{margin-top:6px}
 .category-order-list{display:flex;flex-direction:column;gap:7px}
 .category-order-item{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border-radius:13px;padding:6px 7px 6px 12px}
 .category-order-name{min-width:0;font-size:14px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.category-order-actions{display:flex;gap:4px;flex:none}
-.category-move{width:34px;height:34px;border:0;border-radius:9px;background:var(--surface);color:var(--accent);font-size:17px;font-weight:700;cursor:pointer;padding:0}
-.category-move:disabled{opacity:.25;cursor:default}
+.category-drag-handle{width:44px;height:38px;flex:none;border:0;border-radius:9px;background:var(--surface);color:var(--accent);font-size:20px;font-weight:700;cursor:grab;padding:0;touch-action:none;-webkit-user-select:none;user-select:none}
+.category-drag-handle:active{cursor:grabbing}
+.category-order-item.dragging{opacity:.72;box-shadow:0 8px 24px #0002;outline:2px solid var(--accent);position:relative;z-index:2}
+.category-order-list.sorting{-webkit-user-select:none;user-select:none}
 .preview{background:var(--bg);border-radius:12px;padding:10px 12px;margin:10px 0}
 .preview div{display:flex;justify-content:space-between;padding:4px 0;font-size:14px}
 .preview span{color:var(--muted)}

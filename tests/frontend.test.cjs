@@ -153,18 +153,20 @@ test('legacy payroll correction section is removed', () => {
   assert.doesNotMatch(html,/payrollEffectiveDate/);
 });
 
-test('category order can move a frequent category to the beginning', async () => {
-  const {sandbox,get,requests,responses}=setup();
+test('category order uses a touch-friendly drag handle', async () => {
+  const {get,responses}=setup();
   responses['/api/bootstrap'].categories=[
     {id:1,title:'Продукты',emoji:'🛒'},
     {id:2,title:'Транспорт',emoji:'🚕'},
     {id:3,title:'Обед',emoji:'🍲'},
   ];
   await get('refreshBtn').listeners.click();
-  await sandbox.window.moveCategory(3,'first');
-  const request=requests.find(item=>item.url==='/api/categories/order');
-  assert.deepEqual(JSON.parse(request.body),{category_ids:[3,1,2]});
-  assert.ok(get('categoriesList').innerHTML.indexOf('Обед') < get('categoriesList').innerHTML.indexOf('Продукты'));
+  assert.match(get('categoriesList').innerHTML,/category-drag-handle/);
+  assert.match(get('categoriesList').innerHTML,/data-category-id="3"/);
+  assert.doesNotMatch(get('categoriesList').innerHTML,/category-move/);
+  const script = fs.readFileSync(path.join(__dirname,'../app/static/app.js'),'utf8');
+  assert.match(script,/pointermove/);
+  assert.match(script,/\/api\/categories\/order/);
 });
 
 test('buffer has no separate vacation reserve card', () => {

@@ -256,32 +256,27 @@ function renderSettings() {
 
 function renderCategories() {
   const categories = state.bootstrap?.categories || [];
-  $("categoriesList").innerHTML = categories.map((category, index) => `
-    <div class="category-order-item">
+  $("categoriesList").innerHTML = categories.map(category => `
+    <div class="category-order-item" data-category-id="${category.id}">
       <span class="category-order-name">${escapeHtml(category.emoji)} ${escapeHtml(category.title)}</span>
-      <span class="category-order-actions">
-        <button class="category-move" type="button" title="Поставить первой" aria-label="Поставить ${escapeHtml(category.title)} первой" onclick="moveCategory(${category.id},'first')" ${index === 0 ? 'disabled' : ''}>⇈</button>
-        <button class="category-move" type="button" title="Выше" aria-label="Переместить ${escapeHtml(category.title)} выше" onclick="moveCategory(${category.id},'up')" ${index === 0 ? 'disabled' : ''}>↑</button>
-        <button class="category-move" type="button" title="Ниже" aria-label="Переместить ${escapeHtml(category.title)} ниже" onclick="moveCategory(${category.id},'down')" ${index === categories.length - 1 ? 'disabled' : ''}>↓</button>
-      </span>
+      <button class="category-drag-handle" type="button" aria-label="Перетащить ${escapeHtml(category.title)}" title="Зажмите и перетащите">☰</button>
     </div>`).join("");
 }
 
-window.moveCategory = async (categoryId, direction) => {
-  const previous = [...(state.bootstrap?.categories || [])];
-  const categories = [...previous];
-  const index = categories.findIndex(category => category.id === categoryId);
-  if (index < 0) return;
-  const target = direction === 'first' ? 0 : direction === 'up' ? index - 1 : index + 1;
-  if (target < 0 || target >= categories.length || target === index) return;
-  const [category] = categories.splice(index, 1);
-  categories.splice(target, 0, category);
+let categoryDrag = null;
+
+async function persistCategoryOrder(previous, categoryIds) {
+  const byId = new Map(previous.map(category => [category.id, category]));
+  const categories = categoryIds.map(id => byId.get(id)).filter(Boolean);
+  if (categories.length !== previous.length) {
+    renderCategories();
+    return;
+  }
   state.bootstrap.categories = categories;
-  renderCategories();
   fillCategorySelects();
   try {
     await api('/api/categories/order', {
-      method: 'PUT', body: JSON.stringify({category_ids: categories.map(item => item.id)})
+      method: 'PUT', body: JSON.stringify({category_ids: categoryIds})
     });
   } catch (error) {
     state.bootstrap.categories = previous;
@@ -289,7 +284,61 @@ window.moveCategory = async (categoryId, direction) => {
     fillCategorySelects();
     toast(error.message);
   }
-};
+}
+
+function categoryIdsFromList(list) {
+  return [...list.querySelectorAll('.category-order-item')]
+    .map(item => Number(item.dataset.categoryId));
+}
+
+const categoriesList = $("categoriesList");
+categoriesList.addEventListener('pointerdown', event => {
+  const handle = event.target.closest('.category-drag-handle');
+  if (!handle) return;
+  const item = handle.closest('.category-order-item');
+  if (!item) return;
+  event.preventDefault();
+  categoryDrag = {
+    pointerId: event.pointerId,
+    item,
+    previous: [...(state.bootstrap?.categories || [])],
+  };
+  item.classList.add('dragging');
+  categoriesList.classList.add('sorting');
+  categoriesList.setPointerCapture?.(event.pointerId);
+});
+
+categoriesList.addEventListener('pointermove', event => {
+  if (!categoryDrag || categoryDrag.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  const others = [...categoriesList.querySelectorAll('.category-order-item:not(.dragging)')];
+  const before = others.find(item => {
+    const rect = item.getBoundingClientRect();
+    return event.clientY < rect.top + rect.height / 2;
+  });
+  categoriesList.insertBefore(categoryDrag.item, before || null);
+  if (event.clientY < 90) window.scrollBy(0, -12);
+  else if (event.clientY > window.innerHeight - 90) window.scrollBy(0, 12);
+});
+
+async function finishCategoryDrag(event, cancelled = false) {
+  if (!categoryDrag || categoryDrag.pointerId !== event.pointerId) return;
+  const drag = categoryDrag;
+  categoryDrag = null;
+  drag.item.classList.remove('dragging');
+  categoriesList.classList.remove('sorting');
+  categoriesList.releasePointerCapture?.(event.pointerId);
+  if (cancelled) {
+    renderCategories();
+    return;
+  }
+  const categoryIds = categoryIdsFromList(categoriesList);
+  if (categoryIds.every((id, index) => id === drag.previous[index]?.id)) return;
+  await persistCategoryOrder(drag.previous, categoryIds);
+}
+
+categoriesList.addEventListener('pointerup', event => finishCategoryDrag(event));
+categoriesList.addEventListener('pointercancel', event => finishCategoryDrag(event, true));
 
 function fillCategorySelects() {
   const cats = state.bootstrap?.categories || [];
