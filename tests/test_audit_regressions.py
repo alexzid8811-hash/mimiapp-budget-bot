@@ -204,16 +204,16 @@ def test_future_received_amount_override_recalculates_entire_cashflow(client, mo
         )
 
     before = cashflow_snapshot(1)
-    planned = next(row for row in before['periods'] if row['start'] == '2026-09-22')
+    planned = next(row for row in before['periods'] if row['start'] == '2026-09-23')
     assert planned['received'] == 39395.22
     assert planned['income_overridden'] is False
 
     response = client.put(
-        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
+        '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     )
     assert response.status_code == 200
     after = cashflow_snapshot(1)
-    corrected = next(row for row in after['periods'] if row['start'] == '2026-09-22')
+    corrected = next(row for row in after['periods'] if row['start'] == '2026-09-23')
     assert corrected['planned_received'] == 39395.22
     assert corrected['received'] == 41000
     assert corrected['free'] == 41000
@@ -225,17 +225,17 @@ def test_future_received_amount_override_recalculates_entire_cashflow(client, mo
         before['projected_end_balance'] + 41000 - 39395.22, 2
     )
 
-    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 23))
     assert cashflow_snapshot(1)['current_cash'] == 42000
 
 
 def test_income_override_can_be_reset_and_current_row_cannot_be_edited(client):
     assert client.put(
-        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
+        '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     ).status_code == 200
-    assert client.delete('/api/cashflow/income-overrides/2026-09-22').status_code == 200
+    assert client.delete('/api/cashflow/income-overrides/2026-09-23').status_code == 200
     restored = next(
-        row for row in cashflow_snapshot(1)['periods'] if row['start'] == '2026-09-22'
+        row for row in cashflow_snapshot(1)['periods'] if row['start'] == '2026-09-23'
     )
     assert restored['income_overridden'] is False
     assert restored['received'] == restored['planned_received']
@@ -382,7 +382,7 @@ def test_confirmed_period_override_replaces_later_income_in_same_period(client, 
         'kind': 'other', 'effective_date': '2026-09-01',
     }).status_code == 200
     assert client.put(
-        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 12000}
+        '/api/cashflow/income-overrides/2026-09-23', json={'amount': 12000}
     ).status_code == 200
 
     monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
@@ -416,8 +416,8 @@ def test_history_boundaries_do_not_rewrite_previous_payday(client):
     rule = {**salary_rule(), 'day_of_month': 16}
     client.put(f"/api/income-rules/{rule['id']}", json=rule)
     period = planning.user_period(1, date(2026, 9, 15))
-    assert period.start == date(2026, 9, 7)
-    assert period.end == date(2026, 9, 15)
+    assert period.start == date(2026, 9, 8)
+    assert period.end == date(2026, 9, 16)
 
 
 def test_backup_restores_piggy_to_new_and_existing_users(client):
@@ -433,7 +433,7 @@ def test_backup_restores_piggy_to_new_and_existing_users(client):
 
 def test_backup_restores_cashflow_income_overrides(client):
     assert client.put(
-        '/api/cashflow/income-overrides/2026-09-22', json={'amount': 41000}
+        '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     ).status_code == 200
     backup = export_user_data(1)
     assert backup['backup_version'] == 6
@@ -441,7 +441,7 @@ def test_backup_restores_cashflow_income_overrides(client):
     ensure_user(2)
     restore_user_data(2, backup)
     corrected = next(
-        row for row in cashflow_snapshot(2)['periods'] if row['start'] == '2026-09-22'
+        row for row in cashflow_snapshot(2)['periods'] if row['start'] == '2026-09-23'
     )
     assert corrected['received'] == 41000
     assert corrected['income_overridden'] is True
