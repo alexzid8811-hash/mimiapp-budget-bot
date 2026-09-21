@@ -109,16 +109,19 @@
             </label><label>Премия до НДФЛ
               <input id="bonusGross" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="20 000,00" />
             </label></div><div class="grid3"><label>День зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label><label>День аванса<input id="advanceDay" type="number" min="1" max="31" /></label><label>НДФЛ, %<input id="taxRate" type="number" min="0" max="100" step="0.1" /></label></div>            <details><summary>Как считается</summary><p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. При отпуске из расчёта исключаются только рабочие дни отпуска. На дату зарплаты приходит остаток оплаты за отработанные дни + чистая премия. Премия автоматически не уменьшается.</p></details>
-            <div id="payrollPreview" class="payroll-preview"></div><label>Исправить текущие условия с даты<input id="payrollEffectiveDate" type="date" required /></label>
-            <p class="muted">Эта дата — только для сегодняшнего или прошедшего дня. Для повышения в будущем используйте кнопку ниже: текущий период и буфер не изменятся.</p>
-            <button class="secondary wide" id="openPayrollChangeBtn" type="button">Запланировать повышение или премию</button>
+            <div id="payrollPreview" class="payroll-preview"></div>
             <button class="primary wide" id="savePayrollBtn" type="button">Сохранить текущий расчёт зарплаты</button>
+            <details>
+              <summary>Исправить расчёт за текущий или прошлый период</summary>
+              <label>Применить с даты<input id="payrollEffectiveDate" type="date" required /></label>
+              <p class="muted">Используйте только для исправления уже наступившей даты. Для повышения в будущем — отдельный раздел ниже.</p>
+            </details>
           </div>
         </div>
 
         <div class="card">
-          <div class="section-head"><div><h3>Будущие изменения зарплаты</h3></div><button class="secondary" id="addPayrollChangeBtn" type="button">＋</button></div>
-          <p class="muted">Запланируйте новый оклад или премию с месяца начисления. Текущий период и его буфер не изменятся; новые суммы будут учтены в прогнозе и в буфере будущих периодов.</p>
+          <div class="section-head"><div><h3>Повышение зарплаты или изменение премии</h3></div><button class="secondary" id="addPayrollChangeBtn" type="button">Запланировать</button></div>
+          <p class="muted">Укажите новый оклад и премию, а также месяц, с которого они начисляются. После сохранения прогноз и буфер пересчитаются только с этого месяца. Прошлые и текущий периоды останутся без изменений.</p>
           <div id="payrollChangesList" class="list"></div>
         </div>
 
@@ -219,15 +222,15 @@
 
   <dialog id="payrollChangeDialog">
     <form method="dialog" id="payrollChangeForm" class="dialog-card">
-      <div class="section-head"><h2>Изменение зарплаты</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <div class="section-head"><h2 id="payrollChangeDialogTitle">Запланировать изменение зарплаты</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="payrollChangeId" type="hidden" />
       <label>Начать с месяца начисления<input id="payrollChangeMonth" type="month" required /></label>
       <div class="grid2">
         <label>Оклад до НДФЛ<input id="payrollChangeSalary" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="110 000,00" /></label>
         <label>Премия до НДФЛ<input id="payrollChangeBonus" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       </div>
-      <p class="muted">Например, «ноябрь»: новый аванс будет рассчитан за ноябрь, а зарплата за ноябрь поступит в декабре. Уже начавшийся период не пересчитывается.</p>
-      <button class="primary big" value="default">Сохранить изменение</button>
+      <p class="muted">Например, при повышении с ноября аванс за ноябрь и зарплата за ноябрь (в декабре) будут рассчитаны по новым суммам. Все предыдущие периоды останутся без изменений.</p>
+      <button class="primary big" value="default" id="savePayrollChangeBtn">Сохранить и пересчитать прогноз</button>
     </form>
   </dialog>
 
@@ -310,7 +313,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20260922-desktop-cache-fix"></script>
+  <script src="/static/app.js?v=20260922-payroll-schedule"></script>
   <script src="/static/cashflow-ui.js?v=20260922-readable-errors"></script>
   <script src="/static/buffer-ui.js?v=20260917-piggy-separate"></script>
   <script src="/static/design-ui.js?v=20260918-today-breakdown"></script>
