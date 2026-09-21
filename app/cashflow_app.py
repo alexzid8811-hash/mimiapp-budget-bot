@@ -56,7 +56,9 @@ def _add(target: dict[date, float], day: date, amount: float) -> None:
 
 
 def planned_income_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    return planning.income_map(user_id, start, end)
+    # Keep the real receipt date in history, but do not make a salary or
+    # advance spendable until the following calendar day.
+    return planning.budget_income_map(user_id, start, end)
 
 
 def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
@@ -94,12 +96,30 @@ def payday_boundaries(user_id: int, start: date, end: date) -> list[dict]:
 
 
 def cashflow_income_overrides(user_id: int, start: date, end: date) -> dict[date, float]:
+    """Return overrides by budget-period start.
+
+    Older backups stored the actual payday as period_start. Accept those rows
+    as the preceding day so a deployed update does not discard an already
+    entered correction; new rows use the budget-period start directly.
+    """
     values = legacy.rows(
         "SELECT period_start,amount FROM cashflow_income_overrides "
-        "WHERE user_id=? AND period_start BETWEEN ? AND ?",
-        (user_id, start.isoformat(), end.isoformat()),
+        "WHERE user_id=? AND period_start BETWEEN ? AND ? ORDER BY period_start",
+        (user_id, (start - timedelta(days=1)).isoformat(), end.isoformat()),
     )
-    return {date.fromisoformat(row["period_start"]): round(float(row["amount"]), 2) for row in values}
+    current_starts = {
+        row["date"] for row in payday_boundaries(user_id, start, end)
+    }
+    result: dict[date, float] = {}
+    for row in values:
+        stored_start = date.fromisoformat(row["period_start"])
+        budget_start = stored_start if stored_start in current_starts else stored_start + timedelta(days=1)
+        if not start <= budget_start <= end:
+            continue
+        # A newly saved value at the real budget start wins over a legacy row.
+        if budget_start not in result or stored_start == budget_start:
+            result[budget_start] = round(float(row["amount"]), 2)
+    return result
 
 
 
@@ -593,8 +613,8 @@ def delete_cashflow_income_override(
     uid = legacy.user_ready(user)
     with legacy.connect() as con:
         deleted = con.execute(
-            "DELETE FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
-            (uid, period_start.isoformat()),
+            "DELETE FROM cashflow_income_overrides WHERE user_id=? AND period_start IN (?,?)",
+            (uid, period_start.isoformat(), (period_start - timedelta(days=1)).isoformat()),
         )
     if deleted.rowcount == 0:
         raise HTTPException(404, "Корректировка выплаты не найдена")
