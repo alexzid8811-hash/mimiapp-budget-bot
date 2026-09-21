@@ -24,11 +24,22 @@
     return headers;
   }
 
+  function requestErrorMessage(body, status) {
+    const detail = body?.detail;
+    if (Array.isArray(detail)) {
+      return detail.map(item => item.msg || item.message || JSON.stringify(item)).join("; ");
+    }
+    if (detail && typeof detail === "object") {
+      return detail.msg || detail.message || JSON.stringify(detail);
+    }
+    return detail || `Ошибка ${status}`;
+  }
+
   async function request(path, options = {}) {
     const res = await fetch(path, { ...options, headers: currentRequestHeaders(options.headers) });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || `Ошибка ${res.status}`);
+      throw new Error(requestErrorMessage(body, res.status));
     }
     return res.json();
   }
