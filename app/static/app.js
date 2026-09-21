@@ -220,7 +220,9 @@ function renderSettings() {
   $("salaryDay").value = payroll.salary_day ?? 7;
   // Take the date from the server so the validation date and the displayed
   // default cannot diverge around midnight or when device time is wrong.
-  $("payrollEffectiveDate").value = b.today || todayISO();
+  const effectiveDate = $("payrollEffectiveDate");
+  effectiveDate.value = b.today || todayISO();
+  effectiveDate.max = b.today || todayISO();
   $("advanceDay").value = payroll.advance_day ?? 22;
 
   const preview = state.payroll?.preview;
@@ -461,6 +463,8 @@ $("saveReminderSettingsBtn").addEventListener("click", async () => {
     await loadAll();
   } catch(e) { toast(e.message); }
 });
+
+$("openPayrollChangeBtn")?.addEventListener("click", () => $("addPayrollChangeBtn").click());
 
 $("addPayrollChangeBtn").addEventListener("click", () => {
   $("payrollChangeId").value = "";
