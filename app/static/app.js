@@ -245,7 +245,9 @@ function renderSettings() {
   }
 
   const payrollChanges = state.payroll?.changes || [];
-  $("payrollChangesList").innerHTML = payrollChanges.length ? payrollChanges.map(change => {
+  const payrollChangesList = $("payrollChangesList");
+  // Desktop Telegram can briefly retain an older HTML shell after an update.
+  if (payrollChangesList) payrollChangesList.innerHTML = payrollChanges.length ? payrollChanges.map(change => {
     const [year, month] = change.effective_month.split("-").map(Number);
     return `<div class="list-row"><div class="row-text"><div class="row-title">С ${fmtMonth(year, month)}</div><div class="row-sub">Оклад ${money(change.salary_gross)} · премия ${money(change.bonus_gross)} до НДФЛ</div></div><div class="actions"><button class="tiny" onclick="editPayrollChange(${change.id})">Изм.</button><button class="tiny danger" onclick="deletePayrollChange(${change.id})">×</button></div></div>`;
   }).join("") : `<div class="empty">Будущих изменений пока нет.</div>`;
@@ -464,9 +466,9 @@ $("saveReminderSettingsBtn").addEventListener("click", async () => {
   } catch(e) { toast(e.message); }
 });
 
-$("openPayrollChangeBtn")?.addEventListener("click", () => $("addPayrollChangeBtn").click());
+$("openPayrollChangeBtn")?.addEventListener("click", () => $("addPayrollChangeBtn")?.click());
 
-$("addPayrollChangeBtn").addEventListener("click", () => {
+$("addPayrollChangeBtn")?.addEventListener("click", () => {
   $("payrollChangeId").value = "";
   $("payrollChangeMonth").value = "";
   $("payrollChangeSalary").value = $("salaryGross").value || "";
@@ -492,7 +494,7 @@ window.deletePayrollChange = async id => {
   } catch (e) { toast(e.message); }
 };
 
-$("payrollChangeForm").addEventListener("submit", async (e) => {
+$("payrollChangeForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const month = $("payrollChangeMonth").value;
