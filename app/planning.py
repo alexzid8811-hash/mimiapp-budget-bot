@@ -91,16 +91,50 @@ def condition_segments(uid, start, end):
     return result
 
 
-def income_events(uid, start, end):
+def payroll_config_for_accrual_month(base: PayrollConfig, changes: list[dict], year: int, month: int) -> PayrollConfig:
+    """Apply the latest planned salary and bonus change to an accrual month."""
+    accrual_month = date(year, month, 1)
+    applicable = [
+        change for change in changes
+        if date.fromisoformat(change['effective_month']) <= accrual_month
+    ]
+    if not applicable:
+        return base
+    change = applicable[-1]
+    return PayrollConfig(
+        salary_gross=float(change['salary_gross']),
+        bonus_gross=float(change['bonus_gross']),
+        tax_rate=base.tax_rate,
+        salary_day=base.salary_day,
+        advance_day=base.advance_day,
+    )
+
+
+def income_events(uid, start, end, payroll_changes_through: date | None = None):
     with connect() as con:
         vacations = [dict(r) for r in con.execute('SELECT * FROM vacations WHERE user_id=?', (uid,))]
+        payroll_changes = [
+            dict(r) for r in con.execute(
+                "SELECT effective_month,salary_gross,bonus_gross FROM payroll_changes "
+                "WHERE user_id=? ORDER BY effective_month",
+                (uid,),
+            )
+        ]
+    if payroll_changes_through is not None:
+        payroll_changes = [
+            change for change in payroll_changes
+            if date.fromisoformat(change['effective_month']) <= payroll_changes_through
+        ]
     events = []
     for left, right, conditions in condition_segments(uid, start, end):
         cfg = conditions['settings']
         enabled = bool(cfg['payroll_enabled'])
         if enabled:
             config = PayrollConfig(**{k: cfg[k] for k in PAYROLL_COLUMNS if k != 'payroll_enabled'})
-            for event in payroll_events_between(left, right, config, vacations):
+            config_for_month = lambda year, month, base=config: payroll_config_for_accrual_month(
+                base, payroll_changes, year, month
+            )
+            for event in payroll_events_between(left, right, config_for_month, vacations):
                 events.append({**event, 'is_payday': event['kind'] in {'salary', 'advance'}})
         else:
             for vacation in vacations:
@@ -122,9 +156,9 @@ def income_events(uid, start, end):
     return sorted(events, key=lambda e: e['date'])
 
 
-def income_map(uid, start, end, include_manual=True):
+def income_map(uid, start, end, include_manual=True, payroll_changes_through: date | None = None):
     totals = {}
-    for event in income_events(uid, start, end):
+    for event in income_events(uid, start, end, payroll_changes_through):
         day = event['date']
         totals[day] = totals.get(day, 0) + cents(event['amount'])
     if include_manual:

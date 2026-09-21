@@ -26,6 +26,20 @@ class PayrollSettingsIn(DatedConditionsIn):
     advance_day: int = Field(default=22, ge=1, le=31)
 
 
+class PayrollChangeIn(APIModel):
+    effective_month: date
+    salary_gross: float = Field(ge=0)
+    bonus_gross: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_effective_month(self) -> "PayrollChangeIn":
+        if self.effective_month.day != 1:
+            raise ValueError("Изменение зарплаты начинается с первого дня месяца")
+        if self.effective_month <= clock.today().replace(day=1):
+            raise ValueError("Выберите будущий месяц")
+        return self
+
+
 class VacationIn(APIModel):
     start_date: date
     end_date: date
@@ -53,6 +67,14 @@ def payroll_settings(user_id: int) -> dict:
         "salary_day": 7,
         "advance_day": 22,
     }
+
+
+def payroll_changes(user_id: int) -> list[dict]:
+    return legacy.rows(
+        "SELECT id,effective_month,salary_gross,bonus_gross FROM payroll_changes "
+        "WHERE user_id=? ORDER BY effective_month,id",
+        (user_id,),
+    )
 
 
 def payroll_config(user_id: int) -> PayrollConfig:
@@ -100,7 +122,41 @@ def get_payroll_settings(user: TelegramUser = Depends(current_user)) -> dict:
     if int(settings["payroll_enabled"]):
         today = clock.today()
         preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid), vacation_rows(uid))
-    return {"settings": settings, "preview": preview}
+    return {"settings": settings, "preview": preview, "changes": payroll_changes(uid)}
+
+
+@app.post("/api/payroll-changes")
+def save_payroll_change(payload: PayrollChangeIn, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = legacy.user_ready(user)
+    with legacy.connect() as con:
+        con.execute(
+            "INSERT INTO payroll_changes(user_id,effective_month,salary_gross,bonus_gross) VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id,effective_month) DO UPDATE SET "
+            "salary_gross=excluded.salary_gross,bonus_gross=excluded.bonus_gross",
+            (
+                uid,
+                payload.effective_month.isoformat(),
+                payload.salary_gross,
+                payload.bonus_gross,
+            ),
+        )
+    # The current reserve movement deliberately remains untouched.  The
+    # scheduled sum is used by the forecast now and by the buffer once that
+    # future budget period begins.
+    return next(
+        change for change in payroll_changes(uid)
+        if change["effective_month"] == payload.effective_month.isoformat()
+    )
+
+
+@app.delete("/api/payroll-changes/{change_id}")
+def delete_payroll_change(change_id: int, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = legacy.user_ready(user)
+    with legacy.connect() as con:
+        cur = con.execute("DELETE FROM payroll_changes WHERE id=? AND user_id=?", (change_id, uid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Изменение зарплаты не найдено")
+    return {"ok": True}
 
 
 @app.put("/api/payroll-settings")
@@ -126,7 +182,7 @@ def save_payroll_settings(payload: PayrollSettingsIn, user: TelegramUser = Depen
     if int(settings["payroll_enabled"]):
         today = clock.today()
         preview = payroll_for_accrual_month(today.year, today.month, payroll_config(uid), vacation_rows(uid))
-    return {"settings": settings, "preview": preview}
+    return {"settings": settings, "preview": preview, "changes": payroll_changes(uid)}
 
 
 @app.get("/api/vacations")

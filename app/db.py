@@ -154,6 +154,18 @@ CREATE TABLE IF NOT EXISTS plan_history (
     UNIQUE(user_id, effective_date)
 );
 
+-- Future changes are stored separately from the active payroll settings so a
+-- planned raise never rewrites the current budget or its buffer.
+CREATE TABLE IF NOT EXISTS payroll_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    effective_month TEXT NOT NULL,
+    salary_gross REAL NOT NULL CHECK(salary_gross >= 0),
+    bonus_gross REAL NOT NULL CHECK(bonus_gross >= 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, effective_month)
+);
+
 -- One row means that this particular recurring bill occurrence was already
 -- delivered to the owner in Telegram. The due date is part of the key so a
 -- reminder for October never suppresses the same bill in November.
