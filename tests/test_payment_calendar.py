@@ -23,9 +23,10 @@ def uid(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("payroll_enabled", [0, 1])
 @pytest.mark.parametrize("as_of,expected_start,expected_end", [
-    (date(2026, 2, 6), date(2026, 2, 6), date(2026, 2, 19)),
-    (date(2026, 2, 20), date(2026, 2, 20), date(2026, 3, 5)),
-    (date(2025, 12, 30), date(2025, 12, 30), date(2026, 1, 21)),
+    (date(2026, 2, 6), date(2026, 1, 23), date(2026, 2, 6)),
+    (date(2026, 2, 7), date(2026, 2, 7), date(2026, 2, 20)),
+    (date(2026, 2, 21), date(2026, 2, 21), date(2026, 3, 6)),
+    (date(2025, 12, 31), date(2025, 12, 31), date(2026, 1, 22)),
 ])
 def test_all_calendar_days_between_actual_paydays(
     uid, payroll_enabled, as_of, expected_start, expected_end
@@ -39,7 +40,7 @@ def test_all_calendar_days_between_actual_paydays(
     boundaries = flow.payday_boundaries(uid, expected_start, next_payday)
     assert [b["date"] for b in boundaries] == [expected_start, next_payday]
 
-    # Income belongs to the actual date, not a second nominal-date occurrence.
+    # The forecast uses the first budget day; history keeps the actual date.
     income = flow.planned_income_map(uid, expected_start, expected_end)
     assert list(income) == [expected_start]
     assert main.period_recurring_income(uid, expected_start, expected_end) == sum(income.values())
@@ -77,8 +78,8 @@ def test_other_income_and_bills_are_not_shifted(uid):
         con.execute(
             "INSERT INTO bill_rules(user_id,title,amount,day_of_month) VALUES(1,'Платёж',300,7)"
         )
-    assert main.period_recurring_income(uid, date(2026, 2, 6), date(2026, 2, 6)) == 23000
-    assert main.period_recurring_income(uid, date(2026, 2, 7), date(2026, 2, 7)) == 500
+    assert main.period_recurring_income(uid, date(2026, 2, 6), date(2026, 2, 6)) == 0
+    assert main.period_recurring_income(uid, date(2026, 2, 7), date(2026, 2, 7)) == 23500
     assert flow.planned_mandatory_map(uid, date(2026, 2, 6), date(2026, 2, 7)) == {
         date(2026, 2, 7): 300,
     }
@@ -88,21 +89,22 @@ def test_transferred_working_saturday_is_not_skipped(uid):
     with connect() as con:
         con.execute("UPDATE income_rules SET day_of_month=3 WHERE kind='salary'")
     events = flow.payday_boundaries(uid, date(2025, 10, 31), date(2025, 11, 4))
-    assert [event["date"] for event in events] == [date(2025, 11, 1)]
-    assert main.period_recurring_income(uid, date(2025, 11, 1), date(2025, 11, 1)) == 23000
+    assert [event["date"] for event in events] == [date(2025, 11, 2)]
+    assert main.period_recurring_income(uid, date(2025, 11, 2), date(2025, 11, 2)) == 23000
 
 
 def test_january_income_is_booked_in_december_once(uid):
-    assert main.period_recurring_income(uid, date(2025, 12, 30), date(2025, 12, 31)) == 23000
+    assert main.period_recurring_income(uid, date(2025, 12, 30), date(2025, 12, 30)) == 0
+    assert main.period_recurring_income(uid, date(2025, 12, 31), date(2025, 12, 31)) == 23000
     assert main.period_recurring_income(uid, date(2026, 1, 1), date(2026, 1, 21)) == 0
 
 
 @pytest.mark.parametrize("payroll_enabled", [0, 1])
-def test_snapshot_uses_every_day_until_shifted_next_payment(uid, monkeypatch, payroll_enabled):
+def test_snapshot_uses_every_day_from_budget_start_until_shifted_next_payment(uid, monkeypatch, payroll_enabled):
     class FixedDate(date):
         @classmethod
         def today(cls):
-            return cls(2026, 2, 20)
+            return cls(2026, 2, 21)
 
     monkeypatch.setattr("app.clock.today", FixedDate.today)
     with connect() as con:
@@ -114,8 +116,8 @@ def test_snapshot_uses_every_day_until_shifted_next_payment(uid, monkeypatch, pa
         )
     snapshot = flow.cashflow_snapshot(uid)
     first = snapshot["periods"][0]
-    assert first["start"] == "2026-02-20"
-    assert first["end"] == "2026-03-05"
+    assert first["start"] == "2026-02-21"
+    assert first["end"] == "2026-03-06"
     assert first["days"] == 14  # Includes weekends and 23 February.
-    assert snapshot["next_income"]["date"] == "2026-03-06"
+    assert snapshot["next_income"]["date"] == "2026-03-07"
     assert snapshot["remaining_period"] == round(snapshot["daily_target"] * 14, 2)
