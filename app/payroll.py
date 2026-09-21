@@ -3,7 +3,7 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .budget import add_months, month_date
 from .russian_calendar import is_working_day_ru, payday_on_or_before
@@ -115,7 +115,7 @@ def payroll_for_accrual_month(
 def payroll_events_between(
     start: date,
     end: date,
-    config: PayrollConfig,
+    config: PayrollConfig | Callable[[int, int], PayrollConfig],
     vacations: Iterable[Any] | None = None,
 ) -> list[dict]:
     """Return calculated payroll and vacation-pay events inside the range."""
@@ -125,7 +125,8 @@ def payroll_events_between(
     events: list[dict] = []
 
     while cursor <= last:
-        calc = payroll_for_accrual_month(cursor.year, cursor.month, config, vacations)
+        month_config = config(cursor.year, cursor.month) if callable(config) else config
+        calc = payroll_for_accrual_month(cursor.year, cursor.month, month_config, vacations)
         for kind, amount_key, date_key, nominal_key, title in [
             ("advance", "advance", "advance_date", "advance_nominal_date", "Аванс"),
             ("salary", "final_salary", "salary_date", "salary_nominal_date", "Зарплата + премия"),
