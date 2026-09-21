@@ -149,6 +149,39 @@ def save_payroll_change(payload: PayrollChangeIn, user: TelegramUser = Depends(c
     )
 
 
+@app.put("/api/payroll-changes/{change_id}")
+def update_payroll_change(
+    change_id: int, payload: PayrollChangeIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = legacy.user_ready(user)
+    with legacy.connect() as con:
+        current = con.execute(
+            "SELECT id FROM payroll_changes WHERE id=? AND user_id=?", (change_id, uid)
+        ).fetchone()
+        if current is None:
+            raise HTTPException(404, "Изменение зарплаты не найдено")
+        duplicate = con.execute(
+            "SELECT id FROM payroll_changes WHERE user_id=? AND effective_month=? AND id<>?",
+            (uid, payload.effective_month.isoformat(), change_id),
+        ).fetchone()
+        if duplicate is not None:
+            raise HTTPException(409, "На этот месяц уже запланировано изменение")
+        con.execute(
+            "UPDATE payroll_changes SET effective_month=?,salary_gross=?,bonus_gross=? "
+            "WHERE id=? AND user_id=?",
+            (
+                payload.effective_month.isoformat(),
+                payload.salary_gross,
+                payload.bonus_gross,
+                change_id,
+                uid,
+            ),
+        )
+    # Periods before the selected month remain unchanged; the next forecast
+    # reads this schedule and rebuilds the buffer from the future change.
+    return next(change for change in payroll_changes(uid) if change["id"] == change_id)
+
+
 @app.delete("/api/payroll-changes/{change_id}")
 def delete_payroll_change(change_id: int, user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
