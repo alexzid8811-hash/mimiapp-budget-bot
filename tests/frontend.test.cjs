@@ -166,6 +166,9 @@ test('category order uses a touch-friendly drag handle', async () => {
   assert.doesNotMatch(get('categoriesList').innerHTML,/category-move/);
   const script = fs.readFileSync(path.join(__dirname,'../app/static/app.js'),'utf8');
   assert.match(script,/pointermove/);
+  assert.match(script,/touchstart/);
+  assert.match(script,/touchmove/);
+  assert.match(script,/passive:false/);
   assert.match(script,/\/api\/categories\/order/);
 });
 

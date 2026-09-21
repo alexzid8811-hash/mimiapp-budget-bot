@@ -292,42 +292,41 @@ function categoryIdsFromList(list) {
 }
 
 const categoriesList = $("categoriesList");
-categoriesList.addEventListener('pointerdown', event => {
-  const handle = event.target.closest('.category-drag-handle');
+function beginCategoryDrag(target, inputId) {
+  if (categoryDrag) return false;
+  const handle = target.closest('.category-drag-handle');
   if (!handle) return;
   const item = handle.closest('.category-order-item');
   if (!item) return;
-  event.preventDefault();
   categoryDrag = {
-    pointerId: event.pointerId,
+    inputId,
     item,
     previous: [...(state.bootstrap?.categories || [])],
   };
   item.classList.add('dragging');
   categoriesList.classList.add('sorting');
-  categoriesList.setPointerCapture?.(event.pointerId);
-});
+  return true;
+}
 
-categoriesList.addEventListener('pointermove', event => {
-  if (!categoryDrag || categoryDrag.pointerId !== event.pointerId) return;
-  event.preventDefault();
+function moveCategoryDrag(clientY, inputId) {
+  if (!categoryDrag || categoryDrag.inputId !== inputId) return false;
   const others = [...categoriesList.querySelectorAll('.category-order-item:not(.dragging)')];
   const before = others.find(item => {
     const rect = item.getBoundingClientRect();
-    return event.clientY < rect.top + rect.height / 2;
+    return clientY < rect.top + rect.height / 2;
   });
   categoriesList.insertBefore(categoryDrag.item, before || null);
-  if (event.clientY < 90) window.scrollBy(0, -12);
-  else if (event.clientY > window.innerHeight - 90) window.scrollBy(0, 12);
-});
+  if (clientY < 90) window.scrollBy(0, -12);
+  else if (clientY > window.innerHeight - 90) window.scrollBy(0, 12);
+  return true;
+}
 
-async function finishCategoryDrag(event, cancelled = false) {
-  if (!categoryDrag || categoryDrag.pointerId !== event.pointerId) return;
+async function finishCategoryDrag(inputId, cancelled = false) {
+  if (!categoryDrag || categoryDrag.inputId !== inputId) return;
   const drag = categoryDrag;
   categoryDrag = null;
   drag.item.classList.remove('dragging');
   categoriesList.classList.remove('sorting');
-  categoriesList.releasePointerCapture?.(event.pointerId);
   if (cancelled) {
     renderCategories();
     return;
@@ -337,8 +336,56 @@ async function finishCategoryDrag(event, cancelled = false) {
   await persistCategoryOrder(drag.previous, categoryIds);
 }
 
-categoriesList.addEventListener('pointerup', event => finishCategoryDrag(event));
-categoriesList.addEventListener('pointercancel', event => finishCategoryDrag(event, true));
+categoriesList.addEventListener('pointerdown', event => {
+  // Touch is handled below through the iOS-compatible touch event path.
+  if (event.pointerType === 'touch') return;
+  const inputId = `pointer:${event.pointerId}`;
+  if (!beginCategoryDrag(event.target, inputId)) return;
+  event.preventDefault();
+  categoriesList.setPointerCapture?.(event.pointerId);
+});
+
+categoriesList.addEventListener('pointermove', event => {
+  if (!moveCategoryDrag(event.clientY, `pointer:${event.pointerId}`)) return;
+  event.preventDefault();
+});
+
+categoriesList.addEventListener('pointerup', event => {
+  const inputId = `pointer:${event.pointerId}`;
+  if (!categoryDrag || categoryDrag.inputId !== inputId) return;
+  try { categoriesList.releasePointerCapture?.(event.pointerId); } catch (_) {}
+  finishCategoryDrag(inputId);
+});
+categoriesList.addEventListener('pointercancel', event => {
+  finishCategoryDrag(`pointer:${event.pointerId}`, true);
+});
+
+// Telegram's iOS webview can omit Pointer Events while still delivering
+// classic touch events. Keep a dedicated non-passive fallback for phones.
+categoriesList.addEventListener('touchstart', event => {
+  if (categoryDrag) return;
+  const touch = event.changedTouches[0];
+  if (!touch || !beginCategoryDrag(event.target, `touch:${touch.identifier}`)) return;
+  event.preventDefault();
+}, {passive:false});
+
+categoriesList.addEventListener('touchmove', event => {
+  if (!categoryDrag || !categoryDrag.inputId.startsWith('touch:')) return;
+  const identifier = Number(categoryDrag.inputId.slice(6));
+  const touch = [...event.touches].find(item => item.identifier === identifier);
+  if (!touch || !moveCategoryDrag(touch.clientY, categoryDrag.inputId)) return;
+  event.preventDefault();
+}, {passive:false});
+
+categoriesList.addEventListener('touchend', event => {
+  if (!categoryDrag || !categoryDrag.inputId.startsWith('touch:')) return;
+  const identifier = Number(categoryDrag.inputId.slice(6));
+  if (![...event.changedTouches].some(item => item.identifier === identifier)) return;
+  finishCategoryDrag(categoryDrag.inputId);
+});
+categoriesList.addEventListener('touchcancel', () => {
+  if (categoryDrag?.inputId.startsWith('touch:')) finishCategoryDrag(categoryDrag.inputId, true);
+});
 
 function fillCategorySelects() {
   const cats = state.bootstrap?.categories || [];
