@@ -21,7 +21,7 @@
   function formatMoney(value) {
     const code = document.getElementById("currency")?.value || "RUB";
     return new Intl.NumberFormat("ru-RU", {
-      style: "currency", currency: code, maximumFractionDigits: 2,
+      style: "currency", currency: code, minimumFractionDigits: 2, maximumFractionDigits: 2,
     }).format(Number(value || 0));
   }
 
