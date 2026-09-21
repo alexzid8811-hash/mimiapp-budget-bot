@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 6
+BACKUP_VERSION = 7
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -37,7 +37,7 @@ SETTINGS_COLUMNS = (
 )
 
 TABLE_COLUMNS = {
-    "categories": ("id", "title", "emoji", "created_at"),
+    "categories": ("id", "title", "emoji", "sort_order", "created_at"),
     "income_rules": ("id", "title", "amount", "day_of_month", "kind", "is_payday", "active", "archived", "created_at"),
     "bill_rules": ("id", "title", "amount", "day_of_month", "category_id", "active", "archived", "created_at"),
     "transactions": (
@@ -130,10 +130,13 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             )
 
             category_ids: dict[Any, int] = {}
-            for row in data["categories"]:
+            for position, row in enumerate(data["categories"], start=1):
                 cur = con.execute(
-                    "INSERT INTO categories(user_id,title,emoji,created_at) VALUES(?,?,?,?)",
-                    (user_id, str(row["title"]), str(row.get("emoji") or "💳"), _created_at(row)),
+                    "INSERT INTO categories(user_id,title,emoji,sort_order,created_at) VALUES(?,?,?,?,?)",
+                    (
+                        user_id, str(row["title"]), str(row.get("emoji") or "💳"),
+                        int(row.get("sort_order") or position), _created_at(row),
+                    ),
                 )
                 category_ids[row.get("id")] = int(cur.lastrowid)
 

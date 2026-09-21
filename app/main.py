@@ -58,6 +58,10 @@ class CategoryIn(APIModel):
     emoji: str = Field(default="💳", min_length=1, max_length=8)
 
 
+class CategoryOrderIn(APIModel):
+    category_ids: list[int] = Field(min_length=1)
+
+
 class TransactionIn(APIModel):
     type: Literal["expense", "income"]
     amount: float = Field(gt=0)
@@ -245,7 +249,9 @@ def bootstrap(user: TelegramUser = Depends(current_user)) -> dict:
         "settings": one("SELECT currency,initial_reserve,forecast_months,reminder_days,reminder_time,morning_report_time FROM settings WHERE user_id=?", (uid,)),
         "income_rules": rows("SELECT * FROM income_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
         "bill_rules": rows("SELECT * FROM bill_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
-        "categories": rows("SELECT * FROM categories WHERE user_id=? ORDER BY id", (uid,)),
+        "categories": rows(
+            "SELECT * FROM categories WHERE user_id=? ORDER BY sort_order,id", (uid,)
+        ),
     }
 
 
@@ -575,11 +581,41 @@ def add_category(payload: CategoryIn, user: TelegramUser = Depends(current_user)
     uid = user_ready(user)
     try:
         with connect() as con:
-            cur = con.execute("INSERT INTO categories(user_id,title,emoji) VALUES(?,?,?)", (uid, payload.title, payload.emoji))
+            next_order = con.execute(
+                "SELECT COALESCE(MAX(sort_order),0)+1 FROM categories WHERE user_id=?",
+                (uid,),
+            ).fetchone()[0]
+            cur = con.execute(
+                "INSERT INTO categories(user_id,title,emoji,sort_order) VALUES(?,?,?,?)",
+                (uid, payload.title, payload.emoji, next_order),
+            )
             rid = cur.lastrowid
     except Exception as exc:
         raise HTTPException(409, "Category already exists") from exc
     return one("SELECT * FROM categories WHERE id=?", (rid,)) or {}
+
+
+@app.put("/api/categories/order")
+def reorder_categories(
+    payload: CategoryOrderIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = user_ready(user)
+    category_ids = payload.category_ids
+    if len(category_ids) != len(set(category_ids)):
+        raise HTTPException(422, "Категории не должны повторяться")
+    with connect() as con:
+        current_ids = {
+            int(row[0])
+            for row in con.execute("SELECT id FROM categories WHERE user_id=?", (uid,))
+        }
+        if set(category_ids) != current_ids:
+            raise HTTPException(422, "Список категорий изменился. Обновите страницу")
+        for position, category_id in enumerate(category_ids, start=1):
+            con.execute(
+                "UPDATE categories SET sort_order=? WHERE id=? AND user_id=?",
+                (position, category_id, uid),
+            )
+    return {"ok": True}
 
 
 @app.put("/api/settings")

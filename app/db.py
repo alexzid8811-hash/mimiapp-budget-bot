@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS categories (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     emoji TEXT NOT NULL DEFAULT '💳',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, title)
 );
@@ -277,6 +278,12 @@ def init_db() -> None:
         con.executescript(SCHEMA)
         _ensure_settings_columns(con)
         _ensure_payment_columns(con)
+        category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
+        if "sort_order" not in category_columns:
+            con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        # Positions are one-based, so zero safely identifies rows created
+        # before ordering was introduced.
+        con.execute("UPDATE categories SET sort_order=id WHERE sort_order=0")
         for table in ('income_rules', 'bill_rules'):
             columns = {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
             if 'archived' not in columns:
@@ -294,12 +301,15 @@ def ensure_user(user_id: int, first_name: str = "", username: str | None = None)
 
         count = con.execute("SELECT COUNT(*) FROM categories WHERE user_id=?", (user_id,)).fetchone()[0]
         if count == 0:
-            for title, emoji in [
+            for position, (title, emoji) in enumerate([
                 ("Продукты", "🛒"), ("Транспорт", "🚕"), ("Кафе", "☕"),
                 ("Дом", "🏠"), ("Здоровье", "💊"), ("Развлечения", "🎬"),
                 ("Покупки", "🛍️"), ("Другое", "💳"),
-            ]:
-                con.execute("INSERT INTO categories(user_id,title,emoji) VALUES(?,?,?)", (user_id, title, emoji))
+            ], start=1):
+                con.execute(
+                    "INSERT INTO categories(user_id,title,emoji,sort_order) VALUES(?,?,?,?)",
+                    (user_id, title, emoji, position),
+                )
 
         income_count = con.execute("SELECT COUNT(*) FROM income_rules WHERE user_id=?", (user_id,)).fetchone()[0]
         if income_count == 0:

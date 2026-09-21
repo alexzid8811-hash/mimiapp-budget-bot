@@ -43,6 +43,7 @@ class Record(APIModel):
 class Category(Record):
     title: str = Field(min_length=1, max_length=40)
     emoji: str = Field(default='💳', min_length=1, max_length=8)
+    sort_order: int = Field(default=0, ge=0)
 
 
 class Income(Record):
@@ -146,7 +147,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')

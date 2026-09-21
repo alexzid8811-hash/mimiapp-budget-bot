@@ -1,5 +1,29 @@
+import sqlite3
+
 from app.backup import export_user_data, restore_user_data
 from app.db import connect, ensure_user, init_db
+
+
+def test_category_order_migration_preserves_existing_sequence(tmp_path, monkeypatch):
+    database = tmp_path / "legacy.sqlite3"
+    monkeypatch.setenv("DATABASE_PATH", str(database))
+    with sqlite3.connect(database) as con:
+        con.execute(
+            "CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
+            "title TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '💳', "
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id,title))"
+        )
+        con.execute("INSERT INTO categories(user_id,title,emoji) VALUES(1,'Первая','1️⃣')")
+        con.execute("INSERT INTO categories(user_id,title,emoji) VALUES(1,'Вторая','2️⃣')")
+
+    init_db()
+    with connect() as con:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
+        rows = con.execute(
+            "SELECT title,sort_order FROM categories WHERE user_id=1 ORDER BY sort_order,id"
+        ).fetchall()
+    assert "sort_order" in columns
+    assert [tuple(row) for row in rows] == [("Первая", 1), ("Вторая", 2)]
 
 
 def test_backup_round_trip_remaps_relations(tmp_path, monkeypatch):

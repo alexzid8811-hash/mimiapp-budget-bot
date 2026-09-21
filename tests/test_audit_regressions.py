@@ -445,7 +445,7 @@ def test_backup_restores_cashflow_income_overrides(client):
         '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     ).status_code == 200
     backup = export_user_data(1)
-    assert backup['backup_version'] == 6
+    assert backup['backup_version'] == 7
     assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
     ensure_user(2)
     restore_user_data(2, backup)
@@ -519,6 +519,25 @@ def test_foreign_categories_rejected(client, operation):
         bill = client.post('/api/bill-rules', json={**body, 'category_id': None}).json()
         response = client.put(f"/api/bill-rules/{bill['id']}", json=body)
     assert response.status_code == 422
+
+
+def test_categories_can_be_reordered_and_new_category_is_appended(client):
+    before = client.get('/api/bootstrap').json()['categories']
+    reversed_ids = [row['id'] for row in reversed(before)]
+    response = client.put('/api/categories/order', json={'category_ids': reversed_ids})
+    assert response.status_code == 200
+    after = client.get('/api/bootstrap').json()['categories']
+    assert [row['id'] for row in after] == reversed_ids
+
+    created = client.post('/api/categories', json={'title': 'Частая', 'emoji': '⭐'}).json()
+    final = client.get('/api/bootstrap').json()['categories']
+    assert final[-1]['id'] == created['id']
+
+
+def test_category_order_rejects_incomplete_or_duplicate_lists(client):
+    ids = [row['id'] for row in client.get('/api/bootstrap').json()['categories']]
+    assert client.put('/api/categories/order', json={'category_ids': ids[:-1]}).status_code == 422
+    assert client.put('/api/categories/order', json={'category_ids': [ids[0], *ids]}).status_code == 422
 
 
 def test_backdated_withdrawal_and_removal_preserve_running_balance(client):

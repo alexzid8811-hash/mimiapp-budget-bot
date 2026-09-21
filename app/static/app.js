@@ -251,8 +251,45 @@ function renderSettings() {
     <div class="list-row"><div class="row-text"><div class="row-title">Отпуск ${fmtDate(v.start_date)} — ${fmtDate(v.end_date)}</div><div class="row-sub">Выплата ${fmtDate(v.payment_date)}${v.note ? ` · ${escapeHtml(v.note)}` : ''}</div></div><div><div class="amount income">${money(v.amount)}</div><div class="actions"><button class="tiny" onclick="editVacation(${v.id})">Изм.</button><button class="tiny danger" onclick="deleteVacation(${v.id})">×</button></div></div></div>`).join("") : `<div class="empty">Отпуска пока не добавлены.</div>`;
 
   $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title">${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">ежемесячно</div></div><div><div class="amount expense">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
-  $("categoriesList").innerHTML = b.categories.map(c => `<span class="chip">${escapeHtml(c.emoji)} ${escapeHtml(c.title)}</span>`).join("");
+  renderCategories();
 }
+
+function renderCategories() {
+  const categories = state.bootstrap?.categories || [];
+  $("categoriesList").innerHTML = categories.map((category, index) => `
+    <div class="category-order-item">
+      <span class="category-order-name">${escapeHtml(category.emoji)} ${escapeHtml(category.title)}</span>
+      <span class="category-order-actions">
+        <button class="category-move" type="button" title="Поставить первой" aria-label="Поставить ${escapeHtml(category.title)} первой" onclick="moveCategory(${category.id},'first')" ${index === 0 ? 'disabled' : ''}>⇈</button>
+        <button class="category-move" type="button" title="Выше" aria-label="Переместить ${escapeHtml(category.title)} выше" onclick="moveCategory(${category.id},'up')" ${index === 0 ? 'disabled' : ''}>↑</button>
+        <button class="category-move" type="button" title="Ниже" aria-label="Переместить ${escapeHtml(category.title)} ниже" onclick="moveCategory(${category.id},'down')" ${index === categories.length - 1 ? 'disabled' : ''}>↓</button>
+      </span>
+    </div>`).join("");
+}
+
+window.moveCategory = async (categoryId, direction) => {
+  const previous = [...(state.bootstrap?.categories || [])];
+  const categories = [...previous];
+  const index = categories.findIndex(category => category.id === categoryId);
+  if (index < 0) return;
+  const target = direction === 'first' ? 0 : direction === 'up' ? index - 1 : index + 1;
+  if (target < 0 || target >= categories.length || target === index) return;
+  const [category] = categories.splice(index, 1);
+  categories.splice(target, 0, category);
+  state.bootstrap.categories = categories;
+  renderCategories();
+  fillCategorySelects();
+  try {
+    await api('/api/categories/order', {
+      method: 'PUT', body: JSON.stringify({category_ids: categories.map(item => item.id)})
+    });
+  } catch (error) {
+    state.bootstrap.categories = previous;
+    renderCategories();
+    fillCategorySelects();
+    toast(error.message);
+  }
+};
 
 function fillCategorySelects() {
   const cats = state.bootstrap?.categories || [];

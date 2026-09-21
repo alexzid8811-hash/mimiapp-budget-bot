@@ -153,6 +153,20 @@ test('legacy payroll correction section is removed', () => {
   assert.doesNotMatch(html,/payrollEffectiveDate/);
 });
 
+test('category order can move a frequent category to the beginning', async () => {
+  const {sandbox,get,requests,responses}=setup();
+  responses['/api/bootstrap'].categories=[
+    {id:1,title:'Продукты',emoji:'🛒'},
+    {id:2,title:'Транспорт',emoji:'🚕'},
+    {id:3,title:'Обед',emoji:'🍲'},
+  ];
+  await get('refreshBtn').listeners.click();
+  await sandbox.window.moveCategory(3,'first');
+  const request=requests.find(item=>item.url==='/api/categories/order');
+  assert.deepEqual(JSON.parse(request.body),{category_ids:[3,1,2]});
+  assert.ok(get('categoriesList').innerHTML.indexOf('Обед') < get('categoriesList').innerHTML.indexOf('Продукты'));
+});
+
 test('buffer has no separate vacation reserve card', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
   assert.doesNotMatch(html,/Отложено из отпускных|vacationReserve/);
