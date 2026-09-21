@@ -123,6 +123,7 @@ def cashflow_income_overrides(user_id: int, start: date, end: date) -> dict[date
         budget_start = stored_start if stored_start in current_starts else stored_start + timedelta(days=1)
         if not start <= budget_start <= end:
             continue
+        # A newly saved value at the real budget start wins over a legacy row.
         if budget_start not in result or stored_start == budget_start:
             result[budget_start] = round(float(row["amount"]), 2)
     return result

@@ -23,6 +23,8 @@ def uid(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("payroll_enabled", [0, 1])
 @pytest.mark.parametrize("as_of,expected_start,expected_end", [
+    # 6 February is the real salary date, so the previous daily budget still
+    # covers that day; the salary budget begins on 7 February.
     (date(2026, 2, 6), date(2026, 1, 23), date(2026, 2, 6)),
     (date(2026, 2, 7), date(2026, 2, 7), date(2026, 2, 20)),
     (date(2026, 2, 21), date(2026, 2, 21), date(2026, 3, 6)),
