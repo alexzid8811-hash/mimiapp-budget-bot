@@ -53,25 +53,43 @@ def occurrences(
     return sorted(result)
 
 
+def budget_period_starts(
+    payday_days: list[int], start: date, end: date
+) -> list[date]:
+    """Return the days on which a received salary becomes a new daily budget.
+
+    A salary or advance can arrive late in the day. Its payment date therefore
+    stays in the transaction history, while the next daily-budget period starts
+    on the following calendar day.
+    """
+    payments = occurrences(
+        payday_days, start - timedelta(days=1), end,
+        move_to_previous_workday=True,
+    )
+    return sorted({
+        payment + timedelta(days=1)
+        for payment in payments
+        if start <= payment + timedelta(days=1) <= end
+    })
+
+
 def current_period(as_of: date, payday_days: list[int]) -> Period:
     if not payday_days:
         payday_days = [1]
     search_start = add_months(as_of.replace(day=1), -2)
     search_end = add_months(as_of.replace(day=1), 2) + timedelta(days=40)
-    dates = occurrences(payday_days, search_start, search_end, move_to_previous_workday=True)
+    dates = budget_period_starts(payday_days, search_start, search_end)
     previous = [d for d in dates if d <= as_of]
     future = [d for d in dates if d > as_of]
     if not previous or not future:
         raise ValueError("Could not resolve payday period")
-    start = previous[-1]
-    next_start = future[0]
-    return Period(start=start, end=next_start - timedelta(days=1))
+    return Period(start=previous[-1], end=future[0] - timedelta(days=1))
 
 
 def period_sequence(after: date, payday_days: list[int], count: int) -> list[Period]:
     search_start = after - timedelta(days=1)
     search_end = add_months(after, max(3, count + 2)) + timedelta(days=40)
-    dates = occurrences(payday_days, search_start, search_end, move_to_previous_workday=True)
+    dates = budget_period_starts(payday_days, search_start, search_end)
     dates = [d for d in dates if d >= after]
     result: list[Period] = []
     for i in range(min(count, max(0, len(dates) - 1))):
