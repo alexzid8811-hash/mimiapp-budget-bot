@@ -91,3 +91,20 @@ def test_january_2027_advance_excludes_long_new_year_holidays(monkeypatch):
     assert calc["workdays_first_half"] == 5
     assert calc["advance"] == 29000
     assert calc["advance_date"] == "2027-01-22"
+
+
+def test_payroll_events_can_use_a_scheduled_config_by_accrual_month():
+    old = PayrollConfig(salary_gross=100000, bonus_gross=0, tax_rate=13)
+    raised = PayrollConfig(salary_gross=110000, bonus_gross=15000, tax_rate=13)
+
+    def config_for_month(year, month):
+        return raised if (year, month) >= (2026, 11) else old
+
+    events = payroll_events_between(date(2026, 11, 1), date(2026, 12, 15), config_for_month)
+    october_salary = next(event for event in events if event["kind"] == "salary" and event["accrual_month"] == 10)
+    november_advance = next(event for event in events if event["kind"] == "advance" and event["accrual_month"] == 11)
+    november_salary = next(event for event in events if event["kind"] == "salary" and event["accrual_month"] == 11)
+
+    assert october_salary["amount"] == 43500
+    assert november_advance["amount"] == 43065
+    assert november_salary["amount"] > october_salary["amount"]

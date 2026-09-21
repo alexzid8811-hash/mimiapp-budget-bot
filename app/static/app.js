@@ -29,18 +29,29 @@ function toast(message) {
   setTimeout(() => el.classList.remove("show"), 1800);
 }
 
+function apiErrorMessage(body, status) {
+  const detail = body?.detail;
+  if (Array.isArray(detail)) {
+    return detail.map(item => item.msg || item.message || JSON.stringify(item)).join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.msg || detail.message || JSON.stringify(detail);
+  }
+  return detail || `Ошибка ${status}`;
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, { ...options, headers: requestHeaders(options.headers) });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Ошибка ${res.status}`);
+    throw new Error(apiErrorMessage(body, res.status));
   }
   return res.status === 204 ? null : res.json();
 }
 
 function currency() { return "RUB"; }
 function money(v) {
-  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), maximumFractionDigits: 2 }).format(Number(v || 0));
+  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: currency(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v || 0));
 }
 function moneyValue(id) {
   const value = $(id)?.value || "0";
@@ -207,7 +218,11 @@ function renderSettings() {
   $("bonusGross").value = payroll.bonus_gross ?? 0;
   $("taxRate").value = payroll.tax_rate ?? 13;
   $("salaryDay").value = payroll.salary_day ?? 7;
-  $("payrollEffectiveDate").value = todayISO();
+  // Take the date from the server so the validation date and the displayed
+  // default cannot diverge around midnight or when device time is wrong.
+  const effectiveDate = $("payrollEffectiveDate");
+  effectiveDate.value = b.today || todayISO();
+  effectiveDate.max = b.today || todayISO();
   $("advanceDay").value = payroll.advance_day ?? 22;
 
   const preview = state.payroll?.preview;
@@ -228,6 +243,12 @@ function renderSettings() {
   } else {
     previewEl.innerHTML = `<div class="empty">Включите автоматический расчёт и сохраните оклад, чтобы увидеть сумму аванса и зарплаты.</div>`;
   }
+
+  const payrollChanges = state.payroll?.changes || [];
+  $("payrollChangesList").innerHTML = payrollChanges.length ? payrollChanges.map(change => {
+    const [year, month] = change.effective_month.split("-").map(Number);
+    return `<div class="list-row"><div class="row-text"><div class="row-title">С ${fmtMonth(year, month)}</div><div class="row-sub">Оклад ${money(change.salary_gross)} · премия ${money(change.bonus_gross)} до НДФЛ</div></div><div class="actions"><button class="tiny" onclick="editPayrollChange(${change.id})">Изм.</button><button class="tiny danger" onclick="deletePayrollChange(${change.id})">×</button></div></div>`;
+  }).join("") : `<div class="empty">Будущих изменений пока нет.</div>`;
 
   $("vacationsList").innerHTML = state.vacations.length ? state.vacations.map(v => `
     <div class="list-row"><div class="row-text"><div class="row-title">Отпуск ${fmtDate(v.start_date)} — ${fmtDate(v.end_date)}</div><div class="row-sub">Выплата ${fmtDate(v.payment_date)}${v.note ? ` · ${escapeHtml(v.note)}` : ''}</div></div><div><div class="amount income">${money(v.amount)}</div><div class="actions"><button class="tiny" onclick="editVacation(${v.id})">Изм.</button><button class="tiny danger" onclick="deleteVacation(${v.id})">×</button></div></div></div>`).join("") : `<div class="empty">Отпуска пока не добавлены.</div>`;
@@ -441,6 +462,49 @@ $("saveReminderSettingsBtn").addEventListener("click", async () => {
     toast("Уведомления сохранены");
     await loadAll();
   } catch(e) { toast(e.message); }
+});
+
+$("openPayrollChangeBtn")?.addEventListener("click", () => $("addPayrollChangeBtn").click());
+
+$("addPayrollChangeBtn").addEventListener("click", () => {
+  $("payrollChangeId").value = "";
+  $("payrollChangeMonth").value = "";
+  $("payrollChangeSalary").value = $("salaryGross").value || "";
+  $("payrollChangeBonus").value = $("bonusGross").value || "";
+  $("payrollChangeDialog").showModal();
+});
+
+window.editPayrollChange = id => {
+  const change = (state.payroll?.changes || []).find(item => item.id === id);
+  if (!change) return;
+  $("payrollChangeId").value = change.id;
+  $("payrollChangeMonth").value = change.effective_month.slice(0, 7);
+  $("payrollChangeSalary").value = change.salary_gross;
+  $("payrollChangeBonus").value = change.bonus_gross;
+  $("payrollChangeDialog").showModal();
+};
+
+window.deletePayrollChange = async id => {
+  if (!confirm("Удалить запланированное изменение?")) return;
+  try {
+    await api(`/api/payroll-changes/${id}`, { method:"DELETE" });
+    await loadAll();
+  } catch (e) { toast(e.message); }
+};
+
+$("payrollChangeForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const month = $("payrollChangeMonth").value;
+    await api("/api/payroll-changes", { method:"POST", body:JSON.stringify({
+      effective_month: `${month}-01`,
+      salary_gross: moneyValue("payrollChangeSalary"),
+      bonus_gross: moneyValue("payrollChangeBonus"),
+    }) });
+    $("payrollChangeDialog").close();
+    toast("Изменение зарплаты запланировано");
+    await loadAll();
+  } catch (err) { toast(err.message); }
 });
 
 $("savePayrollBtn").addEventListener("click", async () => {
