@@ -86,17 +86,6 @@ def current_period(as_of: date, payday_days: list[int]) -> Period:
     return Period(start=previous[-1], end=future[0] - timedelta(days=1))
 
 
-def period_sequence(after: date, payday_days: list[int], count: int) -> list[Period]:
-    search_start = after - timedelta(days=1)
-    search_end = add_months(after, max(3, count + 2)) + timedelta(days=40)
-    dates = budget_period_starts(payday_days, search_start, search_end)
-    dates = [d for d in dates if d >= after]
-    result: list[Period] = []
-    for i in range(min(count, max(0, len(dates) - 1))):
-        result.append(Period(dates[i], dates[i + 1] - timedelta(days=1)))
-    return result
-
-
 def reserve_needed_for_future(period_nets: list[float]) -> float:
     """Minimum reserve required now so cumulative future structural cash-flow never drops below zero."""
     running = 0.0

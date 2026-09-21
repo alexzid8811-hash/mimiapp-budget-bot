@@ -9,12 +9,11 @@ from . import main as legacy
 from . import clock, planning
 from .validation import APIModel, DatedConditionsIn
 from .auth import TelegramUser, current_user
-from .payroll import PayrollConfig, payroll_events_between, payroll_for_accrual_month
+from .payroll import PayrollConfig, payroll_for_accrual_month
 
 
 app = legacy.app
 _legacy_payday_days = legacy.payday_days
-_legacy_period_recurring_income = legacy.period_recurring_income
 
 
 class PayrollSettingsIn(DatedConditionsIn):
@@ -104,7 +103,14 @@ def payroll_payday_days(user_id: int) -> list[int]:
 
 
 def payroll_period_recurring_income(user_id: int, start: date, end: date) -> float:
-    return round(sum(planning.income_map(user_id, start, end, include_manual=False).values()), 2)
+    return round(
+        sum(
+            planning.budget_income_map(
+                user_id, start, end, include_manual=False
+            ).values()
+        ),
+        2,
+    )
 
 
 # Functions defined in app.main resolve these names from app.main's globals at

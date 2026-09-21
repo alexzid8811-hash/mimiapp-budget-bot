@@ -31,8 +31,9 @@
     const target=flow ? Number(flow.today_target ?? left+spent) : left+spent;
     // The daily limit is always the full amount available at the start of today.
     // Overspending is shown separately in the remaining amount.
-    $("dailyAvailable").textContent=money(target);
-    $("dailyAvailable").style.color="";
+    const headline=left<0 ? left : target;
+    $("dailyAvailable").textContent=money(headline);
+    $("dailyAvailable").style.color=left<0?"var(--expense)":"";
     $("leftToday").textContent=money(left);
     $("leftToday").style.color=left<0?"var(--expense)":"";
     const pct=target>0 ? Math.min(100,Math.max(0,spent/target*100)) : spent>0?100:0;

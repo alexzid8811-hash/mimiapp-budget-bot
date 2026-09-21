@@ -306,7 +306,21 @@ def cashflow_period_rows(
         )
         free = round(received - bills, 2)
         period_daily = daily_by_period[index]
-        planned_spending = round(period_daily * days, 2)
+        if index == 0 and today_target is None:
+            # Standalone callers may only know the recalculated future daily
+            # amount.  Today's real spending must still leave the account in
+            # this row, including an overspend.
+            planned_spending = round(
+                max(float(spent_today), period_daily) + period_daily * max(0, days - 1),
+                2,
+            )
+        elif index == 0:
+            # When the original allowance is available, keep the protected
+            # current-period buffer stable.  Overspending is redistributed
+            # over later days instead of silently consuming that buffer.
+            planned_spending = round(float(today_target) * days, 2)
+        else:
+            planned_spending = round(period_daily * days, 2)
         raw_after = round(buffer_before + free - planned_spending, 2)
         buffer_after = round(max(0.0, raw_after), 2)
         put_aside = round(max(0.0, buffer_after - buffer_before), 2)
@@ -352,7 +366,12 @@ def cashflow_snapshot(user_id: int) -> dict:
     # Past scheduled income is only a forecast until the user records that it
     # was actually received. Otherwise an unpaid salary/vacation payment would
     # silently inflate the real balance carried from the starting capital.
-    confirmed_overrides = cashflow_income_overrides(user_id, start_date, today)
+    # An override belongs to a budget period that starts the day after the
+    # actual payday.  The cash is already on the account on the payday itself,
+    # even though it becomes available for daily spending only tomorrow.
+    confirmed_overrides = cashflow_income_overrides(
+        user_id, start_date, today + timedelta(days=1)
+    )
     actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
     paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
     unpaid_mandatory_history = planned_mandatory_map(user_id, start_date, today)
@@ -370,6 +389,12 @@ def cashflow_snapshot(user_id: int) -> dict:
 
     tomorrow = today + timedelta(days=1)
     income_future = planned_income_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
+    income_future = apply_cashflow_income_overrides(
+        user_id,
+        today=today,
+        horizon_end=horizon_end,
+        income=income_future,
+    )
     # A period override is the corrected total income for that whole payday
     # period.  Once its start date arrives, it becomes confirmed cash.  Remove
     # the remaining planned items from the same period so vacation pay or an

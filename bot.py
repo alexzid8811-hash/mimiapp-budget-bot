@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
@@ -13,6 +14,7 @@ from app.morning_reports import pending_morning_reports, record_morning_report
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "")
 REMINDER_CHECK_SECONDS = max(60, int(os.getenv("REMINDER_CHECK_SECONDS", "60")))
+logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -58,6 +60,10 @@ async def send_bill_reminders(application) -> None:
         except Exception:
             # Keep it pending: a temporary Telegram error must not lose a
             # financial reminder. The next hourly check will retry it.
+            logger.exception(
+                "Не удалось отправить напоминание пользователю %s",
+                reminder["user_id"],
+            )
             continue
         record_bill_reminder(reminder)
 
@@ -96,6 +102,10 @@ async def send_morning_reports(application) -> None:
         try:
             await application.bot.send_message(chat_id=report["user_id"], text=morning_report_text(report))
         except Exception:
+            logger.exception(
+                "Не удалось отправить утренний отчёт пользователю %s",
+                report["user_id"],
+            )
             continue
         record_morning_report(report)
 

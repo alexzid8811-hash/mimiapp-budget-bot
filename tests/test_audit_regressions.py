@@ -126,10 +126,16 @@ def test_yesterday_overspend_is_not_subtracted_again_after_midnight(client, monk
     assert after['remaining_period'] == round(before['period_budget'] - total_spent, 2)
     assert after['current_cash'] == round(39000 - 1753.55 - total_spent, 2)
     assert after['remaining_period'] + after['buffer_balance'] == after['available_cash']
-    expected_today = ((round((after['remaining_period'] + 120) * 100)) // 4) / 100
+    days_left = (
+        date.fromisoformat(after['periods'][0]['end'])
+        - date.fromisoformat(after['today'])
+    ).days + 1
+    expected_today = (
+        round((after['remaining_period'] + 120) * 100) // days_left
+    ) / 100
     assert after['today_target'] == expected_today
     assert after['available_today'] == round(expected_today - 120, 2)
-    assert after['today_target'] * 4 <= after['remaining_period'] + 120
+    assert after['today_target'] * days_left <= after['remaining_period'] + 120
     assert after['periods'][0]['daily'] == after['daily_target']
     assert after['periods'][0]['buffer'] == after['buffer_balance']
     assert after['periods'][0]['put_aside'] == after['buffer_balance']
@@ -388,7 +394,10 @@ def test_confirmed_period_override_replaces_later_income_in_same_period(client, 
     monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
     snapshot = cashflow_snapshot(1)
     assert snapshot['current_cash'] == 13000
-    assert not any(row['date'] == '2026-09-25' and row['income'] for row in snapshot['timeline'])
+    assert not any(
+        '2026-09-23' <= row['date'] <= '2026-10-07' and row['income']
+        for row in snapshot['timeline']
+    )
 
 
 def test_bill_remainder_link_survives_backup_restore(client):

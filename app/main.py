@@ -15,7 +15,8 @@ from .validation import APIModel, DatedConditionsIn
 from .savings import check_piggy_history, piggy_effect
 from .money import amount as money_amount, cents
 from .auth import TelegramUser, current_user
-from .budget import current_period, dashboard_numbers, occurrences, reserve_needed_for_future
+from .budget import current_period as current_period
+from .budget import dashboard_numbers, reserve_needed_for_future
 from .db import connect, ensure_user, init_db
 
 
@@ -186,7 +187,6 @@ def future_reserve_target(user_id: int, current_end: date, count: int) -> tuple[
 
 
 def ensure_auto_reserve(user_id: int, as_of: date) -> dict:
-    days = payday_days(user_id)
     period = planning.user_period(user_id, as_of)
     existing = one(
         "SELECT * FROM reserve_movements WHERE user_id=? AND period_start=? AND source='auto'",
