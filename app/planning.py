@@ -157,9 +157,41 @@ def income_events(uid, start, end, payroll_changes_through: date | None = None):
 
 
 def income_map(uid, start, end, include_manual=True, payroll_changes_through: date | None = None):
+    """Income by its real receipt date, used for history and account balance."""
     totals = {}
     for event in income_events(uid, start, end, payroll_changes_through):
         day = event['date']
+        totals[day] = totals.get(day, 0) + cents(event['amount'])
+    if include_manual:
+        with connect() as con:
+            for row in con.execute("SELECT tx_date,amount FROM transactions WHERE user_id=? AND type='income' AND tx_date BETWEEN ? AND ?", (uid, start.isoformat(), end.isoformat())):
+                day = date.fromisoformat(row['tx_date'])
+                totals[day] = totals.get(day, 0) + cents(row['amount'])
+    return {day: amount(value) for day, value in sorted(totals.items())}
+
+
+def budget_income_events(uid, start, end, payroll_changes_through: date | None = None):
+    """Scheduled income on the day it becomes available to the daily budget.
+
+    Salary and advance are available only from the calendar day after their
+    actual, already workday-adjusted payment date. Other income keeps its
+    own date.
+    """
+    result = []
+    for event in income_events(
+        uid, start - timedelta(days=1), end, payroll_changes_through
+    ):
+        budget_date = event['date'] + timedelta(days=1) if event['is_payday'] else event['date']
+        if start <= budget_date <= end:
+            result.append({**event, 'budget_date': budget_date})
+    return sorted(result, key=lambda event: event['budget_date'])
+
+
+def budget_income_map(uid, start, end, include_manual=True, payroll_changes_through: date | None = None):
+    """Income schedule used by daily-budget and cash-flow calculations."""
+    totals = {}
+    for event in budget_income_events(uid, start, end, payroll_changes_through):
+        day = event['budget_date']
         totals[day] = totals.get(day, 0) + cents(event['amount'])
     if include_manual:
         with connect() as con:
@@ -244,7 +276,12 @@ def bill_planned_amount(uid, bill_id, due_date):
 
 
 def payday_boundaries(uid, start, end):
-    dates = {e['date']: e['title'] for e in income_events(uid, start, end) if e['is_payday']}
+    """Budget-period starts, one day after each actual payday."""
+    dates = {
+        event['budget_date']: event['title']
+        for event in budget_income_events(uid, start, end)
+        if event['is_payday']
+    }
     return [{'date': day, 'kind': title} for day, title in sorted(dates.items())]
 
 
