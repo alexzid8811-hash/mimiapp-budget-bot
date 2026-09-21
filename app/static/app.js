@@ -470,6 +470,8 @@ $("openPayrollChangeBtn")?.addEventListener("click", () => $("addPayrollChangeBt
 
 $("addPayrollChangeBtn")?.addEventListener("click", () => {
   $("payrollChangeId").value = "";
+  $("payrollChangeDialogTitle").textContent = "Запланировать изменение зарплаты";
+  $("savePayrollChangeBtn").textContent = "Сохранить и пересчитать прогноз";
   $("payrollChangeMonth").value = "";
   $("payrollChangeSalary").value = $("salaryGross").value || "";
   $("payrollChangeBonus").value = $("bonusGross").value || "";
@@ -480,6 +482,8 @@ window.editPayrollChange = id => {
   const change = (state.payroll?.changes || []).find(item => item.id === id);
   if (!change) return;
   $("payrollChangeId").value = change.id;
+  $("payrollChangeDialogTitle").textContent = "Изменить запланированную зарплату";
+  $("savePayrollChangeBtn").textContent = "Сохранить изменения";
   $("payrollChangeMonth").value = change.effective_month.slice(0, 7);
   $("payrollChangeSalary").value = change.salary_gross;
   $("payrollChangeBonus").value = change.bonus_gross;
@@ -498,13 +502,15 @@ $("payrollChangeForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const month = $("payrollChangeMonth").value;
-    await api("/api/payroll-changes", { method:"POST", body:JSON.stringify({
+    const changeId = $("payrollChangeId").value;
+    const path = changeId ? "/api/payroll-changes/" + changeId : "/api/payroll-changes";
+    await api(path, { method: changeId ? "PUT" : "POST", body:JSON.stringify({
       effective_month: `${month}-01`,
       salary_gross: moneyValue("payrollChangeSalary"),
       bonus_gross: moneyValue("payrollChangeBonus"),
     }) });
     $("payrollChangeDialog").close();
-    toast("Изменение зарплаты запланировано");
+    toast(changeId ? "Запланированная зарплата изменена" : "Повышение запланировано: прогноз пересчитан");
     await loadAll();
   } catch (err) { toast(err.message); }
 });
