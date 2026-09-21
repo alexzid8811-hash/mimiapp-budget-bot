@@ -109,10 +109,10 @@
             </label><label>Премия до НДФЛ
               <input id="bonusGross" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="20 000,00" />
             </label></div><div class="grid3"><label>День зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label><label>День аванса<input id="advanceDay" type="number" min="1" max="31" /></label><label>НДФЛ, %<input id="taxRate" type="number" min="0" max="100" step="0.1" /></label></div>            <details><summary>Как считается</summary><p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. При отпуске из расчёта исключаются только рабочие дни отпуска. На дату зарплаты приходит остаток оплаты за отработанные дни + чистая премия. Премия автоматически не уменьшается.</p></details>
-            <div id="payrollPreview" class="payroll-preview"></div><label>Применять условия с даты<input id="payrollEffectiveDate" type="date" required /></label>
-            <p class="muted">По умолчанию — с сегодняшнего дня. Прошедшие дни сохраняются. Выберите более раннюю дату только для исправления истории.</p>
-            
-            <button class="primary wide" id="savePayrollBtn" type="button">Сохранить расчёт зарплаты</button>
+            <div id="payrollPreview" class="payroll-preview"></div><label>Исправить текущие условия с даты<input id="payrollEffectiveDate" type="date" required /></label>
+            <p class="muted">Эта дата — только для сегодняшнего или прошедшего дня. Для повышения в будущем используйте кнопку ниже: текущий период и буфер не изменятся.</p>
+            <button class="secondary wide" id="openPayrollChangeBtn" type="button">Запланировать повышение или премию</button>
+            <button class="primary wide" id="savePayrollBtn" type="button">Сохранить текущий расчёт зарплаты</button>
           </div>
         </div>
 
@@ -310,7 +310,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20260918-bill-row"></script>
+  <script src="/static/app.js?v=20260922-payroll-date"></script>
   <script src="/static/cashflow-ui.js?v=20260917-account-split"></script>
   <script src="/static/buffer-ui.js?v=20260917-piggy-separate"></script>
   <script src="/static/design-ui.js?v=20260918-today-breakdown"></script>
