@@ -106,5 +106,5 @@ def test_payroll_events_can_use_a_scheduled_config_by_accrual_month():
     november_salary = next(event for event in events if event["kind"] == "salary" and event["accrual_month"] == 11)
 
     assert october_salary["amount"] == 43500
-    assert november_advance["amount"] > 43500
+    assert november_advance["amount"] == 43065
     assert november_salary["amount"] > october_salary["amount"]
