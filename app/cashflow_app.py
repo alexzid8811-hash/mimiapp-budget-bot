@@ -55,8 +55,15 @@ def _add(target: dict[date, float], day: date, amount: float) -> None:
     target[day] = round(target.get(day, 0.0) + float(amount), 2)
 
 
-def planned_income_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    return planning.income_map(user_id, start, end)
+def planned_income_map(
+    user_id: int,
+    start: date,
+    end: date,
+    payroll_changes_through: date | None = None,
+) -> dict[date, float]:
+    return planning.income_map(
+        user_id, start, end, payroll_changes_through=payroll_changes_through
+    )
 
 
 def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
@@ -390,7 +397,12 @@ def cashflow_snapshot(user_id: int) -> dict:
     anchor_horizon_end = add_months(period_anchor, months)
     anchor_tomorrow = period_anchor + timedelta(days=1)
     anchor_income = (
-        planned_income_map(user_id, anchor_tomorrow, anchor_horizon_end)
+        planned_income_map(
+            user_id,
+            anchor_tomorrow,
+            anchor_horizon_end,
+            payroll_changes_through=period_anchor.replace(day=1),
+        )
         if anchor_tomorrow <= anchor_horizon_end else {}
     )
     anchor_mandatory = (
