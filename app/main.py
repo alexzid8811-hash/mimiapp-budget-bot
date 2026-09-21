@@ -31,7 +31,8 @@ def startup() -> None:
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    # The Desktop Telegram webview may otherwise combine a stale page shell with new scripts.
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store, max-age=0"})
 
 
 class IncomeRuleIn(DatedConditionsIn):
