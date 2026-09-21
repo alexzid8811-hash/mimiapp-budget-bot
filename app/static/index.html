@@ -111,11 +111,6 @@
             </label></div><div class="grid3"><label>День зарплаты<input id="salaryDay" type="number" min="1" max="31" /></label><label>День аванса<input id="advanceDay" type="number" min="1" max="31" /></label><label>НДФЛ, %<input id="taxRate" type="number" min="0" max="100" step="0.1" /></label></div>            <details><summary>Как считается</summary><p class="muted">Аванс считается от чистого оклада пропорционально рабочим дням с 1 по 15 число. При отпуске из расчёта исключаются только рабочие дни отпуска. На дату зарплаты приходит остаток оплаты за отработанные дни + чистая премия. Премия автоматически не уменьшается.</p></details>
             <div id="payrollPreview" class="payroll-preview"></div>
             <button class="primary wide" id="savePayrollBtn" type="button">Сохранить текущий расчёт зарплаты</button>
-            <details>
-              <summary>Исправить расчёт за текущий или прошлый период</summary>
-              <label>Применить с даты<input id="payrollEffectiveDate" type="date" required /></label>
-              <p class="muted">Используйте только для исправления уже наступившей даты. Для повышения в будущем — отдельный раздел ниже.</p>
-            </details>
           </div>
         </div>
 

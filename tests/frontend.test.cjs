@@ -147,6 +147,12 @@ test('piggy bank remains accessible through reserves tabs', () => {
   assert.match(styles,/grid-template-columns:repeat\(5,1fr\)/);
 });
 
+test('legacy payroll correction section is removed', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
+  assert.doesNotMatch(html,/Исправить расчёт за текущий или прошлый период/);
+  assert.doesNotMatch(html,/payrollEffectiveDate/);
+});
+
 test('buffer has no separate vacation reserve card', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
   assert.doesNotMatch(html,/Отложено из отпускных|vacationReserve/);

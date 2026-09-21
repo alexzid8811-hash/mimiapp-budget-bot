@@ -218,11 +218,6 @@ function renderSettings() {
   $("bonusGross").value = payroll.bonus_gross ?? 0;
   $("taxRate").value = payroll.tax_rate ?? 13;
   $("salaryDay").value = payroll.salary_day ?? 7;
-  // Take the date from the server so the validation date and the displayed
-  // default cannot diverge around midnight or when device time is wrong.
-  const effectiveDate = $("payrollEffectiveDate");
-  effectiveDate.value = b.today || todayISO();
-  effectiveDate.max = b.today || todayISO();
   $("advanceDay").value = payroll.advance_day ?? 22;
 
   const preview = state.payroll?.preview;
@@ -440,7 +435,6 @@ function generalSettingsPayload() {
 
 function payrollSettingsPayload() {
   return {
-    effective_date: $("payrollEffectiveDate").value,
     payroll_enabled: $("payrollEnabled").checked,
     salary_gross: moneyValue("salaryGross"),
     bonus_gross: moneyValue("bonusGross"),

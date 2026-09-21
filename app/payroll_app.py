@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 
 from . import main as legacy
 from . import clock, planning
-from .validation import APIModel, DatedConditionsIn
+from .validation import APIModel
 from .auth import TelegramUser, current_user
 from .payroll import PayrollConfig, payroll_for_accrual_month
 
@@ -16,7 +16,7 @@ app = legacy.app
 _legacy_payday_days = legacy.payday_days
 
 
-class PayrollSettingsIn(DatedConditionsIn):
+class PayrollSettingsIn(APIModel):
     payroll_enabled: bool = False
     salary_gross: float = Field(default=0, ge=0)
     bonus_gross: float = Field(default=0, ge=0)
@@ -201,7 +201,7 @@ def delete_payroll_change(change_id: int, user: TelegramUser = Depends(current_u
 @app.put("/api/payroll-settings")
 def save_payroll_settings(payload: PayrollSettingsIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
-    with planning.change_conditions(uid, payload.effective_date, payroll=True) as con:
+    with planning.change_conditions(uid, payroll=True) as con:
         con.execute(
             "UPDATE settings SET payroll_enabled=?,salary_gross=?,bonus_gross=?,tax_rate=?,salary_day=?,advance_day=?,"
             "updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
