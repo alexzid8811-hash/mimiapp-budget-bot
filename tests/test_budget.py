@@ -4,16 +4,16 @@ from app.budget import current_period, dashboard_numbers, occurrences, reserve_n
 from app.russian_calendar import payday_on_or_before
 
 
-def test_period_7_to_21():
+def test_period_starts_day_after_payday():
     p = current_period(date(2026, 9, 14), [7, 22])
-    assert p.start == date(2026, 9, 7)
-    assert p.end == date(2026, 9, 21)
+    assert p.start == date(2026, 9, 8)
+    assert p.end == date(2026, 9, 22)
 
 
-def test_period_22_to_6_next_month():
+def test_next_period_starts_day_after_advance():
     p = current_period(date(2026, 9, 29), [7, 22])
-    assert p.start == date(2026, 9, 22)
-    assert p.end == date(2026, 10, 6)
+    assert p.start == date(2026, 9, 23)
+    assert p.end == date(2026, 10, 7)
 
 
 def test_salary_and_advance_move_before_weekend():
@@ -23,8 +23,8 @@ def test_salary_and_advance_move_before_weekend():
 
 def test_period_boundaries_use_actual_working_paydays():
     p = current_period(date(2026, 2, 8), [7, 22])
-    assert p.start == date(2026, 2, 6)
-    assert p.end == date(2026, 2, 19)
+    assert p.start == date(2026, 2, 7)
+    assert p.end == date(2026, 2, 20)
 
 
 def test_january_salary_can_move_into_previous_month():
@@ -45,16 +45,16 @@ def test_2027_new_year_holidays_move_january_salary_to_december(monkeypatch):
     monkeypatch.setattr("app.russian_calendar._remote_year", lambda year: "0" * 365)
     assert payday_on_or_before(date(2027, 1, 7)) == date(2026, 12, 30)
     period = current_period(date(2027, 1, 7), [7, 22])
-    assert period.start == date(2026, 12, 30)
-    assert period.end == date(2027, 1, 21)
+    assert period.start == date(2026, 12, 31)
+    assert period.end == date(2027, 1, 22)
 
 
 def test_2027_february_weekend_moves_salary_before_weekend(monkeypatch):
     monkeypatch.setattr("app.russian_calendar._remote_year", lambda year: "0" * 365)
     assert payday_on_or_before(date(2027, 2, 7)) == date(2027, 2, 5)
     period = current_period(date(2027, 2, 1), [7, 22])
-    assert period.start == date(2027, 1, 22)
-    assert period.end == date(2027, 2, 4)
+    assert period.start == date(2027, 1, 23)
+    assert period.end == date(2027, 2, 5)
 
 
 def test_reserve_for_future_deficit():
