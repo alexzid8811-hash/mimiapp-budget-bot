@@ -418,10 +418,12 @@ def cashflow_snapshot(user_id: int) -> dict:
     # Past scheduled income is only a forecast until the user records that it
     # was actually received. Otherwise an unpaid salary/vacation payment would
     # silently inflate the real balance carried from the starting capital.
-    # An override belongs to the period starting the day after a payday.
-    # Until that start date arrives it remains a future receipt; adding it on
-    # the payday would rewrite the closing, previous budget period.
-    confirmed_overrides = cashflow_income_overrides(user_id, start_date, today)
+    # Physically, an advance received today is already on the card today. It
+    # must therefore be included together with a bill paid today; only the
+    # daily allowance waits until tomorrow.
+    confirmed_overrides = cashflow_income_overrides(
+        user_id, start_date, today + timedelta(days=1)
+    )
     actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
     paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
     unpaid_mandatory_history = planned_mandatory_map(user_id, start_date, today)
@@ -485,8 +487,17 @@ def cashflow_snapshot(user_id: int) -> dict:
     # current period budget.  Otherwise the generic forecast would reserve
     # most of it for future periods and incorrectly increase the buffer.
     daily_income_period = daily_income_in_period(user_id, period_anchor, today)
+    # Keep today's received advance and today's paid mandatory bills outside
+    # the period whose daily allowance is ending. They form the cash flow of
+    # the next financial period, while that period's daily limit starts
+    # tomorrow. Without this separation a bill paid on payday appears to come
+    # out of the previous period's buffer.
+    next_period_start = today + timedelta(days=1)
+    payday_income = float(confirmed_overrides.get(next_period_start, 0.0))
+    payday_paid_bills = legacy.paid_mandatory_spent(user_id, today, today)
+    payday_net_cash = round(payday_income - payday_paid_bills, 2)
     anchor_opening = round(
-        available_cash + spent_period + transferred_period - daily_income_period,
+        available_cash - payday_net_cash + spent_period + transferred_period - daily_income_period,
         2,
     )
     anchor_horizon_end = add_months(period_anchor, months)
