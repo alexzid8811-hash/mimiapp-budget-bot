@@ -248,6 +248,25 @@ def mandatory_map(uid, start, end):
     return {day: amount(value) for day, value in totals.items()}
 
 
+def budget_period_mandatory_map(uid, start, end):
+    """Allocate payday bills to their new daily-budget period."""
+    if start > end:
+        return {}
+
+    from_day = start - timedelta(days=1)
+    next_start = end + timedelta(days=1)
+    boundaries = {item["date"] for item in payday_boundaries(uid, from_day, next_start)}
+    totals = {}
+    for event in bill_events(uid, from_day, end):
+        day = date.fromisoformat(event["due_date"])
+        if day == from_day and start not in boundaries:
+            continue
+        if day == end and next_start in boundaries:
+            continue
+        totals[day] = totals.get(day, 0) + cents(event["amount"])
+    return {day: amount(value) for day, value in sorted(totals.items())}
+
+
 def unpaid_mandatory_map(uid, start, end):
     """Planned obligations that have not already left the account.
 
