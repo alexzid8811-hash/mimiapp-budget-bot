@@ -18,6 +18,7 @@ from .auth import TelegramUser, current_user
 from .budget import current_period as current_period
 from .budget import dashboard_numbers, reserve_needed_for_future
 from .db import connect, ensure_user, init_db
+from .expenses import create_expense, invalidate_current_auto_reserve
 
 
 app = FastAPI(title="Telegram Budget Mini App", version="0.1.0")
@@ -229,16 +230,6 @@ def ensure_auto_reserve(user_id: int, as_of: date) -> dict:
     ) or {"amount": amount, "reason": reason}
 
 
-def invalidate_current_auto_reserve(user_id: int) -> None:
-    today = clock.today()
-    period = planning.user_period(user_id, today)
-    with connect() as con:
-        con.execute(
-            "DELETE FROM reserve_movements WHERE user_id=? AND source='auto' AND period_start>=?",
-            (user_id, period.start.isoformat()),
-        )
-
-
 @app.get("/api/bootstrap")
 def bootstrap(user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
@@ -322,6 +313,19 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
     uid = user_ready(user)
     if payload.tx_date > clock.today():
         raise HTTPException(422, "Дата операции не может быть в будущем")
+    if payload.type == "expense":
+        try:
+            transaction = create_expense(
+                uid,
+                payload.amount,
+                payload.category_id,
+                tx_date=payload.tx_date,
+                note=payload.note,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return one("SELECT * FROM transactions WHERE id=? AND user_id=?", (transaction["id"], uid)) or {}
+
     with connect() as con:
         require_category(con, uid, payload.category_id)
         cur = con.execute(
