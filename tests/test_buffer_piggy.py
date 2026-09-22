@@ -2,6 +2,7 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
+from app import clock
 from app.cashflow_app import app, cashflow_period_rows
 from app.db import connect, init_db
 
@@ -68,7 +69,7 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
             "/api/cashflow-settings",
             json={
                 "cashflow_enabled": True,
-                "start_date": date.today().isoformat(),
+                "start_date": clock.today().isoformat(),
                 "start_capital": 1000,
             },
         )
@@ -76,7 +77,7 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
 
         deposit = client.post(
             "/api/piggy-bank/deposit",
-            json={"amount": 300, "movement_date": date.today().isoformat(), "note": "Резерв"},
+            json={"amount": 300, "movement_date": clock.today().isoformat(), "note": "Резерв"},
         )
         assert deposit.status_code == 200
         assert deposit.json()["balance"] == 300
@@ -92,7 +93,7 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
             "/api/piggy-bank/deposit",
             json={
                 "amount": transfer_amount,
-                "movement_date": date.today().isoformat(),
+                "movement_date": clock.today().isoformat(),
                 "note": "Остаток дня",
                 "source": "daily_budget",
             },
@@ -102,13 +103,13 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
 
         too_much = client.post(
             "/api/piggy-bank/withdraw",
-            json={"amount": 301 + transfer_amount, "movement_date": date.today().isoformat(), "note": ""},
+            json={"amount": 301 + transfer_amount, "movement_date": clock.today().isoformat(), "note": ""},
         )
         assert too_much.status_code == 422
 
         withdrawn = client.post(
             "/api/piggy-bank/withdraw",
-            json={"amount": 100, "movement_date": date.today().isoformat(), "note": "Вернул"},
+            json={"amount": 100, "movement_date": clock.today().isoformat(), "note": "Вернул"},
         )
         assert withdrawn.status_code == 200
         assert withdrawn.json()["balance"] == round(300 + transfer_amount - 100, 2)
@@ -166,7 +167,7 @@ def test_piggy_transfer_to_card_increases_only_card_budget(tmp_path, monkeypatch
         )
         assert client.post(
             "/api/piggy-bank/deposit",
-            json={"amount": 300, "movement_date": date.today().isoformat(), "note": "Накопления"},
+            json={"amount": 300, "movement_date": clock.today().isoformat(), "note": "Накопления"},
         ).status_code == 200
         before = client.get("/api/cashflow").json()
 
@@ -174,7 +175,7 @@ def test_piggy_transfer_to_card_increases_only_card_budget(tmp_path, monkeypatch
             "/api/piggy-bank/withdraw",
             json={
                 "amount": 120,
-                "movement_date": date.today().isoformat(),
+                "movement_date": clock.today().isoformat(),
                 "note": "Покрытие перерасхода",
                 "source": "daily_budget",
             },
