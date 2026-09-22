@@ -34,11 +34,15 @@ def test_payday_bill_moves_to_following_daily_budget(monkeypatch):
     new_period = planning.budget_period_mandatory_map(
         1, daily_period_start, date(2026, 10, 6)
     )
+    closing_history = planned_mandatory_map(
+        1, date(2026, 9, 8), advance_day
+    )
     forecast = planned_mandatory_map(
         1, daily_period_start, date(2026, 10, 6)
     )
 
     assert advance_day not in old_period
+    assert advance_day not in closing_history
     assert new_period[advance_day] == 700
     assert forecast[daily_period_start] == 700
     assert forecast[date(2026, 9, 25)] == 300
