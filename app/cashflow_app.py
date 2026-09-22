@@ -366,7 +366,9 @@ def cashflow_period_rows(
                 "shortfall": round(max(0.0, -raw_after), 2),
             }
         )
-        buffer_before = raw_after
+        # A buffer is a protected account balance: it cannot be spent below
+        # zero. Any shortage stays visible in the shortfall value instead.
+        buffer_before = buffer_after
     return result
 
 def cashflow_snapshot(user_id: int) -> dict:
