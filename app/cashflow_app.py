@@ -253,6 +253,9 @@ def cashflow_period_rows(
     periods = cashflow_periods(user_id, today, horizon_end)
     income = planned_income_map(user_id, today + timedelta(days=1), horizon_end)
     mandatory = planned_mandatory_map(user_id, today + timedelta(days=1), horizon_end)
+    mandatory_reported = reported_mandatory_map(
+        user_id, today + timedelta(days=1), horizon_end
+    )
     overrides = income_overrides or {}
     daily_by_period = [round(daily_target, 2) for _ in periods]
     if periods and today_target is not None:
@@ -336,9 +339,19 @@ def cashflow_period_rows(
         received = round(
             (opening_balance_before_today_spend if index == 0 else 0.0) + effective_income, 2
         )
+        # Unpaid bills affect cash and the buffer. Paid bills are displayed
+        # too, but must never be subtracted a second time.
         bills = round(
             sum(value for day, value in mandatory.items() if period_start <= day <= period_end), 2
         )
+        reported_bills = round(
+            sum(
+                value for day, value in mandatory_reported.items()
+                if period_start <= day <= period_end
+            ),
+            2,
+        )
+        paid_bills = round(max(0.0, reported_bills - bills), 2)
         free = round(received - bills, 2)
         period_daily = daily_by_period[index]
         if index == 0 and today_target is None:
@@ -372,7 +385,9 @@ def cashflow_period_rows(
                 "income_overridden": overridden,
                 "received_editable": index > 0,
                 "days": days,
-                "mandatory": bills,
+                "mandatory": reported_bills,
+                "mandatory_unpaid": bills,
+                "mandatory_paid": paid_bills,
                 "free": free,
                 "daily": period_daily,
                 "put_aside": put_aside,
