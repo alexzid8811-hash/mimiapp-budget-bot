@@ -180,3 +180,26 @@ def test_piggy_transfer_to_card_increases_only_card_budget(tmp_path, monkeypatch
         assert after["piggy_bank_balance"] == 180
         assert after["current_cash"] == before["current_cash"] + 120
         assert after["buffer_balance"] == before["buffer_balance"]
+
+
+def test_buffer_table_starts_with_recorded_start_capital(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setenv("DEV_MODE", "true")
+    init_db()
+
+    with TestClient(app) as client:
+        client.put(
+            "/api/cashflow-settings",
+            json={
+                "cashflow_enabled": True,
+                "start_date": date.today().isoformat(),
+                "start_capital": 39000,
+            },
+        )
+        buffer = client.get("/api/buffer").json()
+
+    first = buffer["periods"][0]
+    assert first["initial_capital"] is True
+    assert first["kind"] == "Стартовый капитал"
+    assert first["received"] == 39000
+    assert first["received_editable"] is False
