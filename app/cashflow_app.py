@@ -366,12 +366,9 @@ def cashflow_snapshot(user_id: int) -> dict:
     # Past scheduled income is only a forecast until the user records that it
     # was actually received. Otherwise an unpaid salary/vacation payment would
     # silently inflate the real balance carried from the starting capital.
-    # An override belongs to a budget period that starts the day after the
-    # actual payday.  The cash is already on the account on the payday itself,
-    # even though it becomes available for daily spending only tomorrow.
     # An override belongs to the period starting the day after a payday.
-    # Until that start date arrives it must remain a future receipt: adding it
-    # on the payday would rewrite the closing, previous budget period.
+    # Until that start date arrives it remains a future receipt; adding it on
+    # the payday would rewrite the closing, previous budget period.
     confirmed_overrides = cashflow_income_overrides(user_id, start_date, today)
     actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
     paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
