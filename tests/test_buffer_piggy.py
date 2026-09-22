@@ -136,35 +136,3 @@ def test_daily_remainder_transfer_cannot_exceed_available_today(tmp_path, monkey
             },
         )
         assert response.status_code == 422
-
-
-def test_piggy_withdrawal_to_daily_budget_increases_card_cash(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
-    monkeypatch.setenv("DEV_MODE", "true")
-    init_db()
-
-    with TestClient(app) as client:
-        client.put(
-            "/api/cashflow-settings",
-            json={
-                "cashflow_enabled": True,
-                "start_date": date.today().isoformat(),
-                "start_capital": 100,
-            },
-        )
-        assert client.post(
-            "/api/piggy-bank/deposit",
-            json={"amount": 100, "movement_date": date.today().isoformat()},
-        ).status_code == 200
-
-        returned = client.post(
-            "/api/piggy-bank/withdraw",
-            json={
-                "amount": 40,
-                "movement_date": date.today().isoformat(),
-                "source": "daily_budget",
-            },
-        )
-        assert returned.status_code == 200
-        assert returned.json()["balance"] == 60
-        assert client.get("/api/cashflow").json()["current_cash"] == 140

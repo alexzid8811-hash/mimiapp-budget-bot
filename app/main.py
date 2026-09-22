@@ -18,7 +18,6 @@ from .auth import TelegramUser, current_user
 from .budget import current_period as current_period
 from .budget import dashboard_numbers, reserve_needed_for_future
 from .db import connect, ensure_user, init_db
-from .buffer_account import BufferAccountError, sync_income_destination
 
 
 app = FastAPI(title="Telegram Budget Mini App", version="0.1.0")
@@ -331,18 +330,6 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
              payload.note, payload.income_destination if payload.type == "income" else "daily"),
         )
         tx_id = cur.lastrowid
-        if payload.type == "income" and payload.income_destination == "buffer":
-            try:
-                sync_income_destination(
-                    con,
-                    uid,
-                    int(tx_id),
-                    new_amount=payload.amount,
-                    movement_date=payload.tx_date,
-                    note=payload.note,
-                )
-            except BufferAccountError as exc:
-                raise HTTPException(422, str(exc)) from exc
         if payload.type == "income" and payload.income_destination == "piggy":
             con.execute(
                 "INSERT INTO piggy_bank_movements"
@@ -365,23 +352,12 @@ def update_transaction(
     with connect() as con:
         require_category(con, uid, payload.category_id)
         current = con.execute(
-            "SELECT bill_rule_id,type,amount,income_destination FROM transactions WHERE id=? AND user_id=?",
-            (tx_id, uid),
+            "SELECT bill_rule_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
         ).fetchone()
         if current is None:
             raise HTTPException(404, "Операция не найдена")
         if current["bill_rule_id"] is not None:
             raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
-        previous_buffer_amount = (
-            float(current["amount"])
-            if current["type"] == "income" and current["income_destination"] == "buffer"
-            else 0.0
-        )
-        new_buffer_amount = (
-            payload.amount
-            if payload.type == "income" and payload.income_destination == "buffer"
-            else 0.0
-        )
         con.execute(
             "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=? "
             "WHERE id=? AND user_id=?",
@@ -390,19 +366,6 @@ def update_transaction(
                 payload.note, payload.income_destination if payload.type == "income" else "daily", tx_id, uid,
             ),
         )
-        if previous_buffer_amount or new_buffer_amount:
-            try:
-                sync_income_destination(
-                    con,
-                    uid,
-                    tx_id,
-                    previous_amount=previous_buffer_amount,
-                    new_amount=new_buffer_amount,
-                    movement_date=payload.tx_date,
-                    note=payload.note,
-                )
-            except BufferAccountError as exc:
-                raise HTTPException(422, str(exc)) from exc
         con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
         if payload.type == "income" and payload.income_destination == "piggy":
             con.execute(
@@ -422,27 +385,12 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            current = con.execute(
-                "SELECT type,amount,income_destination FROM transactions WHERE id=? AND user_id=?",
-                (tx_id, uid),
-            ).fetchone()
-            if current is None:
-                raise HTTPException(404, "Операция не найдена")
-            if current["type"] == "income" and current["income_destination"] == "buffer":
-                sync_income_destination(
-                    con,
-                    uid,
-                    tx_id,
-                    previous_amount=float(current["amount"]),
-                    new_amount=0.0,
-                    movement_date=clock.today(),
-                )
             con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
             cur = con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (tx_id, uid))
             if cur.rowcount == 0:
-                raise HTTPException(404, "Операция не найдена")
+                raise HTTPException(404, "Operation not found")
             check_piggy_history(con, uid)
-    except (ValueError, BufferAccountError) as exc:
+    except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     invalidate_current_auto_reserve(uid)
     return {"ok": True}

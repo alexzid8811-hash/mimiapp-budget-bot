@@ -222,42 +222,6 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
  assert.doesNotMatch(get('bufferPeriods').innerHTML,/−5.000,00/);
 });
 
-test('physical buffer is configured explicitly and transfers use dedicated endpoints', async () => {
- const {get,requests,responses}=setup();
- responses['/api/cashflow']={
-   enabled:true, buffer_is_physical:false, buffer_setup_required:true,
-   suggested_buffer_balance:29138.47, buffer_balance:28468.05,
-   available_today:100, periods:[], horizon_end:'2026-10-15'
- };
- await get('refreshBtn').listeners.click();
- assert.equal(get('bufferActualBalance').value,'');
- get('bufferActualBalance').value='29 138,47';
- get('bufferActualNote').value='сверка';
- await get('saveBufferActualBalanceBtn').listeners.click();
- const setupRequest=requests.find(row=>row.url==='/api/buffer/account-balance');
- assert.deepEqual(JSON.parse(setupRequest.body),{balance:29138.47,note:'сверка'});
-
- responses['/api/cashflow']={
-   enabled:true, buffer_is_physical:true, buffer_setup_required:false,
-   buffer_balance:29138.47, card_balance:2066.97, available_cash:1366.97,
-   available_today:1366.97, periods:[], horizon_end:'2026-10-15'
- };
- responses['/api/buffer']={...responses['/api/cashflow'],movements:[
-   {id:1,direction:'deposit',amount:29138.47,movement_date:'2026-09-22',note:'сверка',source:'adjustment'}
- ]};
- await get('refreshBtn').listeners.click();
- assert.match(get('bufferAccountBalance').textContent,/29[\s\u00a0]138,47/);
- assert.match(get('bufferCardBalance').textContent,/2[\s\u00a0]066,97/);
- assert.match(get('bufferMovements').innerHTML,/Уточнён фактический остаток/);
-
- get('bufferTransferToBtn').listeners.click();
- get('bufferTransferAmount').value='100';
- get('bufferTransferNote').value='в резерв';
- await get('bufferTransferForm').listeners.submit({preventDefault(){}});
- const transferRequest=requests.find(row=>row.url==='/api/buffer/transfer-to');
- assert.deepEqual(JSON.parse(transferRequest.body),{amount:100,note:'в резерв'});
-});
-
 test('future received amount can be edited and sent for budget recalculation', async () => {
  const {sandbox,get,requests,responses}=setup();
  responses['/api/cashflow'].periods=[

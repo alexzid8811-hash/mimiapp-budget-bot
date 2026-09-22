@@ -86,12 +86,9 @@
     setText("reserveBalance", formatMoney(flow.buffer_balance));
 
     const piggyBalance = Number(flow.piggy_bank_balance || 0);
-    // With a confirmed physical buffer this is the real card-account
-    // balance, including money already reserved for mandatory payments.  The
-    // old field remains as a compatibility fallback until the buffer is set.
-    setText("cardCash", formatMoney(
-      flow.buffer_is_physical ? flow.card_balance : flow.remaining_period
-    ));
+    // The physical card holds only the spending money for this period.
+    // Buffer and piggy-bank money are kept on a separate account.
+    setText("cardCash", formatMoney(flow.remaining_period));
     setText("cardBuffer", formatMoney(flow.buffer_balance));
     setText("cardPiggy", formatMoney(piggyBalance));
     setText("cardReservesTotal", formatMoney(Number(flow.buffer_balance || 0) + piggyBalance));
