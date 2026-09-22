@@ -68,13 +68,10 @@ def planned_income_map(
     )
 
 
-def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    """Unpaid bills on the date they affect a daily-budget calculation.
-
-    A bill due on the actual payday is paid from that salary or advance, but
-    daily spending begins the next day.  Move only such bills to that next
-    day; all other mandatory payments keep their due date.
-    """
+def mandatory_by_budget_date(
+    user_id: int, start: date, end: date, *, include_paid: bool
+) -> dict[date, float]:
+    """Mandatory bills grouped by the daily-budget date they belong to."""
     if start > end:
         return {}
 
@@ -87,13 +84,27 @@ def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, fl
     }
     totals: dict[date, int] = {}
     for event in planning.bill_events(user_id, start - timedelta(days=1), end):
-        if event.get("paid"):
+        if event.get("paid") and not include_paid:
             continue
         due_date = date.fromisoformat(event["due_date"])
-        budget_date = due_date + timedelta(days=1) if due_date + timedelta(days=1) in boundary_starts else due_date
+        budget_date = (
+            due_date + timedelta(days=1)
+            if due_date + timedelta(days=1) in boundary_starts
+            else due_date
+        )
         if start <= budget_date <= end:
             totals[budget_date] = totals.get(budget_date, 0) + cents(event["amount"])
     return {day: amount(value) for day, value in sorted(totals.items())}
+
+
+def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
+    """Only unpaid bills: these must still reduce future available cash."""
+    return mandatory_by_budget_date(user_id, start, end, include_paid=False)
+
+
+def reported_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
+    """All bills for period reporting, including payments already made."""
+    return mandatory_by_budget_date(user_id, start, end, include_paid=True)
 
 
 def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
