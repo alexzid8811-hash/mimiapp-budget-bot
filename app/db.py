@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS morning_reports (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     report_date TEXT NOT NULL,
     daily_amount REAL,
+    daily_limit REAL,
     sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(user_id, report_date)
 );
@@ -273,10 +274,17 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_morning_report_columns(con: sqlite3.Connection) -> None:
+    columns = {row[1] for row in con.execute("PRAGMA table_info(morning_reports)")}
+    if "daily_limit" not in columns:
+        con.execute("ALTER TABLE morning_reports ADD COLUMN daily_limit REAL")
+
+
 def init_db() -> None:
     with connect() as con:
         con.executescript(SCHEMA)
         _ensure_settings_columns(con)
+        _ensure_morning_report_columns(con)
         _ensure_payment_columns(con)
         category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
         if "sort_order" not in category_columns:
