@@ -81,19 +81,22 @@
       document.getElementById("bufferHead").innerHTML = "";
       return;
     }
-    const max = Math.max(0, ...periods.map(p => Number(p.buffer) || 0));
-    const commonDaily = periods.every(p => Number(p.daily) === Number(periods[0].daily));
-    setText("planDaily", commonDaily ? "В день везде " + formatMoney(periods[0].daily) : "Дневной лимит по периодам");
+    const calculationPeriods = periods.filter(p => !p.initial_capital);
+    const max = Math.max(0, ...calculationPeriods.map(p => Number(p.buffer) || 0));
+    const commonDaily = calculationPeriods.length && calculationPeriods.every(p => Number(p.daily) === Number(calculationPeriods[0].daily));
+    setText("planDaily", commonDaily ? "В день везде " + formatMoney(calculationPeriods[0].daily) : "Дневной лимит по периодам");
     chart.innerHTML = periods.map((p,i) => `<div class="bar ${i===0?"cur":p.buffer<max*.1?"low":""}" style="height:${max>0?Math.max(3,Math.max(0,Number(p.buffer))/max*100):3}%" title="${safe(formatDate(p.start)+" — "+formatDate(p.end)+": "+formatMoney(p.buffer))}"></div>`).join("");
-    const last = periods[periods.length-1];
+    const last = calculationPeriods[calculationPeriods.length-1] || periods[periods.length-1];
     setText("bufChartEnd", formatDate(last.end)+": "+formatMoney(last.buffer));
-    const worst = periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
+    const worst = calculationPeriods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
     if(worst.length) {
       const text = "Больше всего возьмёте из буфера в периоды "+worst.map(p=>formatDate(p.start)+" — "+formatDate(p.end)).join(" и ")+": "+formatMoney(worst.reduce((a,p)=>a+Number(p.take),0))+". К концу прогноза останется "+formatMoney(last.buffer)+".";
       warning.textContent=text;homeWarning.textContent=text;
       warning.classList.remove("hidden");homeWarning.classList.remove("hidden");
     }
-    const movement = p => p.take>0
+    const movement = p => p.initial_capital
+      ? ["zero","—","начало расчёта"]
+      : p.take>0
       ? ["neg",formatMoney(p.take),"из буфера"]
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"в буфер"]
@@ -101,11 +104,17 @@
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     cards.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
-      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div><div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      if (p.initial_capital) {
+        return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)}</div><div class="pc-kind">Стартовый капитал</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>Стартовый капитал</span><b>${formatMoney(p.received)}</b></div><div><span>Старт расчёта</span><b>${formatDate(p.start)}</b></div></div></article>`;
+      }
+      return `<article class="pc ${p.kind==="сейчас"?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${p.kind==="сейчас"?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div><div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","В день","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
+      if (p.initial_capital) {
+        return `<tr class="${i===0?"cur":""}"><td><strong>${formatDate(p.start)}</strong><br><small>Стартовый капитал</small></td><td class="num">—</td><td class="num"><b>${formatMoney(p.received)}</b></td><td class="num">—</td><td class="num"><b>${formatMoney(p.free)}</b></td><td class="num">—</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num">—</td></tr>`;
+      }
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),formatMoney(p.free),formatMoney(p.daily)];
       return `<tr class="${i===0?"cur":""}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
