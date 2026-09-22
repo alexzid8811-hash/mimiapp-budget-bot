@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from . import planning
 from .cashflow_app import cashflow_snapshot
 from .db import connect
+from .savings import check_piggy_history
 
 
 def _next_rule_due_date(day_of_month: int, today: date) -> date:
@@ -49,9 +50,56 @@ def _nearest_unpaid_bills(user_id: int, today: date) -> tuple[date | None, list[
     return nearest_date, [item for item in candidates if item["due_date"] == nearest_date]
 
 
+def build_morning_report(user_id: int, today: date) -> dict:
+    """Build the report and calculate yesterday's unspent daily allowance."""
+    yesterday = today - timedelta(days=1)
+    with connect() as con:
+        expenses = [dict(row) for row in con.execute(
+            "SELECT t.id,COALESCE(NULLIF(t.note,''),c.title,'Расход') AS title,t.amount "
+            "FROM transactions t LEFT JOIN categories c "
+            "ON c.id=t.category_id AND c.user_id=t.user_id "
+            "WHERE t.user_id=? AND t.type='expense' AND t.tx_date=? ORDER BY t.id",
+            (user_id, yesterday.isoformat()),
+        )]
+        previous = con.execute(
+            "SELECT daily_limit FROM morning_reports WHERE user_id=? "
+            "AND report_date<? AND daily_limit IS NOT NULL "
+            "ORDER BY report_date DESC LIMIT 1", (user_id, today.isoformat())
+        ).fetchone()
+        current = con.execute(
+            "SELECT decision FROM morning_reports WHERE user_id=? AND report_date=?",
+            (user_id, today.isoformat()),
+        ).fetchone()
+
+    flow = cashflow_snapshot(user_id)
+    period = planning.user_period(user_id, today)
+    nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
+    daily_amount = float(flow.get("available_today", 0))
+    daily_limit = float(flow.get("today_target", daily_amount))
+    yesterday_limit = 0.0 if previous is None else max(0.0, float(previous["daily_limit"]))
+    spent_total = round(sum(float(item["amount"]) for item in expenses), 2)
+    unused_amount = round(max(0.0, yesterday_limit - spent_total), 2)
+    decision = None if current is None else current["decision"]
+    return {
+        "user_id": user_id, "report_date": today, "yesterday": yesterday,
+        "expenses": expenses, "spent_total": spent_total,
+        "yesterday_limit": yesterday_limit, "unused_amount": unused_amount,
+        "decision": decision,
+        "period_days_left": (period.end - today).days + 1,
+        "period_remaining": float(flow.get("remaining_period", 0)),
+        "card_balance": round(float(flow.get("current_cash", 0)) - float(flow.get("buffer_balance", 0)), 2),
+        "daily_amount": daily_amount, "daily_limit": daily_limit,
+        "daily_change": None if previous is None else round(daily_limit - float(previous["daily_limit"]), 2),
+        "piggy_balance": float(flow.get("piggy_bank_balance", 0)),
+        "buffer_balance": float(flow.get("buffer_balance", 0)),
+        "nearest_due_date": nearest_date,
+        "nearest_days_left": None if nearest_date is None else (datetime.fromisoformat(nearest_date).date() - today).days,
+        "nearest_bills": nearest,
+    }
+
+
 def pending_morning_reports(now: datetime) -> list[dict]:
     today = now.date()
-    yesterday = today - timedelta(days=1)
     current_time = now.strftime("%H:%M")
     with connect() as con:
         settings = [dict(row) for row in con.execute(
@@ -66,53 +114,51 @@ def pending_morning_reports(now: datetime) -> list[dict]:
         user_id = setting["user_id"]
         if user_id in sent or current_time < setting["morning_report_time"]:
             continue
-        with connect() as con:
-            # Keep every operation separate. A grouped category can hide a
-            # transaction after its category was edited or reordered.
-            expenses = [dict(row) for row in con.execute(
-                "SELECT t.id,COALESCE(NULLIF(t.note,''),c.title,'Расход') AS title,t.amount "
-                "FROM transactions t LEFT JOIN categories c "
-                "ON c.id=t.category_id AND c.user_id=t.user_id "
-                "WHERE t.user_id=? AND t.type='expense' AND t.tx_date=? ORDER BY t.id",
-                (user_id, yesterday.isoformat()),
-            )]
-            previous = con.execute(
-                "SELECT daily_limit FROM morning_reports WHERE user_id=? "
-                "AND report_date<? AND daily_limit IS NOT NULL "
-                "ORDER BY report_date DESC LIMIT 1", (user_id, today.isoformat())
-            ).fetchone()
-
-        flow = cashflow_snapshot(user_id)
-        period = planning.user_period(user_id, today)
-        nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
-        daily_amount = float(flow.get("available_today", 0))
-        daily_limit = float(flow.get("today_target", daily_amount))
-        reports.append({
-            "user_id": user_id,
-            "report_date": today,
-            "yesterday": yesterday,
-            "expenses": expenses,
-            "spent_total": round(sum(float(item["amount"]) for item in expenses), 2),
-            "period_days_left": (period.end - today).days + 1,
-            "period_remaining": float(flow.get("remaining_period", 0)),
-            "card_balance": round(\n                float(flow.get("current_cash", 0)) - float(flow.get("buffer_balance", 0)), 2\n            ),
-            "daily_amount": daily_amount,
-            "daily_limit": daily_limit,
-            "daily_change": None if previous is None
-                else round(daily_limit - float(previous["daily_limit"]), 2),
-            "piggy_balance": float(flow.get("piggy_bank_balance", 0)),
-            "buffer_balance": float(flow.get("buffer_balance", 0)),
-            "nearest_due_date": nearest_date,
-            "nearest_days_left": None if nearest_date is None
-                else (datetime.fromisoformat(nearest_date).date() - today).days,
-            "nearest_bills": nearest,
-        })
+        reports.append(build_morning_report(user_id, today))
     return reports
 
-
 def record_morning_report(report: dict) -> None:
+    decision = report.get("decision")
+    if report.get("unused_amount", 0) <= 0 and decision is None:
+        decision = "none"
     with connect() as con:
         con.execute(
-            "INSERT OR IGNORE INTO morning_reports(user_id,report_date,daily_amount,daily_limit) VALUES(?,?,?,?)",
-            (report["user_id"], report["report_date"].isoformat(), report["daily_amount"], report["daily_limit"]),
+            "INSERT OR IGNORE INTO morning_reports"
+            "(user_id,report_date,daily_amount,daily_limit,remainder_amount,decision) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                report["user_id"], report["report_date"].isoformat(),
+                report["daily_amount"], report["daily_limit"],
+                report.get("unused_amount", 0), decision,
+            ),
         )
+
+
+def resolve_morning_report(user_id: int, report_date: date, decision: str) -> bool:
+    """Apply a user's remainder choice exactly once."""
+    if decision not in {"piggy", "daily"}:
+        raise ValueError("Неизвестный вариант распределения остатка")
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute(
+            "SELECT remainder_amount,decision FROM morning_reports "
+            "WHERE user_id=? AND report_date=?",
+            (user_id, report_date.isoformat()),
+        ).fetchone()
+        if row is None or row["decision"] is not None:
+            return False
+        remainder = max(0.0, float(row["remainder_amount"] or 0))
+        if decision == "piggy" and remainder > 0:
+            con.execute(
+                "INSERT INTO piggy_bank_movements"
+                "(user_id,direction,amount,movement_date,note,source) "
+                "VALUES(?, 'deposit', ?, ?, ?, 'daily_budget')",
+                (user_id, remainder, (report_date - timedelta(days=1)).isoformat(),
+                 "Неиспользованный остаток дня"),
+            )
+            check_piggy_history(con, user_id)
+        con.execute(
+            "UPDATE morning_reports SET decision=? WHERE user_id=? AND report_date=?",
+            (decision, user_id, report_date.isoformat()),
+        )
+    return True
