@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260919-settings-align" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260922-physical-buffer" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -41,7 +41,7 @@
           <div class="strip-legend"><span id="periodStartLabel">—</span><span class="pay" id="periodEndLabel">—</span></div>
           <span id="dayProgress" hidden></span>
           <div class="stats" aria-label="Деньги на карте и резервы">
-            <div class="stat"><span>Сумма на карте</span><small>Деньги на дни периода</small><strong id="cardCash">—</strong></div>
+            <div class="stat"><span>Сумма на карте</span><small>Включая обязательные платежи</small><strong id="cardCash">—</strong></div>
             <div class="stat"><span>Итого</span><small>Буфер + копилка</small><strong id="cardReservesTotal">—</strong></div>
             <div class="stat"><span>Копилка</span><strong id="cardPiggy">—</strong></div>
             <div class="stat"><span>Буфер сейчас</span><strong id="cardBuffer">—</strong></div>
@@ -70,18 +70,32 @@
 
 
       <section class="page" data-page="buffer"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button></div>
-        <p class="muted buffer-intro">Приложение откладывает деньги из периодов с большими выплатами для будущих обязательных платежей и периодов с меньшими выплатами. Деньги остаются на вашем счёте.</p>
+        <p class="muted buffer-intro" id="bufferIntro">Буфер — отдельный счёт. Обычные траты не меняют его остаток: он изменяется только после явного перевода с карты, возврата на карту или дохода, направленного в буфер.</p>
         <div id="bufferDisabled" class="warning hidden">Включите безопасный дневной лимит в настройках.</div>
+        <div id="bufferSetupCard" class="card hidden">
+          <h3>Укажите фактический остаток буфера</h3>
+          <p class="muted" id="bufferSetupHint">Введите сумму, которая действительно лежит на отдельном счёте. Прогноз ниже не будет менять её автоматически.</p>
+          <label>Фактический остаток<input id="bufferActualBalance" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+          <label>Комментарий<input id="bufferActualNote" maxlength="160" placeholder="Например, остаток на накопительном счёте" /></label>
+          <button class="primary wide" id="saveBufferActualBalanceBtn" type="button">Сохранить фактический остаток</button>
+        </div>
+        <div id="bufferAccountCard" class="card hidden">
+          <div class="section-head"><div><span class="muted">Фактический буфер</span><strong class="piggy-balance" id="bufferAccountBalance">—</strong></div><button class="secondary" id="bufferCorrectBtn" type="button">Уточнить</button></div>
+          <div class="grid2 buffer-account-stats"><div><span class="muted">На карте сейчас</span><strong id="bufferCardBalance">—</strong></div><div><span class="muted">Свободно на карте</span><strong id="bufferCardAvailable">—</strong></div></div>
+          <p class="muted">Переводы между картой и буфером не меняют общую сумму денег, но меняют доступный дневной бюджет.</p>
+          <div class="buffer-actions"><button class="primary" id="bufferTransferToBtn" type="button">Перевести с карты</button><button class="secondary" id="bufferTransferFromBtn" type="button">Вернуть на карту</button></div>
+        </div>
+        <div id="bufferMovementCard" class="card hidden"><h3>История буфера</h3><div id="bufferMovements" class="list"></div></div>
         <div class="grid2 buffer-summary">
-          <div class="card"><span class="muted">В буфере сейчас</span><strong class="summary-number" id="bufferPageBalance">—</strong></div>
+          <div class="card"><span class="muted" id="bufferPageBalanceTitle">В буфере сейчас</span><strong class="summary-number" id="bufferPageBalance">—</strong></div>
           <div class="card"><span class="muted">Прогноз до</span><strong class="summary-number" id="bufferHorizon">—</strong></div>
         </div>
-        <div class="muted">Можно сегодня: <strong id="bufferPageDaily">—</strong></div>
+        <div class="muted">Можно сегодня с карты: <strong id="bufferPageDaily">—</strong></div>
         <div id="bufferShortfall" class="warning hidden"></div>
         <div class="card">
-          <div class="section-head"><h3>План по периодам</h3><span class="muted" id="planDaily">—</span></div>
+          <div class="section-head"><h3 id="bufferPlanTitle">План по периодам</h3><span class="muted" id="planDaily">—</span></div>
           <div class="buf-chart" id="bufChart" role="img" aria-label="Остаток буфера по периодам"></div>
-          <div class="buf-chart-legend"><span>Остаток буфера</span><span id="bufChartEnd">—</span></div>
+          <div class="buf-chart-legend"><span id="bufChartLabel">Остаток буфера</span><span id="bufChartEnd">—</span></div>
           <div class="warning hidden" id="bufWarn"></div>
           <div class="plan-cards" id="planCards"></div>
           <div class="plan-table-wrap"><table class="plan-table"><thead id="bufferHead"></thead><tbody id="bufferPeriods"></tbody></table></div>
@@ -210,7 +224,7 @@
           <option value="piggy">В копилку</option>
         </select>
       </label>
-      <p class="muted">Ежедневные траты увеличат лимит на день; буфер — остатки в резерве; копилка — только баланс копилки.</p>
+      <p class="muted">Деньги на карте увеличат дневной лимит; доход в буфер сразу пополнит отдельный счёт; копилка ведётся отдельно.</p>
       <label>Комментарий<input id="incomeTxNote" maxlength="200" placeholder="Премия, возврат..." /></label>
       <button class="primary big" value="default" id="saveIncomeTxBtn">Записать доход</button>
     </form>
@@ -278,6 +292,26 @@
     </form>
   </dialog>
 
+  <dialog id="bufferTransferDialog">
+    <form method="dialog" id="bufferTransferForm" class="dialog-card">
+      <div class="section-head"><h2 id="bufferTransferDialogTitle">Перевод в буфер</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <input id="bufferTransferDirection" type="hidden" value="deposit" />
+      <label>Сумма<input id="bufferTransferAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label>Комментарий<input id="bufferTransferNote" maxlength="160" placeholder="Необязательно" /></label>
+      <button class="primary big" value="default" id="saveBufferTransferBtn">Перевести</button>
+    </form>
+  </dialog>
+
+  <dialog id="bufferBalanceDialog">
+    <form method="dialog" id="bufferBalanceForm" class="dialog-card">
+      <div class="section-head"><h2>Уточнить остаток буфера</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <p class="muted">Используйте, если фактическая сумма на отдельном счёте отличается от сохранённой.</p>
+      <label>Фактический остаток<input id="bufferCorrectionBalance" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label>Комментарий<input id="bufferCorrectionNote" maxlength="160" placeholder="Например, сверка со счётом" /></label>
+      <button class="primary big" value="default">Сохранить остаток</button>
+    </form>
+  </dialog>
+
   <dialog id="cashflowIncomeDialog">
     <form method="dialog" id="cashflowIncomeForm" class="dialog-card">
       <div class="section-head"><h2>Фактическая сумма выплаты</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
@@ -310,8 +344,8 @@
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
   <script src="/static/app.js?v=20260922-payroll-schedule"></script>
-  <script src="/static/cashflow-ui.js?v=20260922-readable-errors"></script>
-  <script src="/static/buffer-ui.js?v=20260917-piggy-separate"></script>
+  <script src="/static/cashflow-ui.js?v=20260922-physical-buffer"></script>
+  <script src="/static/buffer-ui.js?v=20260922-physical-buffer"></script>
   <script src="/static/design-ui.js?v=20260918-today-breakdown"></script>
   <script src="/static/backup.js?v=20260917-full-design"></script>
 </body>

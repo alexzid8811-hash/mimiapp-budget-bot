@@ -49,22 +49,74 @@
     return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.start}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
   }
 
+  function setHidden(id, hidden) {
+    document.getElementById(id)?.classList.toggle("hidden", hidden);
+  }
+
+  function renderBufferMovements(data) {
+    const list = document.getElementById("bufferMovements");
+    if (!list) return;
+    const movements = data.movements || [];
+    if (!movements.length) {
+      list.innerHTML = '<div class="empty">После настройки здесь появятся переводы и доходы, направленные в буфер.</div>';
+      return;
+    }
+    list.innerHTML = movements.map(item => {
+      const deposit = item.direction === "deposit";
+      const title = item.source === "income"
+        ? "Доход направлен в буфер"
+        : item.source === "adjustment"
+          ? "Уточнён фактический остаток"
+          : deposit ? "Перевод с карты в буфер" : "Перевод из буфера на карту";
+      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div></div>`;
+    }).join("");
+  }
+
   function renderBuffer() {
     const data = bufferState.buffer;
     if (!data) return;
+    const physical = data.buffer_is_physical === true;
+    const needsSetup = data.buffer_setup_required === true;
     const disabled = document.getElementById("bufferDisabled");
     disabled?.classList.toggle("hidden", Boolean(data.enabled));
+    setHidden("bufferSetupCard", !(data.enabled && needsSetup));
+    setHidden("bufferAccountCard", !(data.enabled && physical));
+    setHidden("bufferMovementCard", !(data.enabled && physical));
+    setText("bufferIntro", physical
+      ? "Буфер — отдельный счёт. Обычные траты не меняют его остаток: он изменяется только после явного перевода с карты, возврата на карту или дохода, направленного в буфер."
+      : needsSetup
+        ? "Сейчас показан старый расчётный буфер. Укажите фактический остаток отдельного счёта, чтобы обычные траты больше не меняли эту сумму."
+        : "Приложение откладывает деньги из периодов с большими выплатами для будущих обязательных платежей и периодов с меньшими выплатами. Деньги остаются на вашем счёте.");
+    setText("bufferPageBalanceTitle", physical ? "В буфере (факт)" : needsSetup ? "Расчётный буфер" : "В буфере сейчас");
+    setText("bufferPlanTitle", physical ? "Прогноз по карте и обязательным платежам" : "План по периодам");
+    setText("bufChartLabel", physical ? "Остаток буфера (факт)" : "Остаток буфера");
     setText("bufferHorizon", data.enabled ? `до ${formatDate(data.horizon_end)}` : "выключен");
     setText("bufferPageBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
+
+    if (needsSetup && data.enabled) {
+      setText("bufferSetupHint", `Прогноз ранее показывал ${formatMoney(data.suggested_buffer_balance)}. Введите реальную сумму на отдельном счёте — она не будет меняться от обычных трат.`);
+    }
+    if (physical && data.enabled) {
+      setText("bufferAccountBalance", formatMoney(data.buffer_balance));
+      setText("bufferCardBalance", formatMoney(data.card_balance));
+      setText("bufferCardAvailable", formatMoney(data.available_cash));
+      const to = document.getElementById("bufferTransferToBtn");
+      const from = document.getElementById("bufferTransferFromBtn");
+      if (to) to.disabled = Number(data.available_cash || 0) <= 0;
+      if (from) from.disabled = Number(data.buffer_balance || 0) <= 0;
+      renderBufferMovements(data);
+    }
+
     const shortfall = document.getElementById("bufferShortfall");
     if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
-      shortfall.textContent = `Даже без повседневных трат не хватает ${formatMoney(data.capital_shortfall)}. Увеличьте стартовый капитал или скорректируйте обязательные платежи.`;
+      shortfall.textContent = physical
+        ? `На карте не хватает ${formatMoney(data.capital_shortfall)} даже без повседневных трат. При необходимости верните эту сумму из буфера вручную.`
+        : `Даже без повседневных трат не хватает ${formatMoney(data.capital_shortfall)}. Увеличьте стартовый капитал или скорректируйте обязательные платежи.`;
       shortfall.classList.remove("hidden");
     } else {
       shortfall.classList.add("hidden");
     }
-
 
     const body = document.getElementById("bufferPeriods");
     const cards = document.getElementById("planCards");
@@ -87,7 +139,7 @@
     chart.innerHTML = periods.map((p,i) => `<div class="bar ${i===0?"cur":p.buffer<max*.1?"low":""}" style="height:${max>0?Math.max(3,Math.max(0,Number(p.buffer))/max*100):3}%" title="${safe(formatDate(p.start)+" — "+formatDate(p.end)+": "+formatMoney(p.buffer))}"></div>`).join("");
     const last = periods[periods.length-1];
     setText("bufChartEnd", formatDate(last.end)+": "+formatMoney(last.buffer));
-    const worst = periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
+    const worst = physical ? [] : periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
     if(worst.length) {
       const text = "Больше всего возьмёте из буфера в периоды "+worst.map(p=>formatDate(p.start)+" — "+formatDate(p.end)).join(" и ")+": "+formatMoney(worst.reduce((a,p)=>a+Number(p.take),0))+". К концу прогноза останется "+formatMoney(last.buffer)+".";
       warning.textContent=text;homeWarning.textContent=text;
@@ -97,13 +149,14 @@
       ? ["neg",formatMoney(p.take),"из буфера"]
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"в буфер"]
-        : ["zero","—","без движения"];
+        : ["zero","—",physical ? "без автоперевода" : "без движения"];
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     cards.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
-      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div><div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div><div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>${physical ? "Буфер (факт)" : "Остаток буфера"}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
-    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","В день","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
+    const movementTitle = physical ? "Автоперевод" : "Движение буфера";
+    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","В день",movementTitle,physical ? "Буфер (факт)" : "Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
@@ -152,6 +205,85 @@
     }
   });
 
+  function moneyInput(id) {
+    const raw = document.getElementById(id)?.value || "0";
+    return window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(raw) : Number(raw);
+  }
+
+  async function saveActualBufferBalance(balanceId, noteId, dialogId = null) {
+    const balance = moneyInput(balanceId);
+    if (!Number.isFinite(balance) || balance < 0) {
+      if (typeof toast === "function") toast("Введите корректную сумму");
+      return;
+    }
+    try {
+      await request("/api/buffer/account-balance", {
+        method: "PUT",
+        body: JSON.stringify({ balance, note: document.getElementById(noteId)?.value || "" }),
+      });
+      if (dialogId) document.getElementById(dialogId)?.close();
+      if (typeof toast === "function") toast("Фактический остаток буфера сохранён");
+      await loadAll();
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  }
+
+  document.getElementById("saveBufferActualBalanceBtn")?.addEventListener("click", () =>
+    saveActualBufferBalance("bufferActualBalance", "bufferActualNote")
+  );
+
+  document.getElementById("bufferCorrectBtn")?.addEventListener("click", () => {
+    const data = bufferState.buffer;
+    if (!data?.buffer_is_physical) return;
+    document.getElementById("bufferCorrectionBalance").value = Number(data.buffer_balance || 0).toFixed(2);
+    document.getElementById("bufferCorrectionNote").value = "";
+    document.getElementById("bufferBalanceDialog")?.showModal();
+  });
+
+  document.getElementById("bufferBalanceForm")?.addEventListener("submit", event => {
+    event.preventDefault();
+    saveActualBufferBalance("bufferCorrectionBalance", "bufferCorrectionNote", "bufferBalanceDialog");
+  });
+
+  function openBufferTransfer(direction) {
+    const data = bufferState.buffer;
+    if (!data?.buffer_is_physical) return;
+    document.getElementById("bufferTransferDirection").value = direction;
+    document.getElementById("bufferTransferDialogTitle").textContent =
+      direction === "deposit" ? "Перевести с карты в буфер" : "Вернуть из буфера на карту";
+    document.getElementById("saveBufferTransferBtn").textContent =
+      direction === "deposit" ? "Перевести в буфер" : "Вернуть на карту";
+    document.getElementById("bufferTransferAmount").value = "";
+    document.getElementById("bufferTransferNote").value = "";
+    document.getElementById("bufferTransferDialog")?.showModal();
+  }
+
+  document.getElementById("bufferTransferToBtn")?.addEventListener("click", () => openBufferTransfer("deposit"));
+  document.getElementById("bufferTransferFromBtn")?.addEventListener("click", () => openBufferTransfer("withdraw"));
+  document.getElementById("bufferTransferForm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const direction = document.getElementById("bufferTransferDirection").value;
+    const amount = moneyInput("bufferTransferAmount");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      if (typeof toast === "function") toast("Введите сумму больше нуля");
+      return;
+    }
+    try {
+      await request(`/api/buffer/${direction === "deposit" ? "transfer-to" : "transfer-from"}`, {
+        method: "POST",
+        body: JSON.stringify({ amount, note: document.getElementById("bufferTransferNote").value || "" }),
+      });
+      document.getElementById("bufferTransferDialog")?.close();
+      if (typeof toast === "function") {
+        toast(direction === "deposit" ? "Деньги переведены в буфер" : "Деньги возвращены на карту");
+      }
+      await loadAll();
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  });
+
   function renderPiggy() {
     const piggy = bufferState.piggy || { balance: 0, movements: [] };
     setText("piggyBalance", formatMoney(piggy.balance));
@@ -172,7 +304,11 @@
   async function refresh(flow) {
     try {
       const [buffer, piggy] = await Promise.all([
-        flow ? Promise.resolve(flow) : request("/api/buffer"), request("/api/piggy-bank"),
+        // The home screen already has the cash-flow snapshot.  A physical
+        // buffer additionally needs its audit history, which is returned by
+        // the dedicated endpoint.
+        flow && flow.buffer_is_physical !== true ? Promise.resolve(flow) : request("/api/buffer"),
+        request("/api/piggy-bank"),
       ]);
       bufferState = { buffer, piggy };
       renderBuffer();

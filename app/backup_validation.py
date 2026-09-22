@@ -27,6 +27,7 @@ class Settings(Payroll):
     cashflow_enabled: bool = False
     cashflow_start_date: date | None = None
     cashflow_start_capital: float | None = Field(default=None, ge=0)
+    buffer_account_balance: float | None = Field(default=None, ge=0)
 
     @model_validator(mode='after')
     def valid_start(self):
@@ -122,6 +123,21 @@ class Piggy(Record):
         return self
 
 
+class BufferAccountMovement(Record):
+    direction: Literal['deposit', 'withdraw']
+    amount: float = Field(gt=0)
+    movement_date: date
+    note: str = Field(default='', max_length=160)
+    source: Literal['card_transfer', 'income', 'adjustment'] = 'card_transfer'
+    income_transaction_id: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode='after')
+    def not_future(self):
+        if self.movement_date > clock.today():
+            raise ValueError('Дата операции буфера в будущем')
+        return self
+
+
 class CashflowIncomeOverride(Record):
     period_start: date
     amount: float = Field(ge=0)
@@ -143,11 +159,11 @@ class History(APIModel):
 MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'transactions': Transaction, 'vacations': Vacation, 'reserve_movements': Reserve,
           'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
-          'plan_history': History}
+          'buffer_account_movements': BufferAccountMovement, 'plan_history': History}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7, 8):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -157,6 +173,8 @@ def validate_backup(payload):
     data = {'settings': Settings.model_validate(source['settings']).model_dump(mode='json')}
     for table, model in MODELS.items():
         optional_legacy_tables = {'cashflow_income_overrides'}
+        if payload['backup_version'] <= 7:
+            optional_legacy_tables.add('buffer_account_movements')
         if payload['backup_version'] == 1:
             optional_legacy_tables.update({'piggy_bank_movements', 'plan_history'})
         records = source.get(table, [] if table in optional_legacy_tables else None)
@@ -192,6 +210,21 @@ def validate_backup(payload):
         if payment_id in linked_payments:
             raise ValueError('Повторяющаяся связь остатка платежа с копилкой')
         linked_payments.add(payment_id)
+    linked_buffer_income = set()
+    for row in data['buffer_account_movements']:
+        income_id = row.get('income_transaction_id')
+        if income_id is None:
+            continue
+        income = transaction_by_id.get(income_id)
+        if (
+            income is None
+            or income['type'] != 'income'
+            or income.get('income_destination', 'daily') != 'buffer'
+        ):
+            raise ValueError('Не найден доход, направленный в буфер')
+        if income_id in linked_buffer_income:
+            raise ValueError('Повторяющаяся связь дохода с буфером')
+        linked_buffer_income.add(income_id)
     dates = set()
     for row in data['plan_history']:
         effective = row['effective_date']

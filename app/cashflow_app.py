@@ -14,6 +14,12 @@ from .auth import TelegramUser, current_user
 from .budget import add_months
 from .cashflow import calculate_cashflow_plan
 from .money import amount, cents
+from .buffer_account import (
+    BufferAccountError,
+    movements_for_user,
+    set_actual_balance,
+    transfer as transfer_buffer,
+)
 
 
 app = base.app
@@ -37,9 +43,20 @@ class CashflowIncomeOverrideIn(APIModel):
     amount: float = Field(ge=0)
 
 
+class BufferActualBalanceIn(APIModel):
+    balance: float = Field(ge=0)
+    note: str = Field(default="", max_length=160)
+
+
+class BufferTransferIn(APIModel):
+    amount: float = Field(gt=0)
+    note: str = Field(default="", max_length=160)
+
+
 def cashflow_settings(user_id: int) -> dict:
     data = legacy.one(
-        "SELECT cashflow_enabled,cashflow_start_date,cashflow_start_capital,forecast_months "
+        "SELECT cashflow_enabled,cashflow_start_date,cashflow_start_capital,"
+        "buffer_account_balance,forecast_months "
         "FROM settings WHERE user_id=?",
         (user_id,),
     ) or {}
@@ -47,6 +64,11 @@ def cashflow_settings(user_id: int) -> dict:
         "cashflow_enabled": int(data.get("cashflow_enabled") or 0),
         "start_date": data.get("cashflow_start_date") or clock.today().isoformat(),
         "start_capital": float(data.get("cashflow_start_capital") or 0),
+        "buffer_account_balance": (
+            float(data["buffer_account_balance"])
+            if data.get("buffer_account_balance") is not None
+            else None
+        ),
         "forecast_months": int(data.get("forecast_months") or 4),
     }
 
@@ -130,8 +152,8 @@ def cashflow_income_overrides(user_id: int, start: date, end: date) -> dict[date
 
 
 
-def manual_buffer_income(user_id: int, start: date, end: date) -> float:
-    """Income deliberately routed to the buffer, not to the daily card budget."""
+def buffer_directed_income(user_id: int, start: date, end: date) -> float:
+    """Actual income explicitly sent to the buffer account."""
     row = legacy.one(
         "SELECT COALESCE(SUM(amount),0) AS total FROM transactions "
         "WHERE user_id=? AND type='income' AND COALESCE(income_destination,'daily')='buffer' "
@@ -372,7 +394,18 @@ def cashflow_snapshot(user_id: int) -> dict:
     confirmed_overrides = cashflow_income_overrides(
         user_id, start_date, today
     )
-    actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
+    # A buffer-directed income is still part of the user's total cash.  It
+    # was intentionally excluded from the old virtual-buffer calculation,
+    # where it was added to the forecast later.  Once the buffer is a real
+    # account, include it in total cash immediately and keep it out of the
+    # card balance below.
+    buffer_income_history = buffer_directed_income(user_id, start_date, today)
+    buffer_is_physical = settings["buffer_account_balance"] is not None
+    actual_income_history = (
+        legacy.actual_income(user_id, start_date, today)
+        + sum(confirmed_overrides.values())
+        + (buffer_income_history if buffer_is_physical else 0.0)
+    )
     paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
     unpaid_mandatory_history = planned_mandatory_map(user_id, start_date, today)
     spent_history = legacy.discretionary_spent(user_id, start_date, today)
@@ -383,7 +416,22 @@ def cashflow_snapshot(user_id: int) -> dict:
         2,
     )
     reserved_mandatory = round(sum(unpaid_mandatory_history.values()), 2)
-    available_cash = round(current_cash - reserved_mandatory, 2)
+    physical_buffer_balance = (
+        round(float(settings["buffer_account_balance"]), 2)
+        if buffer_is_physical
+        else None
+    )
+    # ``current_cash`` is the total in the card and buffer accounts.  Only
+    # money that is physically on the card may be used by the daily forecast.
+    # This is the key distinction that prevents a newly entered expense from
+    # silently changing the buffer account.
+    card_balance = round(
+        current_cash - physical_buffer_balance
+        if physical_buffer_balance is not None
+        else current_cash,
+        2,
+    )
+    available_cash = round(card_balance - reserved_mandatory, 2)
     spent_today = legacy.discretionary_spent(user_id, today, today)
     opening_before_today_spend = round(available_cash + spent_today, 2)
 
@@ -491,8 +539,17 @@ def cashflow_snapshot(user_id: int) -> dict:
 
     if plan.capital_shortfall > 0:
         reason = (
-            f"Даже без повседневных трат не хватает {plan.capital_shortfall:.2f}. "
-            "Нужно увеличить стартовый капитал или уменьшить обязательные платежи."
+            f"На карте не хватает {plan.capital_shortfall:.2f} даже без повседневных трат. "
+            + (
+                "При необходимости переведите деньги из буфера вручную."
+                if buffer_is_physical
+                else "Нужно увеличить стартовый капитал или уменьшить обязательные платежи."
+            )
+        )
+    elif buffer_is_physical:
+        reason = (
+            "Буфер — отдельный счёт. Обычные траты меняют только остаток на карте; "
+            "буфер изменится лишь после явного перевода или дохода, направленного в него."
         )
     else:
         reason = (
@@ -520,24 +577,40 @@ def cashflow_snapshot(user_id: int) -> dict:
     # moved to the buffer account.  The first period row already reserves the
     # daily budget for every remaining day of the current period and excludes
     # piggy-bank movements.
-    buffer_balance_now = round(max(0.0, available_cash - remaining_period), 2)
-    if periods:
-        # The current-period row must use the same carried limit and protected
-        # buffer as the home screen.  Future rows remain forecast values.
-        periods[0]["daily"] = carried_daily
-        periods[0]["buffer"] = buffer_balance_now
-        periods[0]["put_aside"] = buffer_balance_now
-        periods[0]["take"] = 0.0
-
-    # Income explicitly sent to the buffer is kept out of the card's daily
-    # allowance and is added to every reserve balance in the current forecast.
-    manual_buffer = manual_buffer_income(user_id, start_date, today)
-    if manual_buffer:
-        buffer_balance_now = round(buffer_balance_now + manual_buffer, 2)
+    suggested_buffer_balance = round(max(0.0, available_cash - remaining_period), 2)
+    if buffer_is_physical:
+        # The forecast is allowed to advise whether the card will need money,
+        # but it must never manufacture a transfer to/from the real buffer.
+        # Keep every row at the confirmed bank-account balance and expose zero
+        # automatic movements.
+        buffer_balance_now = float(physical_buffer_balance)
         for row in periods:
-            row["buffer"] = round(row["buffer"] + manual_buffer, 2)
+            row["buffer"] = buffer_balance_now
+            row["put_aside"] = 0.0
+            row["take"] = 0.0
+    else:
+        buffer_balance_now = suggested_buffer_balance
         if periods:
-            periods[0]["put_aside"] = round(periods[0]["put_aside"] + manual_buffer, 2)
+            # The current-period row must use the same carried limit and
+            # protected virtual buffer as the home screen. Future rows remain
+            # forecast values for users who have not confirmed a real account.
+            periods[0]["daily"] = carried_daily
+            periods[0]["buffer"] = buffer_balance_now
+            periods[0]["put_aside"] = buffer_balance_now
+            periods[0]["take"] = 0.0
+
+        # Preserve the old display until the owner enters a real account
+        # balance.  It makes the upgrade non-destructive and gives a useful
+        # pre-filled suggestion in the new setup card.
+        if buffer_income_history:
+            buffer_balance_now = round(buffer_balance_now + buffer_income_history, 2)
+            suggested_buffer_balance = buffer_balance_now
+            for row in periods:
+                row["buffer"] = round(row["buffer"] + buffer_income_history, 2)
+            if periods:
+                periods[0]["put_aside"] = round(
+                    periods[0]["put_aside"] + buffer_income_history, 2
+                )
 
     return {
         "enabled": True,
@@ -545,6 +618,14 @@ def cashflow_snapshot(user_id: int) -> dict:
         "today": today.isoformat(),
         "horizon_end": horizon_end.isoformat(),
         "current_cash": current_cash,
+        # Always expose a total suitable for validating the first physical
+        # balance.  Legacy mode used to keep routed buffer income outside
+        # ``current_cash`` for compatibility, so add it back here only there.
+        "total_cash": round(
+            current_cash if buffer_is_physical else current_cash + buffer_income_history,
+            2,
+        ),
+        "card_balance": card_balance,
         "available_cash": available_cash,
         "reserved_mandatory": reserved_mandatory,
         "mandatory_period": mandatory_period,
@@ -553,6 +634,9 @@ def cashflow_snapshot(user_id: int) -> dict:
         "today_target": carried_daily,
         "available_today": carried_available_today,
         "buffer_balance": buffer_balance_now,
+        "buffer_is_physical": buffer_is_physical,
+        "buffer_setup_required": not buffer_is_physical,
+        "suggested_buffer_balance": suggested_buffer_balance,
         "capital_shortfall": plan.capital_shortfall,
         "period_budget": period_budget,
         "remaining_period": remaining_period,
@@ -599,7 +683,12 @@ def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
     snapshot = cashflow_snapshot(uid)
     if not snapshot.get("enabled"):
-        return {"enabled": False, "settings": snapshot["settings"], "periods": []}
+        return {
+            "enabled": False,
+            "settings": snapshot["settings"],
+            "periods": [],
+            "movements": [],
+        }
     return {
         "enabled": True,
         "settings": snapshot["settings"],
@@ -607,10 +696,106 @@ def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
         "horizon_end": snapshot["horizon_end"],
         "daily_target": snapshot["daily_target"],
         "available_today": snapshot["available_today"],
+        "available_cash": snapshot["available_cash"],
+        "card_balance": snapshot["card_balance"],
+        "reserved_mandatory": snapshot["reserved_mandatory"],
+        "total_cash": snapshot["total_cash"],
         "buffer_balance": snapshot["buffer_balance"],
+        "buffer_is_physical": snapshot["buffer_is_physical"],
+        "buffer_setup_required": snapshot["buffer_setup_required"],
+        "suggested_buffer_balance": snapshot["suggested_buffer_balance"],
         "capital_shortfall": snapshot["capital_shortfall"],
         "periods": snapshot["periods"],
+        "movements": movements_for_user(uid) if snapshot["buffer_is_physical"] else [],
     }
+
+
+def _enabled_buffer_flow(user_id: int) -> dict:
+    flow = cashflow_snapshot(user_id)
+    if not flow.get("enabled"):
+        raise HTTPException(422, "Сначала включите расчёт безопасного дневного лимита")
+    return flow
+
+
+@app.put("/api/buffer/account-balance")
+def save_buffer_actual_balance(
+    payload: BufferActualBalanceIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    """Confirm the actual balance once, or correct it later.
+
+    This operation changes only the split between card and buffer.  It never
+    creates income/expense, so the total amount of cash remains unchanged.
+    """
+    uid = legacy.user_ready(user)
+    flow = _enabled_buffer_flow(uid)
+    if payload.balance > max(0.0, float(flow["total_cash"])):
+        raise HTTPException(
+            422,
+            "Буфер не может быть больше всех денег на карте и в буфере. "
+            "Проверьте стартовый капитал или укажите фактический остаток.",
+        )
+    try:
+        with legacy.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            set_actual_balance(
+                con,
+                uid,
+                payload.balance,
+                movement_date=clock.today(),
+                note=payload.note,
+            )
+    except BufferAccountError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    legacy.invalidate_current_auto_reserve(uid)
+    return get_buffer(user)
+
+
+def _transfer_buffer(
+    user_id: int,
+    *,
+    direction: Literal["deposit", "withdraw"],
+    payload: BufferTransferIn,
+) -> None:
+    flow = _enabled_buffer_flow(user_id)
+    if not flow.get("buffer_is_physical"):
+        raise HTTPException(422, "Сначала укажите фактический остаток буфера")
+    if direction == "deposit" and payload.amount > max(0.0, float(flow["available_cash"])):
+        raise HTTPException(
+            422,
+            "Нельзя перевести больше денег на карте после резерва обязательных платежей",
+        )
+    try:
+        with legacy.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            transfer_buffer(
+                con,
+                user_id,
+                direction,
+                payload.amount,
+                movement_date=clock.today(),
+                note=payload.note,
+            )
+    except BufferAccountError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    legacy.invalidate_current_auto_reserve(user_id)
+
+
+@app.post("/api/buffer/transfer-to")
+def transfer_to_buffer(
+    payload: BufferTransferIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = legacy.user_ready(user)
+    _transfer_buffer(uid, direction="deposit", payload=payload)
+    return get_buffer(user)
+
+
+@app.post("/api/buffer/transfer-from")
+def transfer_from_buffer(
+    payload: BufferTransferIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = legacy.user_ready(user)
+    _transfer_buffer(uid, direction="withdraw", payload=payload)
+    return get_buffer(user)
 
 
 def editable_cashflow_period(user_id: int, period_start: date) -> bool:

@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS settings (
     cashflow_enabled INTEGER NOT NULL DEFAULT 0,
     cashflow_start_date TEXT,
     cashflow_start_capital REAL NOT NULL DEFAULT 0,
+    -- NULL keeps the legacy virtual calculation until the owner explicitly
+    -- confirms the actual balance of their separate buffer account.
+    buffer_account_balance REAL,
     reminder_days INTEGER NOT NULL DEFAULT 3,
     reminder_time TEXT NOT NULL DEFAULT '10:00',
     morning_report_time TEXT NOT NULL DEFAULT '09:00',
@@ -135,6 +138,29 @@ CREATE TABLE IF NOT EXISTS piggy_bank_movements (
 CREATE INDEX IF NOT EXISTS ix_piggy_bank_user_date
 ON piggy_bank_movements(user_id, movement_date DESC, id DESC);
 
+-- Unlike the piggy bank, the buffer is part of the total cash balance.  A
+-- movement only changes which account holds the money; it never creates an
+-- income or an expense in the budget.
+CREATE TABLE IF NOT EXISTS buffer_account_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK(direction IN ('deposit','withdraw')),
+    amount REAL NOT NULL CHECK(amount > 0),
+    movement_date TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'card_transfer'
+        CHECK(source IN ('card_transfer','income','adjustment')),
+    income_transaction_id INTEGER REFERENCES transactions(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_buffer_account_user_date
+ON buffer_account_movements(user_id, movement_date DESC, id DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_buffer_account_income_transaction
+ON buffer_account_movements(user_id, income_transaction_id)
+WHERE income_transaction_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS cashflow_income_overrides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -220,6 +246,7 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
         # used initial_reserve for both meanings, which made the displayed
         # account balance and the buffer contradict each other.
         "cashflow_start_capital": "REAL",
+        "buffer_account_balance": "REAL",
         "reminder_days": "INTEGER NOT NULL DEFAULT 3",
         "reminder_time": "TEXT NOT NULL DEFAULT '10:00'",
         "morning_report_time": "TEXT NOT NULL DEFAULT '09:00'",
@@ -276,6 +303,26 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_buffer_account_columns(con: sqlite3.Connection) -> None:
+    """Bring databases created before the physical-buffer account up to date."""
+    columns = {row[1] for row in con.execute("PRAGMA table_info(settings)")}
+    if "buffer_account_balance" not in columns:
+        # Do not fill legacy rows automatically: their displayed buffer was a
+        # forecast, not a bank-account balance.  The owner confirms the real
+        # amount once, then it remains fixed until a transfer is recorded.
+        con.execute("ALTER TABLE settings ADD COLUMN buffer_account_balance REAL")
+
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS ix_buffer_account_user_date "
+        "ON buffer_account_movements(user_id, movement_date DESC, id DESC)"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_buffer_account_income_transaction "
+        "ON buffer_account_movements(user_id, income_transaction_id) "
+        "WHERE income_transaction_id IS NOT NULL"
+    )
+
+
 def _ensure_morning_report_columns(con: sqlite3.Connection) -> None:
     columns = {row[1] for row in con.execute("PRAGMA table_info(morning_reports)")}
     additions = {
@@ -294,6 +341,7 @@ def init_db() -> None:
         _ensure_settings_columns(con)
         _ensure_morning_report_columns(con)
         _ensure_payment_columns(con)
+        _ensure_buffer_account_columns(con)
         category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
         if "sort_order" not in category_columns:
             con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
