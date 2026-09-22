@@ -18,7 +18,6 @@ from .auth import TelegramUser, current_user
 from .budget import current_period as current_period
 from .budget import dashboard_numbers, reserve_needed_for_future
 from .db import connect, ensure_user, init_db
-from .expenses import create_expense, invalidate_current_auto_reserve
 from .buffer_account import BufferAccountError, sync_income_destination
 
 
