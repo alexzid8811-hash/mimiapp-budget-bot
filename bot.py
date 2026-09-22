@@ -78,16 +78,16 @@ def morning_report_keyboard(report: dict) -> InlineKeyboardMarkup | None:
     if report.get("unused_amount", 0) <= 0 or report.get("decision") is not None:
         return None
     report_date = report["report_date"].isoformat()
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
             "🐷 Перевести в копилку",
             callback_data=f"morning:piggy:{report_date}",
-        ),
-        InlineKeyboardButton(
+        )],
+        [InlineKeyboardButton(
             "📅 Распределить на дни",
             callback_data=f"morning:daily:{report_date}",
-        ),
-    ]])
+        )],
+    ])
 
 
 def morning_report_text(report: dict) -> str:
@@ -144,11 +144,11 @@ async def handle_morning_decision(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("Некорректная дата отчёта.", show_alert=True)
         return
 
-    await query.answer()
     applied = resolve_morning_report(query.from_user.id, report_date, parts[1])
     if not applied:
         await query.answer("Этот остаток уже обработан.", show_alert=True)
         return
+    await query.answer()
 
     updated = build_morning_report(query.from_user.id, clock.now().date())
     await context.bot.send_message(
