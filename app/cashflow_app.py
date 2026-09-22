@@ -367,10 +367,10 @@ def cashflow_snapshot(user_id: int) -> dict:
     # was actually received. Otherwise an unpaid salary/vacation payment would
     # silently inflate the real balance carried from the starting capital.
     # An override belongs to a budget period that starts the day after the
-    # actual payday.  The cash is already on the account on the payday itself,
-    # even though it becomes available for daily spending only tomorrow.
+    # actual payday.  Do not apply it to the payment day itself: that one-day
+    # row is already closed and must stay unchanged after a correction.
     confirmed_overrides = cashflow_income_overrides(
-        user_id, start_date, today + timedelta(days=1)
+        user_id, start_date, today
     )
     actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
     paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
