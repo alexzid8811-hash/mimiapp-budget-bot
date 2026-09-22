@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from datetime import date
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
@@ -119,7 +120,7 @@ def morning_report_text(report: dict) -> str:
         f"Изменение дневной нормы: {change}",
         "", f"Буфер: {money(report['buffer_balance'])} ₽",
         f"Копилка: {money(report['piggy_balance'])} ₽",
-    ]
+    ])
     if report["nearest_due_date"] is None:
         lines.extend(["", "Ближайших обязательных платежей нет."])
     else:
@@ -138,7 +139,7 @@ async def handle_morning_decision(update: Update, context: ContextTypes.DEFAULT_
     if len(parts) != 3 or parts[0] != "morning" or parts[1] not in {"piggy", "daily"}:
         return
     try:
-        report_date = __import__("datetime").date.fromisoformat(parts[2])
+        report_date = date.fromisoformat(parts[2])
     except ValueError:
         await query.answer("Некорректная дата отчёта.", show_alert=True)
         return
