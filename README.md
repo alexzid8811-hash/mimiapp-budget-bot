@@ -121,6 +121,35 @@ docker compose up --build
    отправьте сумму, при необходимости добавьте комментарий. Запись сразу
    попадёт в историю Mini App и пересчитает дневной бюджет.
 
+Оба контейнера используют один файл `data/budget.sqlite3`. Поэтому не
+добавляйте для `bot` отдельный путь к базе или отдельный Docker volume.
+
+### Если быстрые траты были записаны до этого исправления
+
+Старый контейнер бота мог хранить их во внутренней, не общей базе. До
+пересборки сохраните эту базу на хосте (подставьте идентификатор из первой
+команды):
+
+```bash
+cd /opt/budget-miniapp
+docker compose ps -q bot
+docker cp <идентификатор-контейнера>:/app/data/budget.sqlite3 ./data/bot-private-before-shared.sqlite3
+```
+
+После обновления и запуска контейнеров сначала выполните проверку, а затем
+явное восстановление только нужного периода. Скрипт ничего не записывает без
+флага `--apply`, не создаёт повторов и сопоставляет категории по названию:
+
+```bash
+docker compose exec web python scripts/recover_bot_expenses.py \
+  --source /app/data/bot-private-before-shared.sqlite3 --since 2026-09-22
+docker compose exec web python scripts/recover_bot_expenses.py \
+  --source /app/data/bot-private-before-shared.sqlite3 --since 2026-09-22 --apply
+```
+
+После успешного восстановления файл `bot-private-before-shared.sqlite3` можно
+оставить как резервную копию или перенести за пределы каталога `data`.
+
 Frontend отправляет `Telegram.WebApp.initData` в заголовке `X-Telegram-Init-Data`. Backend проверяет HMAC-SHA256 подпись и `auth_date`; данные из `initDataUnsafe` для авторизации не используются.
 
 ## Проверка тестов

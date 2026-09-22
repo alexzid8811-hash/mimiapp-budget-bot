@@ -18,9 +18,15 @@ services:
     restart: unless-stopped
     command: ["python", "bot.py"]
     environment:
+      # The bot and Mini App must read and write the same persistent file.
+      # Without this, a chat expense is stored only in the bot container and
+      # disappears from the Mini App (and after the next bot rebuild).
+      DATABASE_PATH: /app/data/budget.sqlite3
       BOT_TOKEN: ${BOT_TOKEN:-}
       MINI_APP_URL: ${MINI_APP_URL:-}
       BUDGET_TIMEZONE: ${BUDGET_TIMEZONE:-Europe/Moscow}
       REMINDER_CHECK_SECONDS: ${REMINDER_CHECK_SECONDS:-60}
+    volumes:
+      - ./data:/app/data
     depends_on:
       - web
