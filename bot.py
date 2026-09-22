@@ -3,12 +3,17 @@ import logging
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from app import clock
 from app.db import init_db
 from app.reminders import pending_bill_reminders, record_bill_reminder
-from app.morning_reports import pending_morning_reports, record_morning_report
+from app.morning_reports import (
+    build_morning_report,
+    pending_morning_reports,
+    record_morning_report,
+    resolve_morning_report,
+)
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
@@ -68,6 +73,22 @@ async def send_bill_reminders(application) -> None:
         record_bill_reminder(reminder)
 
 
+def morning_report_keyboard(report: dict) -> InlineKeyboardMarkup | None:
+    if report.get("unused_amount", 0) <= 0 or report.get("decision") is not None:
+        return None
+    report_date = report["report_date"].isoformat()
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "🐷 Перевести в копилку",
+            callback_data=f"morning:piggy:{report_date}",
+        ),
+        InlineKeyboardButton(
+            "📅 Распределить на дни",
+            callback_data=f"morning:daily:{report_date}",
+        ),
+    ]])
+
+
 def morning_report_text(report: dict) -> str:
     expenses = "\n".join(f"• {item['title']} — {money(item['amount'])} ₽" for item in report["expenses"])
     spending = f"Вчера потрачено: {money(report['spent_total'])} ₽"
@@ -80,7 +101,18 @@ def morning_report_text(report: dict) -> str:
     )
     lines = [
         f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}",
-        "", spending, "",
+        "", spending,
+    ]
+    if report.get("unused_amount", 0) > 0:
+        lines.extend(["", f"Неиспользованный остаток: {money(report['unused_amount'])} ₽"])
+        if report.get("decision") is None:
+            lines.append("Выберите, что с ним сделать:")
+        elif report["decision"] == "piggy":
+            lines.append("✅ Остаток переведён в копилку.")
+        elif report["decision"] == "daily":
+            lines.append("✅ Остаток распределён на оставшиеся дни периода.")
+    lines.extend([
+        "",
         f"До конца периода: {report['period_days_left']} дн. · осталось {money(report['period_remaining'])} ₽",
         f"На карте на момент отчёта: {money(report['card_balance'])} ₽",
         f"На день сегодня: {money(report['daily_amount'])} ₽",
@@ -98,10 +130,44 @@ def morning_report_text(report: dict) -> str:
     return "\n".join(lines)
 
 
+async def handle_morning_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or not query.data:
+        return
+    parts = query.data.split(":")
+    if len(parts) != 3 or parts[0] != "morning" or parts[1] not in {"piggy", "daily"}:
+        return
+    try:
+        report_date = __import__("datetime").date.fromisoformat(parts[2])
+    except ValueError:
+        await query.answer("Некорректная дата отчёта.", show_alert=True)
+        return
+
+    await query.answer()
+    applied = resolve_morning_report(query.from_user.id, report_date, parts[1])
+    if not applied:
+        await query.answer("Этот остаток уже обработан.", show_alert=True)
+        return
+
+    updated = build_morning_report(query.from_user.id, clock.now().date())
+    await context.bot.send_message(
+        chat_id=query.from_user.id,
+        text=morning_report_text(updated),
+    )
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        logger.debug("Не удалось убрать кнопки из старого отчёта", exc_info=True)
+
+
 async def send_morning_reports(application) -> None:
     for report in pending_morning_reports(clock.now()):
         try:
-            await application.bot.send_message(chat_id=report["user_id"], text=morning_report_text(report))
+            await application.bot.send_message(
+                chat_id=report["user_id"],
+                text=morning_report_text(report),
+                reply_markup=morning_report_keyboard(report),
+            )
         except Exception:
             logger.exception(
                 "Не удалось отправить утренний отчёт пользователю %s",
@@ -138,6 +204,7 @@ def main() -> None:
         raise RuntimeError("BOT_TOKEN is required")
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_morning_decision, pattern=r"^morning:"))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
