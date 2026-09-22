@@ -322,9 +322,11 @@
     document.getElementById("piggyDirection").value = direction;
     document.getElementById("piggySource").value = source;
     document.getElementById("piggyDialogTitle").textContent =
-      source === "daily_budget" ? "Перенести остаток дня" : direction === "deposit" ? "Пополнить копилку" : "Снять из копилки";
+      source === "daily_budget" && direction === "deposit" ? "Перенести остаток дня" :
+      direction === "deposit" ? "Пополнить копилку" : "Вернуть на карту";
     document.getElementById("savePiggyBtn").textContent =
-      source === "daily_budget" ? "Перенести" : direction === "deposit" ? "Пополнить" : "Снять";
+      source === "daily_budget" && direction === "deposit" ? "Перенести" :
+      direction === "deposit" ? "Пополнить" : "Вернуть на карту";
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
@@ -333,7 +335,7 @@
 
   document.getElementById("piggyDepositBtn")?.addEventListener("click", () => openMovement("deposit"));
   document.getElementById("piggyTransferBtn")?.addEventListener("click", () => openMovement("deposit", "daily_budget"));
-  document.getElementById("piggyWithdrawBtn")?.addEventListener("click", () => openMovement("withdraw"));
+  document.getElementById("piggyWithdrawBtn")?.addEventListener("click", () => openMovement("withdraw", "daily_budget"));
   document.getElementById("piggyForm")?.addEventListener("submit", async event => {
     event.preventDefault();
     const direction = document.getElementById("piggyDirection").value;
@@ -351,7 +353,7 @@
       });
       document.getElementById("piggyDialog").close();
       if (typeof toast === "function") {
-        toast(direction === "deposit" ? "Копилка пополнена" : "Снято из копилки");
+        toast(direction === "deposit" ? "Копилка пополнена" : "Деньги возвращены на карту");
       }
       await loadAll();
     } catch (error) {

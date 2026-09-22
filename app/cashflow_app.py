@@ -864,8 +864,6 @@ def add_piggy_bank_movement(
 ) -> dict:
     if payload.movement_date > clock.today():
         raise HTTPException(422, "Дата операции не может быть в будущем")
-    if direction == "withdraw" and payload.source == "daily_budget":
-        raise HTTPException(422, "Возврат в дневной бюджет пока выполняется отдельной операцией")
     if direction == "deposit" and payload.source == "daily_budget":
         flow = cashflow_snapshot(user_id)
         available = float(flow.get("available_today", 0)) if flow.get("enabled") else 0.0
