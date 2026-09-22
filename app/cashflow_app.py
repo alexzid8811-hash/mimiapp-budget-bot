@@ -610,6 +610,30 @@ def cashflow_snapshot(user_id: int) -> dict:
         if buffer_rows:
             buffer_rows[0]["put_aside"] = round(buffer_rows[0]["put_aside"] + manual_buffer, 2)
 
+    # Keep the recorded starting capital visible as the first row of the
+    # buffer table.  It is not a salary/advance and must never be presented as
+    # one.  Later rows carry the remaining balance through the calculation;
+    # this display-only row makes the origin of that balance explicit.
+    buffer_rows.insert(0, {
+        "start": start_date.isoformat(),
+        "end": start_date.isoformat(),
+        "kind": "Стартовый капитал",
+        "initial_capital": True,
+        "received": round(start_capital, 2),
+        "planned_received": round(start_capital, 2),
+        "income_overridden": False,
+        "received_editable": False,
+        "budget_start": None,
+        "days": 0,
+        "mandatory": 0.0,
+        "free": round(start_capital, 2),
+        "daily": 0.0,
+        "put_aside": 0.0,
+        "take": 0.0,
+        "buffer": 0.0,
+        "shortfall": 0.0,
+    })
+
     return {
         "enabled": True,
         "settings": settings,
