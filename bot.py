@@ -82,8 +82,9 @@ def morning_report_text(report: dict) -> str:
         f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}",
         "", spending, "",
         f"До конца периода: {report['period_days_left']} дн. · осталось {money(report['period_remaining'])} ₽",
+        f"На карте на момент отчёта: {money(report['card_balance'])} ₽",
         f"На день сегодня: {money(report['daily_amount'])} ₽",
-        f"Изменение дневной суммы: {change}",
+        f"Изменение дневной нормы: {change}",
         "", f"Буфер: {money(report['buffer_balance'])} ₽",
         f"Копилка: {money(report['piggy_balance'])} ₽",
     ]
