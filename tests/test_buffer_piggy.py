@@ -42,12 +42,18 @@ def test_period_rows_show_buffer_movements(monkeypatch):
     # following day.  The first partial buffer segment therefore ends before
     # the 22 September payment.
     assert rows[0]["days"] == 6
+    # Starting capital and already recorded movements are a carry-over, not
+    # an advance.  The payment column must contain only the real payout.
+    assert rows[0]["carryover"] == 1000
+    assert rows[0]["received"] == 0
     assert rows[0]["put_aside"] == 400
     assert rows[0]["buffer"] == 400
     assert rows[1]["kind"] == "аванс"
     assert rows[1]["mandatory"] == 500
     assert rows[1]["start"] == "2026-09-21"
     assert rows[1]["budget_start"] == "2026-09-22"
+    assert rows[1]["carryover"] == 0
+    assert rows[1]["received"] == 1000
     assert rows[1]["take"] == 400
     assert rows[1]["buffer"] == 0
 
