@@ -131,7 +131,9 @@ def period_recurring_income(user_id: int, start: date, end: date) -> float:
 
 
 def period_mandatory(user_id: int, start: date, end: date) -> float:
-    return round(sum(planning.mandatory_map(user_id, start, end).values()), 2)
+    # A bill on the payday is covered by that payday's income. Daily spending
+    # still begins tomorrow, so the bill must not rewrite the closing period.
+    return round(sum(planning.budget_period_mandatory_map(user_id, start, end).values()), 2)
 
 
 def actual_income(user_id: int, start: date, end: date) -> float:
