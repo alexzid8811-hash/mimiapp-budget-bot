@@ -95,7 +95,7 @@ def pending_morning_reports(now: datetime) -> list[dict]:
             "spent_total": round(sum(float(item["amount"]) for item in expenses), 2),
             "period_days_left": (period.end - today).days + 1,
             "period_remaining": float(flow.get("remaining_period", 0)),
-            "card_balance": float(flow.get("current_cash", 0)),
+            "card_balance": round(\n                float(flow.get("current_cash", 0)) - float(flow.get("buffer_balance", 0)), 2\n            ),
             "daily_amount": daily_amount,
             "daily_limit": daily_limit,
             "daily_change": None if previous is None
