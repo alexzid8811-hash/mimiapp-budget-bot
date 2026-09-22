@@ -235,6 +235,32 @@ def test_future_received_amount_override_recalculates_entire_cashflow(client, mo
     assert cashflow_snapshot(1)['current_cash'] == 42000
 
 
+def test_payday_override_does_not_rewrite_closed_payment_day(client, monkeypatch):
+    with connect() as con:
+        con.execute(
+            "UPDATE income_rules SET amount=39395.22 WHERE user_id=1 AND kind='advance'"
+        )
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+
+    before = cashflow_snapshot(1)
+    closed_before = next(row for row in before['periods'] if row['start'] == '2026-09-22')
+    next_before = next(row for row in before['periods'] if row['start'] == '2026-09-23')
+
+    response = client.put(
+        '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
+    )
+    assert response.status_code == 200
+
+    after = cashflow_snapshot(1)
+    closed_after = next(row for row in after['periods'] if row['start'] == '2026-09-22')
+    next_after = next(row for row in after['periods'] if row['start'] == '2026-09-23')
+    assert closed_after['received'] == closed_before['received']
+    assert closed_after['daily'] == closed_before['daily']
+    assert closed_after['buffer'] == closed_before['buffer']
+    assert next_after['received'] == 41000
+    assert next_after['received'] != next_before['received']
+
+
 def test_income_override_can_be_reset_and_current_row_cannot_be_edited(client):
     assert client.put(
         '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
@@ -391,7 +417,7 @@ def test_confirmed_period_override_replaces_later_income_in_same_period(client, 
         '/api/cashflow/income-overrides/2026-09-23', json={'amount': 12000}
     ).status_code == 200
 
-    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 23))
     snapshot = cashflow_snapshot(1)
     assert snapshot['current_cash'] == 13000
     assert not any(
