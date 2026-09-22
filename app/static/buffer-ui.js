@@ -46,7 +46,7 @@
     const value = `<span>${formatMoney(period.received)}</span>`;
     if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
     const badge = period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
-    return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.start}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
+    return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.budget_start || period.start}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
   }
 
   function renderBuffer() {
@@ -73,7 +73,7 @@
     const homeWarning = document.getElementById("bufferForecastWarning");
     warning.classList.add("hidden"); homeWarning.classList.add("hidden");
     chart.innerHTML = ""; setText("bufChartEnd", "—"); setText("planDaily", "");
-    const periods = data.enabled ? data.periods || [] : [];
+    const periods = data.enabled ? data.buffer_periods || data.periods || [] : [];
     if (!periods.length) {
       const message = data.enabled ? "Нет периодов для прогноза." : "План появится после включения расчёта в настройках.";
       body.innerHTML = `<tr><td colspan="8"><div class="empty">${message}</div></td></tr>`;
@@ -113,7 +113,7 @@
   }
 
   window.editCashflowIncome = periodStart => {
-    const period = bufferState.buffer?.periods?.find(item => item.start === periodStart);
+    const period = bufferState.buffer?.periods?.find(item => item.budget_start === periodStart || item.start === periodStart);
     if (!period?.received_editable) return;
     document.getElementById("cashflowIncomePeriodStart").value = period.start;
     document.getElementById("cashflowIncomeAmount").value = period.received;
@@ -157,6 +157,8 @@
     setText("piggyBalance", formatMoney(piggy.balance));
     const withdraw = document.getElementById("piggyWithdrawBtn");
     if (withdraw) withdraw.disabled = Number(piggy.balance || 0) <= 0;
+    const toCard = document.getElementById("piggyToCardBtn");
+    if (toCard) toCard.disabled = Number(piggy.balance || 0) <= 0;
     const list = document.getElementById("piggyMovements");
     if (!piggy.movements?.length) {
       list.innerHTML = '<div class="empty">В копилке пока нет операций.</div>';
@@ -164,7 +166,9 @@
     }
     list.innerHTML = piggy.movements.map(item => {
       const deposit = item.direction === "deposit";
-      const title = deposit && item.source === "daily_budget" ? "Из остатка дня" : deposit ? "Пополнение" : "Снятие";
+      const title = item.source === "daily_budget" && deposit ? "Из остатка дня"
+        : item.source === "daily_budget" ? "Перевод на карту"
+        : deposit ? "Пополнение" : "Снятие";
       return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div><div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div></div></div>`;
     }).join("");
   }
@@ -177,19 +181,21 @@
       bufferState = { buffer, piggy };
       renderBuffer();
       renderPiggy();
+      renderOverspendActions();
     } catch (error) {
       if (typeof toast === "function") toast(error.message);
     }
   }
 
-  function openMovement(direction, source = "external") {
+  function openMovement(direction, source = "external", initialAmount = "") {
     document.getElementById("piggyDirection").value = direction;
     document.getElementById("piggySource").value = source;
-    document.getElementById("piggyDialogTitle").textContent =
-      source === "daily_budget" ? "Перенести остаток дня" : direction === "deposit" ? "Пополнить копилку" : "Снять из копилки";
-    document.getElementById("savePiggyBtn").textContent =
-      source === "daily_budget" ? "Перенести" : direction === "deposit" ? "Пополнить" : "Снять";
-    document.getElementById("piggyAmount").value = "";
+    const isToCard = source === "daily_budget" && direction === "withdraw";
+    document.getElementById("piggyDialogTitle").textContent = isToCard ? "Взять из копилки на карту"
+      : source === "daily_budget" ? "Перенести остаток дня" : direction === "deposit" ? "Пополнить копилку" : "Снять из копилки";
+    document.getElementById("savePiggyBtn").textContent = isToCard ? "Перевести на карту"
+      : source === "daily_budget" ? "Перенести" : direction === "deposit" ? "Пополнить" : "Снять";
+    document.getElementById("piggyAmount").value = initialAmount;
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
     document.getElementById("piggyDialog").showModal();
@@ -197,6 +203,7 @@
 
   document.getElementById("piggyDepositBtn")?.addEventListener("click", () => openMovement("deposit"));
   document.getElementById("piggyTransferBtn")?.addEventListener("click", () => openMovement("deposit", "daily_budget"));
+  document.getElementById("piggyToCardBtn")?.addEventListener("click", () => openMovement("withdraw", "daily_budget"));
   document.getElementById("piggyWithdrawBtn")?.addEventListener("click", () => openMovement("withdraw"));
   document.getElementById("piggyForm")?.addEventListener("submit", async event => {
     event.preventDefault();
@@ -215,12 +222,32 @@
       });
       document.getElementById("piggyDialog").close();
       if (typeof toast === "function") {
-        toast(direction === "deposit" ? "Копилка пополнена" : "Снято из копилки");
+        toast(direction === "deposit" ? "Копилка пополнена" : document.getElementById("piggySource").value === "daily_budget" ? "Деньги переведены на карту" : "Снято из копилки");
       }
       await loadAll();
     } catch (error) {
       if (typeof toast === "function") toast(error.message);
     }
+  });
+
+  function renderOverspendActions() {
+    const flow = bufferState.buffer;
+    const wrap = document.getElementById("overspendActions");
+    if (!wrap) return;
+    const deficit = Math.max(0, -Number(flow?.available_today || 0));
+    wrap.classList.toggle("hidden", deficit <= 0);
+    if (!deficit) return;
+    setText("overspendCaption", `Перерасход ${formatMoney(deficit)}. Выберите, как его покрыть; буфер не используется.`);
+    const button = document.getElementById("coverOverspendFromPiggyBtn");
+    if (button) button.disabled = Number(bufferState.piggy?.balance || 0) <= 0;
+  }
+
+  document.getElementById("spreadOverspendBtn")?.addEventListener("click", () => {
+    if (typeof toast === "function") toast("Перерасход уже распределён по оставшимся дням периода");
+  });
+  document.getElementById("coverOverspendFromPiggyBtn")?.addEventListener("click", () => {
+    const deficit = Math.max(0, -Number(bufferState.buffer?.available_today || 0));
+    openMovement("withdraw", "daily_budget", deficit ? String(deficit.toFixed(2)) : "");
   });
 
   window.deletePiggyMovement = async id => {
