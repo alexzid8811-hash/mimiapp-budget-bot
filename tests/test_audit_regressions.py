@@ -36,9 +36,8 @@ def salary_rule():
         return dict(con.execute("SELECT * FROM income_rules WHERE user_id=1 AND kind='salary'").fetchone())
 
 
-def test_unreceived_planned_income_does_not_inflate_start_capital(client):
-    # The salary scheduled for September 7 is still only a forecast because no
-    # matching actual income transaction was recorded.
+def test_legacy_recurring_income_needs_actual_transaction(client):
+    # Ordinary legacy income rules do not claim that money reached the card.
     assert cashflow_snapshot(1)["current_cash"] == 1000
 
     response = client.post(
@@ -53,6 +52,22 @@ def test_unreceived_planned_income_does_not_inflate_start_capital(client):
     )
     assert response.status_code == 200
     assert cashflow_snapshot(1)["current_cash"] == 11300
+
+
+def test_payroll_estimate_stays_in_card_balance_until_edited(client, monkeypatch):
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 23))
+    with connect() as con:
+        con.execute(
+            "UPDATE settings SET payroll_enabled=1,salary_gross=110689,bonus_gross=15000,"
+            "cashflow_start_date='2026-09-17',cashflow_start_capital=39000 WHERE user_id=1"
+        )
+
+    snapshot = cashflow_snapshot(1)
+    advance = planning.income_map(
+        1, date(2026, 9, 22), date(2026, 9, 22), include_manual=False
+    )[date(2026, 9, 22)]
+    assert snapshot['current_cash'] == round(39000 + advance, 2)
+    assert snapshot['daily_target'] > 0
 
 
 @pytest.mark.parametrize('spent,expected_daily,available,shortfall', [(900, 11.11, -800, 0), (1100, 0, -1000, 100)])
