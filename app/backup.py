@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 7
+BACKUP_VERSION = 8
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -34,6 +34,7 @@ SETTINGS_COLUMNS = (
     "cashflow_enabled",
     "cashflow_start_date",
     "cashflow_start_capital",
+    "buffer_account_balance",
 )
 
 TABLE_COLUMNS = {
@@ -48,6 +49,9 @@ TABLE_COLUMNS = {
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
     "piggy_bank_movements": (
         "id", "direction", "amount", "movement_date", "note", "source", "bill_payment_id", "income_transaction_id", "created_at"
+    ),
+    "buffer_account_movements": (
+        "id", "direction", "amount", "movement_date", "note", "source", "income_transaction_id", "created_at"
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
@@ -96,7 +100,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("buffer_account_movements", "piggy_bank_movements", "transactions", "cashflow_income_overrides", "plan_history", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             # Versions before v5 stored the cash-flow start balance in
@@ -121,6 +125,14 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     settings["cashflow_start_capital"]
                     if settings.get("cashflow_start_capital") is not None
                     else legacy_start_capital
+                ),
+                # ``None`` deliberately keeps a restored pre-v8 backup in
+                # its legacy virtual-buffer mode until its owner confirms the
+                # real account amount.
+                "buffer_account_balance": (
+                    float(settings["buffer_account_balance"])
+                    if settings.get("buffer_account_balance") is not None
+                    else None
                 ),
             }
             assignments = ",".join(f"{column}=?" for column in SETTINGS_COLUMNS)
@@ -202,6 +214,22 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     (
                         user_id, row['direction'], row['amount'], row['movement_date'], row['note'], row.get('source', 'external'),
                         transaction_ids.get(row.get('bill_payment_id')), transaction_ids.get(row.get('income_transaction_id')),
+                        _created_at(row),
+                    ),
+                )
+            for row in data["buffer_account_movements"]:
+                con.execute(
+                    "INSERT INTO buffer_account_movements"
+                    "(user_id,direction,amount,movement_date,note,source,income_transaction_id,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        user_id,
+                        row["direction"],
+                        row["amount"],
+                        row["movement_date"],
+                        row.get("note") or "",
+                        row.get("source") or "card_transfer",
+                        transaction_ids.get(row.get("income_transaction_id")),
                         _created_at(row),
                     ),
                 )
