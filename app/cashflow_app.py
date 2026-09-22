@@ -388,12 +388,16 @@ def cashflow_snapshot(user_id: int) -> dict:
     opening_before_today_spend = round(available_cash + spent_today, 2)
 
     tomorrow = today + timedelta(days=1)
-    income_future = planned_income_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
+    planned_income_future = (
+        planned_income_map(user_id, tomorrow, horizon_end)
+        if tomorrow <= horizon_end
+        else {}
+    )
     income_future = apply_cashflow_income_overrides(
         user_id,
         today=today,
         horizon_end=horizon_end,
-        income=income_future,
+        income=planned_income_future,
     )
     # A period override is the corrected total income for that whole payday
     # period.  Once its start date arrives, it becomes confirmed cash.  Remove
@@ -404,8 +408,20 @@ def cashflow_snapshot(user_id: int) -> dict:
         for income_day in list(income_future):
             if overridden_start <= income_day <= overridden_end:
                 income_future.pop(income_day)
+                planned_income_future.pop(income_day)
     mandatory_future = planned_mandatory_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
 
+    # A correction belongs to its payment period and later periods.  Keep the
+    # already-open period on the plan that existed before the correction; the
+    # period table applies the adjusted amount from the corrected period on.
+    current_plan = calculate_cashflow_plan(
+        today=today,
+        horizon_end=horizon_end,
+        opening_balance_before_today_spend=opening_before_today_spend,
+        spent_today=spent_today,
+        income_by_date=planned_income_future,
+        mandatory_by_date=mandatory_future,
+    )
     plan = calculate_cashflow_plan(
         today=today,
         horizon_end=horizon_end,
@@ -505,8 +521,8 @@ def cashflow_snapshot(user_id: int) -> dict:
         today=today,
         horizon_end=horizon_end,
         opening_balance_before_today_spend=opening_before_today_spend,
-        daily_target=plan.daily_target,
-        today_target=plan.today_target,
+        daily_target=current_plan.daily_target,
+        today_target=current_plan.today_target,
         spent_today=spent_today,
         income_overrides=cashflow_income_overrides(user_id, tomorrow, horizon_end)
         if tomorrow <= horizon_end

@@ -224,6 +224,10 @@ def test_future_received_amount_override_recalculates_entire_cashflow(client, mo
     assert corrected['received'] == 41000
     assert corrected['free'] == 41000
     assert corrected['income_overridden'] is True
+    # The correction begins with the corrected payment period.  It must not
+    # revise the daily limit already set for the current, preceding period.
+    assert after['periods'][0]['daily'] == before['periods'][0]['daily']
+    assert after['periods'][0]['buffer'] == before['periods'][0]['buffer']
     # The near-term balance is still the limiting factor for the daily amount,
     # but the corrected receipt must flow through the rest of the forecast.
     assert after['daily_target'] == before['daily_target']
