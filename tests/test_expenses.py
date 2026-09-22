@@ -4,7 +4,13 @@ import pytest
 
 from app import clock, planning
 from app.db import connect, ensure_user, init_db
-from app.expenses import categories_for_user, create_expense, delete_expense
+from app.expenses import (
+    categories_for_user,
+    create_expense,
+    delete_expense,
+    expense_for_user,
+    update_expense,
+)
 
 
 @pytest.fixture
@@ -63,3 +69,37 @@ def test_chat_expense_can_be_undone_only_by_its_owner(expense_database):
     assert delete_expense(expense_database, transaction["id"]) is True
     with connect() as con:
         assert con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+
+def test_chat_expense_can_be_edited_without_creating_a_second_transaction(expense_database):
+    categories = categories_for_user(expense_database)
+    transaction = create_expense(expense_database, 300, categories[0]["id"], note="Кофе")
+    period = planning.user_period(expense_database, clock.today())
+    with connect() as con:
+        con.execute(
+            "INSERT INTO reserve_movements(user_id,period_start,amount,reason,source) "
+            "VALUES(?,?,?,?, 'auto')",
+            (expense_database, period.start.isoformat(), 500, "Старый расчёт"),
+        )
+
+    changed = update_expense(
+        expense_database,
+        transaction["id"],
+        amount=406.88,
+        category_id=categories[1]["id"],
+        note="Обед · Дикси",
+    )
+
+    assert changed["id"] == transaction["id"]
+    assert changed["amount"] == 406.88
+    assert changed["category_id"] == categories[1]["id"]
+    assert changed["note"] == "Обед · Дикси"
+    assert expense_for_user(expense_database, transaction["id"]) == changed
+    with connect() as con:
+        count = con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+        reserves = con.execute(
+            "SELECT COUNT(*) FROM reserve_movements WHERE user_id=? AND source='auto'",
+            (expense_database,),
+        ).fetchone()[0]
+    assert count == 1
+    assert reserves == 0

@@ -16,7 +16,13 @@ from telegram.ext import (
 
 from app import clock
 from app.db import ensure_user, init_db
-from app.expenses import categories_for_user, create_expense, delete_expense
+from app.expenses import (
+    categories_for_user,
+    create_expense,
+    delete_expense,
+    expense_for_user,
+    update_expense,
+)
 from app.money import amount as money_amount
 from app.money import cents
 from app.reminders import pending_bill_reminders, record_bill_reminder
@@ -33,6 +39,7 @@ MINI_APP_URL = os.getenv("MINI_APP_URL", "")
 REMINDER_CHECK_SECONDS = max(60, int(os.getenv("REMINDER_CHECK_SECONDS", "60")))
 logger = logging.getLogger(__name__)
 EXPENSE_DRAFT_KEY = "expense_draft"
+EXPENSE_EDIT_KEY = "expense_edit"
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -93,6 +100,46 @@ def parse_expense_amount(raw: str) -> float:
     return result
 
 
+def expense_actions_keyboard(transaction_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton("➕ Добавить ещё", callback_data="expense:start")],
+        [InlineKeyboardButton("↩️ Отменить эту трату", callback_data=f"expense:undo:{transaction_id}")],
+        [InlineKeyboardButton("✏️ Редактировать эту трату", callback_data=f"expense:edit:{transaction_id}")],
+    ]
+    if MINI_APP_URL:
+        rows.append([InlineKeyboardButton("💰 Открыть бюджет", web_app=WebAppInfo(url=MINI_APP_URL))])
+    return InlineKeyboardMarkup(rows)
+
+
+def expense_text(transaction: dict, heading: str = "✅ Трата добавлена и уже учтена в бюджете.") -> str:
+    category_title = transaction.get("category_title")
+    category_emoji = transaction.get("category_emoji") or "💳"
+    category = f"{category_emoji} {category_title}" if category_title else "💳 Без категории"
+    try:
+        tx_date = date.fromisoformat(str(transaction["tx_date"])).strftime("%d.%m.%Y")
+    except (KeyError, TypeError, ValueError):
+        tx_date = str(transaction.get("tx_date", ""))
+    lines = [heading, "", f"{category} — {money(transaction['amount'])} ₽", f"Дата: {tx_date}"]
+    if transaction.get("note"):
+        lines.append(f"Комментарий: {transaction['note']}")
+    return "\n".join(lines)
+
+
+async def show_expense_actions(
+    update: Update,
+    transaction: dict,
+    *,
+    heading: str = "✅ Трата добавлена и уже учтена в бюджете.",
+    query=None,
+) -> None:
+    text = expense_text(transaction, heading)
+    keyboard = expense_actions_keyboard(int(transaction["id"]))
+    if query is not None:
+        await query.edit_message_text(text, reply_markup=keyboard)
+    elif update.effective_message is not None:
+        await update.effective_message.reply_text(text, reply_markup=keyboard)
+
+
 async def start_expense(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = ensure_telegram_user(update)
     message = update.effective_message
@@ -103,6 +150,7 @@ async def start_expense(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await message.reply_text("Сначала добавьте хотя бы одну категорию в бюджете.")
         return
     context.user_data.pop(EXPENSE_DRAFT_KEY, None)
+    context.user_data.pop(EXPENSE_EDIT_KEY, None)
     prompt = "➕ Новая трата\n\nВыберите категорию:"
     query = update.callback_query
     if query is not None:
@@ -143,24 +191,88 @@ async def save_expense_from_draft(
         return
 
     context.user_data.pop(EXPENSE_DRAFT_KEY, None)
-    category = f"{transaction['category_emoji']} {transaction['category_title']}"
-    lines = [
-        "✅ Трата добавлена и уже учтена в бюджете.",
-        "",
-        f"{category} — {money(transaction['amount'])} ₽",
-        f"Дата: {draft['tx_date'].strftime('%d.%m.%Y')}",
+    await show_expense_actions(update, transaction, query=query)
+
+
+def expense_editor_keyboard(transaction: dict) -> InlineKeyboardMarkup:
+    transaction_id = int(transaction["id"])
+    rows = [
+        [
+            InlineKeyboardButton("Категорию", callback_data=f"expense:edit-category:{transaction_id}"),
+            InlineKeyboardButton("Сумму", callback_data=f"expense:edit-amount:{transaction_id}"),
+        ],
+        [InlineKeyboardButton("Комментарий", callback_data=f"expense:edit-note:{transaction_id}")],
     ]
-    if transaction["note"]:
-        lines.append(f"Комментарий: {transaction['note']}")
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("↩️ Отменить эту трату", callback_data=f"expense:undo:{transaction['id']}")],
-        [InlineKeyboardButton("➕ Добавить ещё", callback_data="expense:start")],
-    ])
-    text = "\n".join(lines)
-    if query is not None:
-        await query.edit_message_text(text, reply_markup=keyboard)
-    elif update.effective_message is not None:
-        await update.effective_message.reply_text(text, reply_markup=keyboard)
+    if transaction.get("note"):
+        rows.append([
+            InlineKeyboardButton("Удалить комментарий", callback_data=f"expense:edit-clear-note:{transaction_id}")
+        ])
+    rows.append([InlineKeyboardButton("Готово", callback_data=f"expense:edit-done:{transaction_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def edit_category_keyboard(transaction_id: int, categories: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for category in categories:
+        row.append(InlineKeyboardButton(
+            f"{category['emoji']} {category['title']}",
+            callback_data=f"expense:edit-category-set:{transaction_id}:{category['id']}",
+        ))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("Назад", callback_data=f"expense:edit:{transaction_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def show_expense_editor(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, transaction_id: int
+) -> None:
+    query = update.callback_query
+    user_id = ensure_telegram_user(update)
+    if query is None or user_id is None:
+        return
+    transaction = expense_for_user(user_id, transaction_id)
+    if transaction is None:
+        await query.answer("Трата не найдена.", show_alert=True)
+        return
+    context.user_data.pop(EXPENSE_EDIT_KEY, None)
+    await query.answer()
+    await query.edit_message_text(
+        expense_text(transaction, "✏️ Редактирование траты"),
+        reply_markup=expense_editor_keyboard(transaction),
+    )
+
+
+async def save_expense_edit_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    draft = context.user_data.get(EXPENSE_EDIT_KEY)
+    user_id = ensure_telegram_user(update)
+    if message is None or not message.text or not draft or user_id is None:
+        return
+
+    try:
+        if draft["field"] == "amount":
+            transaction = update_expense(
+                user_id, int(draft["transaction_id"]), amount=parse_expense_amount(message.text)
+            )
+        else:
+            note = message.text.strip()
+            if len(note) > 200:
+                await message.reply_text("Комментарий не должен быть длиннее 200 символов.")
+                return
+            transaction = update_expense(
+                user_id, int(draft["transaction_id"]), note=note
+            )
+    except ValueError as exc:
+        await message.reply_text(f"Не удалось изменить трату: {exc}.")
+        return
+
+    context.user_data.pop(EXPENSE_EDIT_KEY, None)
+    await show_expense_actions(update, transaction, heading="✅ Трата изменена и бюджет пересчитан.")
 
 
 async def handle_expense_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -173,6 +285,7 @@ async def handle_expense_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     if data == "expense:cancel":
         context.user_data.pop(EXPENSE_DRAFT_KEY, None)
+        context.user_data.pop(EXPENSE_EDIT_KEY, None)
         await query.answer("Ввод отменён")
         await query.edit_message_text("Ввод траты отменён.")
         return
@@ -197,6 +310,125 @@ async def handle_expense_callback(update: Update, context: ContextTypes.DEFAULT_
             return
         await query.answer("Трата отменена")
         await query.edit_message_text("↩️ Трата отменена и бюджет пересчитан.")
+        return
+    if data.startswith("expense:edit-category-set:"):
+        parts = data.split(":")
+        try:
+            transaction_id, category_id = int(parts[2]), int(parts[3])
+        except (IndexError, ValueError):
+            await query.answer("Некорректная категория.", show_alert=True)
+            return
+        user_id = ensure_telegram_user(update)
+        if user_id is None:
+            return
+        try:
+            transaction = update_expense(user_id, transaction_id, category_id=category_id)
+        except ValueError as exc:
+            await query.answer(f"Не удалось изменить трату: {exc}.", show_alert=True)
+            return
+        context.user_data.pop(EXPENSE_EDIT_KEY, None)
+        await query.answer()
+        await show_expense_actions(
+            update, transaction, heading="✅ Трата изменена и бюджет пересчитан.", query=query
+        )
+        return
+    if data.startswith("expense:edit-category:"):
+        try:
+            transaction_id = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            await query.answer("Некорректная трата.", show_alert=True)
+            return
+        user_id = ensure_telegram_user(update)
+        if user_id is None or expense_for_user(user_id, transaction_id) is None:
+            await query.answer("Трата не найдена.", show_alert=True)
+            return
+        categories = categories_for_user(user_id)
+        await query.answer()
+        await query.edit_message_text(
+            "Выберите новую категорию:",
+            reply_markup=edit_category_keyboard(transaction_id, categories),
+        )
+        return
+    if data.startswith("expense:edit-amount:"):
+        try:
+            transaction_id = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            await query.answer("Некорректная трата.", show_alert=True)
+            return
+        user_id = ensure_telegram_user(update)
+        if user_id is None or expense_for_user(user_id, transaction_id) is None:
+            await query.answer("Трата не найдена.", show_alert=True)
+            return
+        context.user_data[EXPENSE_EDIT_KEY] = {"transaction_id": transaction_id, "field": "amount"}
+        await query.answer()
+        await query.edit_message_text(
+            "Введите новую сумму траты. Например: 350 или 1 250,50 ₽.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Отмена", callback_data=f"expense:edit-cancel:{transaction_id}")]
+            ]),
+        )
+        return
+    if data.startswith("expense:edit-note:"):
+        try:
+            transaction_id = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            await query.answer("Некорректная трата.", show_alert=True)
+            return
+        user_id = ensure_telegram_user(update)
+        if user_id is None or expense_for_user(user_id, transaction_id) is None:
+            await query.answer("Трата не найдена.", show_alert=True)
+            return
+        context.user_data[EXPENSE_EDIT_KEY] = {"transaction_id": transaction_id, "field": "note"}
+        await query.answer()
+        await query.edit_message_text(
+            "Введите новый комментарий к трате.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Отмена", callback_data=f"expense:edit-cancel:{transaction_id}")]
+            ]),
+        )
+        return
+    if data.startswith("expense:edit-clear-note:"):
+        try:
+            transaction_id = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            await query.answer("Некорректная трата.", show_alert=True)
+            return
+        user_id = ensure_telegram_user(update)
+        if user_id is None:
+            return
+        try:
+            transaction = update_expense(user_id, transaction_id, note="")
+        except ValueError as exc:
+            await query.answer(f"Не удалось изменить трату: {exc}.", show_alert=True)
+            return
+        context.user_data.pop(EXPENSE_EDIT_KEY, None)
+        await query.answer()
+        await show_expense_actions(
+            update, transaction, heading="✅ Трата изменена и бюджет пересчитан.", query=query
+        )
+        return
+    if data.startswith("expense:edit-done:") or data.startswith("expense:edit-cancel:"):
+        try:
+            transaction_id = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            await query.answer("Некорректная трата.", show_alert=True)
+            return
+        user_id = ensure_telegram_user(update)
+        transaction = expense_for_user(user_id, transaction_id) if user_id is not None else None
+        if transaction is None:
+            await query.answer("Трата не найдена.", show_alert=True)
+            return
+        context.user_data.pop(EXPENSE_EDIT_KEY, None)
+        await query.answer()
+        await show_expense_actions(update, transaction, query=query)
+        return
+    if data.startswith("expense:edit:"):
+        try:
+            transaction_id = int(data.rsplit(":", 1)[1])
+        except ValueError:
+            await query.answer("Некорректная трата.", show_alert=True)
+            return
+        await show_expense_editor(update, context, transaction_id)
         return
     if not data.startswith("expense:category:"):
         return
@@ -231,6 +463,10 @@ async def handle_expense_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def handle_expense_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
+    if context.user_data.get(EXPENSE_EDIT_KEY):
+        await save_expense_edit_from_text(update, context)
+        return
+
     draft = context.user_data.get(EXPENSE_DRAFT_KEY)
     if message is None or not draft or not message.text:
         return
@@ -264,7 +500,9 @@ async def handle_expense_text(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def cancel_expense(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message is None:
         return
-    if context.user_data.pop(EXPENSE_DRAFT_KEY, None):
+    cancelled = context.user_data.pop(EXPENSE_DRAFT_KEY, None)
+    cancelled = context.user_data.pop(EXPENSE_EDIT_KEY, None) or cancelled
+    if cancelled:
         await update.effective_message.reply_text("Ввод траты отменён.")
     else:
         await update.effective_message.reply_text("Сейчас нет незавершённой траты.")
