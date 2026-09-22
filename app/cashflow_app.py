@@ -129,6 +129,41 @@ def cashflow_income_overrides(user_id: int, start: date, end: date) -> dict[date
     return result
 
 
+def estimated_payday_income_history(
+    user_id: int,
+    start: date,
+    end: date,
+    overrides: dict[date, float],
+) -> float:
+    """Estimated salary and advances that have already reached their payday.
+
+    A payroll calculation is the expected receipt until the user corrects it
+    on the corresponding budget period.  Dropping it immediately after the
+    payday made the card balance lose a whole advance/salary and reduced the
+    daily budget to zero.  Other incomes (including vacation pay) are still
+    counted only after they are explicitly recorded as received.
+    """
+    settings = legacy.one("SELECT payroll_enabled FROM settings WHERE user_id=?", (user_id,)) or {}
+    payroll_enabled = bool(settings.get("payroll_enabled"))
+    total = 0.0
+    overridden_periods: set[date] = set()
+    for event in planning.income_events(user_id, start, end):
+        if not event.get("is_payday"):
+            continue
+        period_start = event["date"] + timedelta(days=1)
+        if period_start in overrides:
+            if period_start not in overridden_periods:
+                total += float(overrides[period_start])
+                overridden_periods.add(period_start)
+            continue
+        # Legacy recurring-income rules retain their previous behaviour: they
+        # need a recorded transaction.  Payroll calculation is the explicit
+        # source of the salary/advance estimate used by this screen.
+        if payroll_enabled:
+            total += float(event["amount"])
+    return round(total, 2)
+
+
 
 def manual_buffer_income(user_id: int, start: date, end: date) -> float:
     """Income deliberately routed to the buffer, not to the daily card budget."""
@@ -425,16 +460,20 @@ def cashflow_snapshot(user_id: int) -> dict:
     months = max(1, min(12, int(settings["forecast_months"])))
     horizon_end = add_months(today, months)
 
-    # Past scheduled income is only a forecast until the user records that it
-    # was actually received. Otherwise an unpaid salary/vacation payment would
-    # silently inflate the real balance carried from the starting capital.
-    # An override belongs to a budget period that starts the day after the
-    # actual payday.  The cash is already on the account on the payday itself,
-    # even though it becomes available for daily spending only tomorrow.
+    # Salary and advance remain the calculated expected balance after their
+    # payday until the user supplies the actual amount.  The edited amount
+    # replaces the estimate; it does not rewrite older periods.  Vacation pay
+    # and ordinary income stay excluded here until recorded explicitly.
     confirmed_overrides = cashflow_income_overrides(
         user_id, start_date, today + timedelta(days=1)
     )
-    actual_income_history = legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values())
+    actual_income_history = round(
+        legacy.actual_income(user_id, start_date, today)
+        + estimated_payday_income_history(
+            user_id, start_date, today, confirmed_overrides
+        ),
+        2,
+    )
     paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
     unpaid_mandatory_history = planned_mandatory_map(user_id, start_date, today)
     spent_history = legacy.discretionary_spent(user_id, start_date, today)
