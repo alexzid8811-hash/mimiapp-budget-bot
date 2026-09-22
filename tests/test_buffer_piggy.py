@@ -34,15 +34,21 @@ def test_period_rows_show_buffer_movements(monkeypatch):
         horizon_end=horizon,
         opening_balance_before_today_spend=1000,
         daily_target=100,
+        use_buffer_boundaries=True,
     )
 
     assert rows[0]["kind"] == "сейчас"
-    assert rows[0]["days"] == 7
-    assert rows[0]["put_aside"] == 300
-    assert rows[0]["buffer"] == 300
+    # Buffer rows start on the actual payday, while card periods start the
+    # following day.  The first partial buffer segment therefore ends before
+    # the 22 September payment.
+    assert rows[0]["days"] == 6
+    assert rows[0]["put_aside"] == 400
+    assert rows[0]["buffer"] == 400
     assert rows[1]["kind"] == "аванс"
     assert rows[1]["mandatory"] == 500
-    assert rows[1]["take"] == 300
+    assert rows[1]["start"] == "2026-09-21"
+    assert rows[1]["budget_start"] == "2026-09-22"
+    assert rows[1]["take"] == 400
     assert rows[1]["buffer"] == 0
 
 
@@ -136,3 +142,41 @@ def test_daily_remainder_transfer_cannot_exceed_available_today(tmp_path, monkey
             },
         )
         assert response.status_code == 422
+
+
+def test_piggy_transfer_to_card_increases_only_card_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setenv("DEV_MODE", "true")
+    init_db()
+
+    with TestClient(app) as client:
+        client.put(
+            "/api/cashflow-settings",
+            json={
+                "cashflow_enabled": True,
+                "start_date": date.today().isoformat(),
+                "start_capital": 1000,
+            },
+        )
+        assert client.post(
+            "/api/piggy-bank/deposit",
+            json={"amount": 300, "movement_date": date.today().isoformat(), "note": "Накопления"},
+        ).status_code == 200
+        before = client.get("/api/cashflow").json()
+
+        moved = client.post(
+            "/api/piggy-bank/withdraw",
+            json={
+                "amount": 120,
+                "movement_date": date.today().isoformat(),
+                "note": "Покрытие перерасхода",
+                "source": "daily_budget",
+            },
+        )
+        assert moved.status_code == 200
+        after = client.get("/api/cashflow").json()
+
+        assert moved.json()["movement"]["source"] == "daily_budget"
+        assert after["piggy_bank_balance"] == 180
+        assert after["current_cash"] == before["current_cash"] + 120
+        assert after["buffer_balance"] == before["buffer_balance"]
