@@ -78,8 +78,12 @@ def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, fl
     if start > end:
         return {}
 
+    # Include the following day so a bill due today can be recognised as a
+    # payday bill and excluded from the period that is closing today.
     boundary_starts = {
-        item["date"] for item in planning.payday_boundaries(user_id, start, end)
+        item["date"] for item in planning.payday_boundaries(
+            user_id, start, end + timedelta(days=1)
+        )
     }
     totals: dict[date, int] = {}
     for event in planning.bill_events(user_id, start - timedelta(days=1), end):
