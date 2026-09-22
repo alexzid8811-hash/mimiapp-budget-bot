@@ -343,13 +343,22 @@ def cashflow_period_rows(
         )
         overridden = index > 0 and period_start in overrides
         effective_income = overrides[period_start] if overridden else planned_income
+        # The opening balance is a carry-over from the starting capital and
+        # recorded movements, not a new salary/advance.  Keep it separate in
+        # buffer rows so the payout column never inflates an actual payment.
+        carryover = round(
+            opening_balance_before_today_spend if use_buffer_boundaries and index == 0 else 0.0,
+            2,
+        )
         received = round(
-            (opening_balance_before_today_spend if index == 0 else 0.0) + effective_income, 2
+            (opening_balance_before_today_spend if not use_buffer_boundaries and index == 0 else 0.0)
+            + effective_income,
+            2,
         )
         bills = round(
             sum(value for day, value in mandatory.items() if period_start <= day <= period_end), 2
         )
-        free = round(received - bills, 2)
+        free = round(carryover + received - bills, 2)
         period_daily = daily_by_period[index]
         if index == 0 and today_target is None:
             # Standalone callers may only know the recalculated future daily
@@ -382,8 +391,11 @@ def cashflow_period_rows(
                 ),
                 "received": received,
                 "planned_received": round(
-                    (opening_balance_before_today_spend if index == 0 else 0.0) + planned_income, 2
+                    (opening_balance_before_today_spend if not use_buffer_boundaries and index == 0 else 0.0)
+                    + planned_income,
+                    2,
                 ),
+                "carryover": carryover,
                 "income_overridden": overridden,
                 "received_editable": index > 0,
                 "days": days,
@@ -621,6 +633,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         "initial_capital": True,
         "received": round(start_capital, 2),
         "planned_received": round(start_capital, 2),
+        "carryover": 0.0,
         "income_overridden": False,
         "received_editable": False,
         "budget_start": None,
