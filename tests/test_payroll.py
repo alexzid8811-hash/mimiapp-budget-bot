@@ -82,6 +82,20 @@ def test_second_half_vacation_keeps_advance_and_reduces_final_salary():
     assert calc["final_salary"] == 18315.79
 
 
+def test_vacation_across_halves_reduces_advance_and_salary():
+    cfg = PayrollConfig(salary_gross=100000, bonus_gross=0, tax_rate=13)
+    calc = payroll_for_accrual_month(2026, 9, cfg, [{
+        "start_date": "2026-09-13", "end_date": "2026-09-17",
+        "amount": 0, "payment_date": "2026-09-10",
+    }])
+    # 13--15 contains two working days in the first half, and 16--17 contains
+    # two in the second half.  Therefore both the 22 September advance and
+    # the 7 October salary are reduced.
+    assert calc["worked_days_first_half"] == 9
+    assert calc["advance"] == 35590.91
+    assert calc["final_salary"] == 35590.91
+
+
 def test_january_2027_advance_excludes_long_new_year_holidays(monkeypatch):
     monkeypatch.setattr("app.russian_calendar._remote_year", lambda year: "0" * 365)
     calc = payroll_for_accrual_month(
