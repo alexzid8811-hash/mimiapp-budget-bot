@@ -5,7 +5,7 @@ and stores operations.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import Depends, HTTPException
@@ -157,6 +157,9 @@ def save_cashflow_income_override(
             "amount=excluded.amount,updated_at=CURRENT_TIMESTAMP",
             (uid, period_start.isoformat(), payload.amount),
         )
+    # The actual payment changes the periods funded from this payday on;
+    # earlier periods keep the money they already received.
+    engine.forget_allocations(uid, period_start - timedelta(days=1))
     return get_buffer(user)
 
 
@@ -174,6 +177,7 @@ def delete_cashflow_income_override(
         )
     if deleted.rowcount == 0:
         raise HTTPException(404, "Корректировка выплаты не найдена")
+    engine.forget_allocations(uid, period_start - timedelta(days=1))
     return get_buffer(user)
 
 
