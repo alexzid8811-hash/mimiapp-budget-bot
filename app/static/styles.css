@@ -156,6 +156,7 @@ h1,h2,h3,p{margin:0}
 .pc-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0 8px;padding:8px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .pc-flow span{display:block;font-size:11.5px;color:var(--muted)}
 .pc-flow b{display:block;font-weight:600;font-size:13.5px;margin-top:1px;overflow-wrap:anywhere}
+.pc-flow b small{display:block;font-weight:500;font-size:11px;color:var(--muted);margin-top:1px}
 .pc-foot{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted)}
 .pc-foot b{color:var(--text);font-weight:600}
 .pc-foot b.low{color:var(--expense)}
@@ -164,6 +165,7 @@ h1,h2,h3,p{margin:0}
 .plan-table{width:100%;border-collapse:collapse;font-size:14px}
 .plan-table th{text-align:right;font-weight:500;color:var(--muted);font-size:13px;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
 .plan-table td{text-align:right;padding:11px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.plan-table td small{display:block;font-weight:400;font-size:11.5px;color:var(--muted);margin-top:2px}
 .plan-table th:nth-child(-n+2),.plan-table td:nth-child(-n+2){text-align:left}
 .plan-table td:first-child{font-weight:600}
 .plan-table tr:last-child td{border-bottom:0}
