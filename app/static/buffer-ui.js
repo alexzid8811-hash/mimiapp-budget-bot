@@ -25,9 +25,26 @@
     }).format(Number(value || 0));
   }
 
-  function formatDate(value) {
-    return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" })
-      .format(new Date(`${value}T12:00:00`));
+  function formatDate(value, withYear = false) {
+    const options = withYear ? { day: "numeric", month: "short", year: "numeric" } : { day: "numeric", month: "short" };
+    return new Intl.DateTimeFormat("ru-RU", options).format(new Date(`${value}T12:00:00`));
+  }
+
+  // The start row has no payday: its money is the start capital, so it is
+  // shown as received and the buffer movement is counted from zero.
+  function withStartCapital(period) {
+    if (period.payday !== null) return period;
+    const capital = Number(period.buffer_start) || 0;
+    const buffer = Number(period.buffer) || 0;
+    const round = value => Math.round(value * 100) / 100;
+    return {
+      ...period,
+      received: round(Number(period.received) + capital),
+      free: round(Number(period.free) + capital),
+      buffer_start: 0,
+      put_aside: Math.max(0, buffer),
+      take: Math.max(0, -buffer),
+    };
   }
 
   function safe(value) {
@@ -54,7 +71,7 @@
     if (!data) return;
     const disabled = document.getElementById("bufferDisabled");
     disabled?.classList.toggle("hidden", Boolean(data.enabled));
-    setText("bufferHorizon", data.enabled ? `до ${formatDate(data.horizon_end)}` : "выключен");
+    setText("bufferHorizon", data.enabled ? `до ${formatDate(data.horizon_end, true)}` : "выключен");
     setText("bufferPageBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
     const shortfall = document.getElementById("bufferShortfall");
@@ -73,7 +90,7 @@
     const homeWarning = document.getElementById("bufferForecastWarning");
     warning.classList.add("hidden"); homeWarning.classList.add("hidden");
     chart.innerHTML = ""; setText("bufChartEnd", "—"); setText("planDaily", "");
-    const periods = data.enabled ? data.periods || [] : [];
+    const periods = data.enabled ? (data.periods || []).map(withStartCapital) : [];
     if (!periods.length) {
       const message = data.enabled ? "Нет периодов для прогноза." : "План появится после включения расчёта в настройках.";
       body.innerHTML = `<tr><td colspan="8"><div class="empty">${message}</div></td></tr>`;
