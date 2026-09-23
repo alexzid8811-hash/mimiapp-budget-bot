@@ -241,7 +241,17 @@ def bill_events(uid, start, end):
                 remainder_destination='piggy' if row['remainder_amount'] is not None else 'budget',
                 remainder_amount=row['remainder_amount'] or 0,
             )
-    return sorted(events.values(), key=lambda e: (e['due_date'], e['id']))
+    # A monthly bill is due once a month. Moving its day mid-month leaves an
+    # occurrence in both the old and the new version of the plan: the paid one
+    # wins, otherwise the date from the newer version (the later one).
+    by_month = {}
+    for event in events.values():
+        by_month.setdefault((event['id'], event['due_date'][:7]), []).append(event)
+    result = []
+    for group in by_month.values():
+        paid = [e for e in group if e.get('paid')]
+        result.extend(paid or [max(group, key=lambda e: e['due_date'])])
+    return sorted(result, key=lambda e: (e['due_date'], e['id']))
 
 
 def mandatory_map(uid, start, end):
