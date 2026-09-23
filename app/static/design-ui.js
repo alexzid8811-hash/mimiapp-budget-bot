@@ -40,19 +40,27 @@
     $("spendFill").style.width=pct+"%";
     $("spendFill").style.background=left<0?"var(--expense)":"var(--accent)";
     $("spendBar").setAttribute("aria-valuenow",String(Math.round(pct)));
-    const start=d.period.start, next=shift(d.period.end,1), today=flow?.today || window.budgetDate.today();
-    const count=days(today,next);
-    const nextRow=flow?.periods?.find(p=>p.start===next);
-    const kind=nextRow?.kind || "выплата";
+    const overspend=Number(flow ? flow.overspend : 0)||0;
+    const panel=$("overspendPanel");
+    if (panel) {
+      panel.classList.toggle("hidden", overspend<=0);
+      if (overspend>0) $("overspendAmount").textContent=money(overspend);
+    }
+    // The card period's end IS the payday (money received that day still
+    // belongs to the old period); the next card period starts the day after.
+    const start=d.period.start, payday=flow?.period?.payday || d.period.end, next=shift(payday,1);
+    const today=flow?.today || window.budgetDate.today();
+    const count=days(today,payday);
+    const kind=flow?.period?.payday_kind || "выплата";
     $("nextPayTitle").textContent=kind==="Аванс" ? `До аванса ${count} ${plural(count)}` : `До выплаты ${count} ${plural(count)}`;
-    $("nextPayDate").textContent=date(next);
+    $("nextPayDate").textContent=date(payday);
     $("periodStartLabel").textContent=date(start);
-    $("periodEndLabel").textContent=date(next)+" · "+kind.toLowerCase();
+    $("periodEndLabel").textContent=date(payday)+" · "+kind.toLowerCase();
     const strip=$("periodStrip");strip.replaceChildren();
     const bills=new Set((state.plan||[]).map(p=>p.due_date));
-    for(let i=0;i<=Math.min(62,days(start,next));i++){
+    for(let i=0;i<=Math.min(62,days(start,payday));i++){
       const s=shift(start,i), el=document.createElement("div");
-      el.className="day "+(s===next?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"");
+      el.className="day "+(s===payday?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"");
       el.title=date(s)+(bills.has(s)?" · обязательный платёж":"");
       strip.appendChild(el);
     }
@@ -79,5 +87,14 @@
     window.budgetTheme?.apply(document.documentElement.dataset.theme==="dark"?"light":"dark",true);
   });
   ["salaryDay","advanceDay","payrollEnabled"].forEach(id=>$(id).addEventListener("input",payroll));
+  $("spreadOverspendBtn")?.addEventListener("click",()=>{
+    // Spreading over the remaining days is the default the engine already
+    // applies; this button just acknowledges the choice and hides the panel.
+    $("overspendPanel")?.classList.add("hidden");
+    if (typeof toast==="function") toast("Перерасход распределён по оставшимся дням периода");
+  });
+  $("coverFromPiggyBtn")?.addEventListener("click",()=>{
+    if (typeof window.openCoverOverspend==="function") window.openCoverOverspend();
+  });
   window.budgetDesign={render,navigation};
 })();

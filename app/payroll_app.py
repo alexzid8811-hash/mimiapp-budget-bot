@@ -13,7 +13,6 @@ from .payroll import PayrollConfig, payroll_for_accrual_month
 
 
 app = legacy.app
-_legacy_payday_days = legacy.payday_days
 
 
 class PayrollSettingsIn(APIModel):
@@ -93,31 +92,6 @@ def vacation_rows(user_id: int) -> list[dict]:
         "FROM vacations WHERE user_id=? ORDER BY start_date DESC,id DESC",
         (user_id,),
     )
-
-
-def payroll_payday_days(user_id: int) -> list[int]:
-    cfg = payroll_settings(user_id)
-    if int(cfg["payroll_enabled"]):
-        return sorted({int(cfg["salary_day"]), int(cfg["advance_day"])})
-    return _legacy_payday_days(user_id)
-
-
-def payroll_period_recurring_income(user_id: int, start: date, end: date) -> float:
-    return round(
-        sum(
-            planning.budget_income_map(
-                user_id, start, end, include_manual=False
-            ).values()
-        ),
-        2,
-    )
-
-
-# Functions defined in app.main resolve these names from app.main's globals at
-# request time. Replacing them here upgrades the existing dashboard/forecast
-# without duplicating the rest of the API.
-legacy.payday_days = payroll_payday_days
-legacy.period_recurring_income = payroll_period_recurring_income
 
 
 @app.get("/api/payroll-settings")

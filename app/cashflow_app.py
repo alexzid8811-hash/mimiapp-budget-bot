@@ -1,19 +1,22 @@
+"""HTTP API for the card / buffer / piggy-bank model.
+
+All numbers come from :mod:`app.engine`; this module only validates requests
+and stores operations.
+"""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
 
 from fastapi import Depends, HTTPException
 from pydantic import Field
 
 from . import payroll_app as base
-from . import clock, planning
+from . import clock, engine
 from .validation import APIModel
-from .savings import check_piggy_history, piggy_effect
+from .savings import check_piggy_history
 from .auth import TelegramUser, current_user
-from .budget import add_months
-from .cashflow import calculate_cashflow_plan
-from .money import amount, cents
+from .money import cents
 
 
 app = base.app
@@ -28,9 +31,19 @@ class CashflowSettingsIn(APIModel):
 
 class PiggyBankMovementIn(APIModel):
     amount: float = Field(gt=0)
-    movement_date: date = Field(default_factory=clock.today)
+    movement_date: date = Field(default_factory=lambda: clock.today())
     note: str = Field(default="", max_length=160)
     source: Literal["external", "daily_budget"] = "external"
+
+
+class PiggyToCardIn(APIModel):
+    amount: float = Field(gt=0)
+    movement_date: date = Field(default_factory=lambda: clock.today())
+    note: str = Field(default="", max_length=160)
+    # "cover_overspend" pays for today's overspend: the remaining days keep
+    # their limit.  "transfer" adds money to the period and is spread over the
+    # remaining days.
+    purpose: Literal["transfer", "cover_overspend"] = "transfer"
 
 
 class CashflowIncomeOverrideIn(APIModel):
@@ -38,38 +51,15 @@ class CashflowIncomeOverrideIn(APIModel):
 
 
 def cashflow_settings(user_id: int) -> dict:
-    data = legacy.one(
-        "SELECT cashflow_enabled,cashflow_start_date,cashflow_start_capital,forecast_months "
-        "FROM settings WHERE user_id=?",
-        (user_id,),
-    ) or {}
-    return {
-        "cashflow_enabled": int(data.get("cashflow_enabled") or 0),
-        "start_date": data.get("cashflow_start_date") or clock.today().isoformat(),
-        "start_capital": float(data.get("cashflow_start_capital") or 0),
-        "forecast_months": int(data.get("forecast_months") or 4),
-    }
+    return engine.settings_for(user_id)
 
 
-def _add(target: dict[date, float], day: date, amount: float) -> None:
-    target[day] = round(target.get(day, 0.0) + float(amount), 2)
-
-
-def planned_income_map(
-    user_id: int,
-    start: date,
-    end: date,
-    payroll_changes_through: date | None = None,
-) -> dict[date, float]:
-    # Keep the real receipt date in history, but do not make a salary or
-    # advance spendable until the following calendar day.
-    return planning.budget_income_map(
-        user_id, start, end, payroll_changes_through=payroll_changes_through
-    )
-
-
-def planned_mandatory_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    return planning.unpaid_mandatory_map(user_id, start, end)
+def cashflow_snapshot(user_id: int) -> dict:
+    """Budget snapshot for an enabled start capital, otherwise a stub."""
+    settings = engine.settings_for(user_id)
+    if not settings["cashflow_enabled"]:
+        return {"enabled": False, "settings": settings}
+    return engine.compute(user_id)
 
 
 def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
@@ -85,649 +75,13 @@ def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
     return round(float(row["balance"]) if row else 0.0, 2)
 
 
-def piggy_bank_effect(user_id: int, start: date, end: date) -> float:
-    return piggy_effect(user_id, start, end)
-
-
 def piggy_bank_snapshot(user_id: int, limit: int = 80) -> dict:
     movements = legacy.rows(
-        "SELECT id,direction,amount,movement_date,note,source,created_at FROM piggy_bank_movements "
+        "SELECT id,direction,amount,movement_date,note,source,purpose,created_at FROM piggy_bank_movements "
         "WHERE user_id=? ORDER BY movement_date DESC,id DESC LIMIT ?",
         (user_id, min(max(limit, 1), 300)),
     )
     return {"balance": piggy_bank_balance(user_id), "movements": movements}
-
-
-def payday_boundaries(user_id: int, start: date, end: date) -> list[dict]:
-    return planning.payday_boundaries(user_id, start, end)
-
-
-def cashflow_income_overrides(user_id: int, start: date, end: date) -> dict[date, float]:
-    """Return overrides by budget-period start.
-
-    Older backups stored the actual payday as period_start. Accept those rows
-    as the preceding day so a deployed update does not discard an already
-    entered correction; new rows use the budget-period start directly.
-    """
-    values = legacy.rows(
-        "SELECT period_start,amount FROM cashflow_income_overrides "
-        "WHERE user_id=? AND period_start BETWEEN ? AND ? ORDER BY period_start",
-        (user_id, (start - timedelta(days=1)).isoformat(), end.isoformat()),
-    )
-    current_starts = {
-        row["date"] for row in payday_boundaries(user_id, start, end)
-    }
-    result: dict[date, float] = {}
-    for row in values:
-        stored_start = date.fromisoformat(row["period_start"])
-        budget_start = stored_start if stored_start in current_starts else stored_start + timedelta(days=1)
-        if not start <= budget_start <= end:
-            continue
-        # A newly saved value at the real budget start wins over a legacy row.
-        if budget_start not in result or stored_start == budget_start:
-            result[budget_start] = round(float(row["amount"]), 2)
-    return result
-
-
-def manual_buffer_income(user_id: int, start: date, end: date) -> float:
-    """Income deliberately routed to the buffer, not to the daily card budget."""
-    row = legacy.one(
-        "SELECT COALESCE(SUM(amount),0) AS total FROM transactions "
-        "WHERE user_id=? AND type='income' AND COALESCE(income_destination,'daily')='buffer' "
-        "AND tx_date BETWEEN ? AND ?",
-        (user_id, start.isoformat(), end.isoformat()),
-    )
-    return round(float(row["total"]) if row else 0.0, 2)
-
-
-def daily_income_in_period(user_id: int, start: date, end: date) -> float:
-    """Manual income reserved for card spending in this pay period."""
-    row = legacy.one(
-        "SELECT COALESCE(SUM(amount),0) AS total FROM transactions "
-        "WHERE user_id=? AND type='income' AND COALESCE(income_destination,'daily')='daily' "
-        "AND tx_date BETWEEN ? AND ?",
-        (user_id, start.isoformat(), end.isoformat()),
-    )
-    return round(float(row["total"]) if row else 0.0, 2)
-
-
-def recorded_income_map(user_id: int, start: date, end: date) -> dict[date, float]:
-    """Manual income transactions that must not be forecast a second time."""
-    rows = legacy.rows(
-        "SELECT tx_date,COALESCE(SUM(amount),0) AS total FROM transactions "
-        "WHERE user_id=? AND type='income' AND tx_date BETWEEN ? AND ? "
-        "GROUP BY tx_date",
-        (user_id, start.isoformat(), end.isoformat()),
-    )
-    return {date.fromisoformat(row["tx_date"]): round(float(row["total"]), 2) for row in rows}
-
-def cashflow_periods(user_id: int, today: date, horizon_end: date) -> list[dict]:
-    starts = [{"date": today, "kind": "сейчас"}, *payday_boundaries(user_id, today + timedelta(days=1), horizon_end)]
-    return [
-        {
-            **item,
-            "end": starts[index + 1]["date"] - timedelta(days=1)
-            if index + 1 < len(starts)
-            else horizon_end,
-        }
-        for index, item in enumerate(starts)
-        if item["date"] <= horizon_end
-    ]
-
-
-def buffer_periods(
-    user_id: int, today: date, horizon_end: date, start_date: date | None = None
-) -> list[dict]:
-    """Periods used by the protected buffer.
-
-    A card budget starts on the day *after* a payday, because the payday still
-    belongs to the previous card period.  The buffer is different: it protects
-    obligations by the real date cash arrives, so its boundaries are the real,
-    workday-adjusted payday dates themselves.
-    """
-    # Unlike the card, the buffer period begins on the real payday itself.
-    # Find the last real payday even if the screen is opened a day later;
-    # otherwise one buffer period was incorrectly split into a payout card
-    # and a separate "current" card.
-    floor = min(start_date or today, today)
-    actual_paydays = []
-    for item in payday_boundaries(user_id, add_months(floor, -1), horizon_end + timedelta(days=1)):
-        actual_date = item["date"] - timedelta(days=1)
-        if floor <= actual_date <= horizon_end:
-            actual_paydays.append({"date": actual_date, "kind": item["kind"], "budget_start": item["date"]})
-    past = [item for item in actual_paydays if item["date"] <= today]
-    current = past[-1] if past else {"date": today, "kind": "сейчас", "budget_start": None}
-    paydays = [item for item in actual_paydays if item["date"] > today]
-    starts = [current, *paydays]
-    return [
-        {
-            **item,
-            "end": starts[index + 1]["date"] - timedelta(days=1)
-            if index + 1 < len(starts)
-            else horizon_end,
-        }
-        for index, item in enumerate(starts)
-        if item["date"] <= horizon_end
-    ]
-
-
-def apply_cashflow_income_overrides(
-    user_id: int,
-    *,
-    today: date,
-    horizon_end: date,
-    income: dict[date, float],
-) -> dict[date, float]:
-    """Adjust future income so each edited period has the requested total."""
-    adjusted = dict(income)
-    overrides = cashflow_income_overrides(user_id, today + timedelta(days=1), horizon_end)
-    for period in cashflow_periods(user_id, today, horizon_end)[1:]:
-        period_start = period["date"]
-        if period_start not in overrides:
-            continue
-        period_end = period["end"]
-        planned = round(
-            sum(amount for day, amount in income.items() if period_start <= day <= period_end), 2
-        )
-        _add(adjusted, period_start, overrides[period_start] - planned)
-    return adjusted
-
-
-def cashflow_period_rows(
-    user_id: int,
-    *,
-    today: date,
-    horizon_end: date,
-    opening_balance_before_today_spend: float,
-    daily_target: float,
-    today_target: float | None = None,
-    spent_today: float = 0,
-    income_overrides: dict[date, float] | None = None,
-    use_buffer_boundaries: bool = False,
-    buffer_start_date: date | None = None,
-) -> list[dict]:
-    """Build buffer rows without rewriting periods before an edited payment.
-
-    A correction starts a new daily-budget segment on that payment date.  Its
-    reduced (or increased) safe limit is applied only to that period and later
-    ones; rows before it retain the plan that was already shown to the user.
-    """
-    periods = (
-        buffer_periods(user_id, today, horizon_end, buffer_start_date)
-        if use_buffer_boundaries
-        else cashflow_periods(user_id, today, horizon_end)
-    )
-    income = planned_income_map(user_id, today + timedelta(days=1), horizon_end)
-    mandatory = planned_mandatory_map(user_id, today + timedelta(days=1), horizon_end)
-    # Overrides are keyed by the card-period start (the day after payment).
-    # Convert them to the real payday used by the buffer rows.
-    overrides = (
-        {
-            period_start - timedelta(days=1): value
-            for period_start, value in (income_overrides or {}).items()
-        }
-        if use_buffer_boundaries
-        else (income_overrides or {})
-    )
-    daily_by_period = [round(daily_target, 2) for _ in periods]
-    if periods and today_target is not None:
-        daily_by_period[0] = round(today_target, 2)
-
-    # Apply edits in chronological order.  Later edits deliberately do not
-    # participate in an earlier segment calculation, otherwise changing (for
-    # example) December would retroactively change September--November.
-    for index, item in enumerate(periods):
-        period_start = item["date"]
-        if index == 0 or period_start not in overrides:
-            continue
-
-        balance_before = round(opening_balance_before_today_spend, 2)
-        for previous_index, previous in enumerate(periods[:index]):
-            previous_start = previous["date"]
-            previous_end = previous["end"]
-            planned_income = round(
-                sum(value for day, value in income.items() if previous_start <= day <= previous_end),
-                2,
-            )
-            effective_income = (
-                overrides[previous_start]
-                if previous_index > 0 and previous_start in overrides
-                else planned_income
-            )
-            bills = round(
-                sum(value for day, value in mandatory.items() if previous_start <= day <= previous_end),
-                2,
-            )
-            balance_before = round(
-                balance_before + effective_income - bills
-                - daily_by_period[previous_index] * ((previous_end - previous_start).days + 1),
-                2,
-            )
-
-        # calculate_cashflow_plan treats its opening amount as already
-        # containing today's flows, so add the payment and bills on the first
-        # day of this new segment explicitly.
-        period_planned_income = sum(
-            value for day, value in income.items() if period_start <= day <= item["end"]
-        )
-        opening = round(
-            balance_before
-            + float(income.get(period_start, 0.0))
-            + overrides[period_start]
-            - period_planned_income
-            - float(mandatory.get(period_start, 0.0)),
-            2,
-        )
-        segment_income = {
-            day: value for day, value in income.items()
-            if period_start < day <= horizon_end
-        }
-        segment_mandatory = {
-            day: value for day, value in mandatory.items()
-            if period_start < day <= horizon_end
-        }
-        segment_plan = calculate_cashflow_plan(
-            today=period_start,
-            horizon_end=horizon_end,
-            opening_balance_before_today_spend=opening,
-            spent_today=0,
-            income_by_date=segment_income,
-            mandatory_by_date=segment_mandatory,
-        )
-        for later_index in range(index, len(daily_by_period)):
-            daily_by_period[later_index] = round(segment_plan.daily_target, 2)
-
-    buffer_before = 0.0
-    result: list[dict] = []
-    for index, item in enumerate(periods):
-        period_start = item["date"]
-        period_end = item["end"]
-        days = (period_end - period_start).days + 1
-        planned_income = round(
-            sum(value for day, value in income.items() if period_start <= day <= period_end), 2
-        )
-        overridden = index > 0 and period_start in overrides
-        effective_income = overrides[period_start] if overridden else planned_income
-        # The opening balance is a carry-over from the starting capital and
-        # recorded movements, not a new salary/advance.  Keep it separate in
-        # buffer rows so the payout column never inflates an actual payment.
-        carryover = round(
-            opening_balance_before_today_spend if use_buffer_boundaries and index == 0 else 0.0,
-            2,
-        )
-        received = round(
-            (opening_balance_before_today_spend if not use_buffer_boundaries and index == 0 else 0.0)
-            + effective_income,
-            2,
-        )
-        bills = round(
-            sum(value for day, value in mandatory.items() if period_start <= day <= period_end), 2
-        )
-        free = round(carryover + received - bills, 2)
-        period_daily = daily_by_period[index]
-        if index == 0 and today_target is None:
-            # Standalone callers may only know the recalculated future daily
-            # amount.  Today's real spending must still leave the account in
-            # this row, including an overspend.
-            planned_spending = round(
-                max(float(spent_today), period_daily) + period_daily * max(0, days - 1),
-                2,
-            )
-        elif index == 0:
-            # When the original allowance is available, keep the protected
-            # current-period buffer stable.  Overspending is redistributed
-            # over later days instead of silently consuming that buffer.
-            planned_spending = round(float(today_target) * days, 2)
-        else:
-            planned_spending = round(period_daily * days, 2)
-        raw_after = round(buffer_before + free - planned_spending, 2)
-        buffer_after = round(max(0.0, raw_after), 2)
-        put_aside = round(max(0.0, buffer_after - buffer_before), 2)
-        take = round(max(0.0, buffer_before - buffer_after), 2)
-        result.append(
-            {
-                "start": period_start.isoformat(),
-                "end": period_end.isoformat(),
-                "kind": item["kind"],
-                "budget_start": (
-                    item.get("budget_start").isoformat()
-                    if item.get("budget_start")
-                    else (period_start.isoformat() if not use_buffer_boundaries else None)
-                ),
-                "received": received,
-                "planned_received": round(
-                    (opening_balance_before_today_spend if not use_buffer_boundaries and index == 0 else 0.0)
-                    + planned_income,
-                    2,
-                ),
-                "carryover": carryover,
-                "income_overridden": overridden,
-                "received_editable": index > 0,
-                "days": days,
-                "mandatory": bills,
-                "free": free,
-                "daily": period_daily,
-                "put_aside": put_aside,
-                "take": take,
-                "buffer": buffer_after,
-                "shortfall": round(max(0.0, -raw_after), 2),
-            }
-        )
-        buffer_before = raw_after
-    return result
-
-def cashflow_snapshot(user_id: int) -> dict:
-    settings = cashflow_settings(user_id)
-    today = clock.today()
-    if not settings["cashflow_enabled"]:
-        return {"enabled": False, "settings": settings}
-
-    start_date = min(date.fromisoformat(settings["start_date"]), today)
-    # The start capital is the complete real account balance at the beginning
-    # of the selected date.  Money received before that moment (including
-    # vacation pay) must already be inside it and must never be added again.
-    start_capital = float(settings["start_capital"])
-    months = max(1, min(12, int(settings["forecast_months"])))
-    horizon_end = add_months(today, months)
-
-    # The starting capital is factual money on the card.  A salary/advance is
-    # added to it only when the user records the received amount by editing
-    # the corresponding payout.  A forecast must never silently become card
-    # money after its calendar date.
-    confirmed_overrides = cashflow_income_overrides(
-        user_id, start_date, today + timedelta(days=1)
-    )
-    actual_income_history = round(
-        legacy.actual_income(user_id, start_date, today) + sum(confirmed_overrides.values()),
-        2,
-    )
-    paid_mandatory_history = legacy.paid_mandatory_spent(user_id, start_date, today)
-    unpaid_mandatory_history = planned_mandatory_map(user_id, start_date, today)
-    spent_history = legacy.discretionary_spent(user_id, start_date, today)
-
-    piggy_effect = piggy_bank_effect(user_id, start_date, today)
-    current_cash = round(
-        start_capital + actual_income_history - paid_mandatory_history - spent_history - piggy_effect,
-        2,
-    )
-    reserved_mandatory = round(sum(unpaid_mandatory_history.values()), 2)
-    available_cash = round(current_cash - reserved_mandatory, 2)
-    spent_today = legacy.discretionary_spent(user_id, today, today)
-    opening_before_today_spend = round(available_cash + spent_today, 2)
-
-    tomorrow = today + timedelta(days=1)
-    income_future = planned_income_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
-    income_future = apply_cashflow_income_overrides(
-        user_id,
-        today=today,
-        horizon_end=horizon_end,
-        income=income_future,
-    )
-    # A period override is the corrected total income for that whole payday
-    # period.  Once its start date arrives, it becomes confirmed cash.  Remove
-    # the remaining planned items from the same period so vacation pay or an
-    # additional rule inside it cannot be counted for a second time.
-    for overridden_start in confirmed_overrides:
-        overridden_end = planning.user_period(user_id, overridden_start).end
-        for income_day in list(income_future):
-            if overridden_start <= income_day <= overridden_end:
-                income_future.pop(income_day)
-    mandatory_future = planned_mandatory_map(user_id, tomorrow, horizon_end) if tomorrow <= horizon_end else {}
-
-    plan = calculate_cashflow_plan(
-        today=today,
-        horizon_end=horizon_end,
-        opening_balance_before_today_spend=opening_before_today_spend,
-        spent_today=spent_today,
-        income_by_date=income_future,
-        mandatory_by_date=mandatory_future,
-    )
-
-    period = planning.user_period(user_id, today)
-    period_anchor = max(period.start, start_date)
-    spent_period = legacy.discretionary_spent(user_id, period_anchor, today)
-    transferred_period = piggy_bank_effect(user_id, period_anchor, today)
-    days_left = max(1, (period.end - today).days + 1)
-    mandatory_period = round(
-        reserved_mandatory
-        + sum(value for day, value in mandatory_future.items() if day <= period.end),
-        2,
-    )
-    # Reconstruct the allocation made at the beginning of the current period.
-    # Replanning from today's already-reduced cash and then subtracting the
-    # period's expenses once more double-counted yesterday's spending after
-    # midnight.  The original allocation stays fixed until the next payday;
-    # real expenses and explicit daily-budget transfers reduce only the card.
-    # Manual income routed to the card belongs entirely to this pay period.
-    # Exclude it from the long-horizon baseline, then add it back only to the
-    # current period budget.  Otherwise the generic forecast would reserve
-    # most of it for future periods and incorrectly increase the buffer.
-    daily_income_period = daily_income_in_period(user_id, period_anchor, today)
-    anchor_opening = round(
-        available_cash + spent_period + transferred_period - daily_income_period,
-        2,
-    )
-    anchor_horizon_end = add_months(period_anchor, months)
-    anchor_tomorrow = period_anchor + timedelta(days=1)
-    anchor_income = (
-        planned_income_map(
-            user_id,
-            anchor_tomorrow,
-            anchor_horizon_end,
-            payroll_changes_through=period_anchor.replace(day=1),
-        )
-        if anchor_tomorrow <= anchor_horizon_end else {}
-    )
-    anchor_mandatory = (
-        planned_mandatory_map(user_id, anchor_tomorrow, anchor_horizon_end)
-        if anchor_tomorrow <= anchor_horizon_end else {}
-    )
-    # income_map also returns recorded manual transactions.  For an anchor
-    # before today, today's card income would otherwise appear once in the
-    # opening balance/allocation and once again as forecast income.  Remove it
-    # so the previous buffer remains untouched.
-    for income_day, recorded in recorded_income_map(user_id, period_anchor, today).items():
-        if income_day not in anchor_income:
-            continue
-        corrected = round(anchor_income[income_day] - recorded, 2)
-        if corrected:
-            anchor_income[income_day] = corrected
-        else:
-            anchor_income.pop(income_day)
-    anchor_plan = calculate_cashflow_plan(
-        today=period_anchor,
-        horizon_end=anchor_horizon_end,
-        opening_balance_before_today_spend=anchor_opening,
-        spent_today=0,
-        income_by_date=anchor_income,
-        mandatory_by_date=anchor_mandatory,
-    )
-    period_days = (period.end - period_anchor).days + 1
-    period_budget = round(anchor_plan.today_target * period_days + daily_income_period, 2)
-    remaining_period = round(
-        max(0.0, period_budget - spent_period - transferred_period), 2
-    )
-    # Spread the card money that existed before today's purchases across all
-    # remaining days.  This is the carry-over limit shown to the user.  The
-    # forecast plan may produce a larger number after midnight because it sees
-    # the already-reduced cash balance; exposing that number would promise more
-    # money than is actually left on the card.
-    today_card_before_spend = round(remaining_period + spent_today, 2)
-    carried_daily = amount(cents(today_card_before_spend) // days_left)
-    carried_available_today = round(carried_daily - spent_today, 2)
-    next_income = next((row for row in plan.timeline if row["income"] > 0), None)
-
-    if plan.capital_shortfall > 0:
-        reason = (
-            f"Даже без повседневных трат не хватает {plan.capital_shortfall:.2f}. "
-            "Нужно увеличить стартовый капитал или уменьшить обязательные платежи."
-        )
-    else:
-        reason = (
-            "Всё сверх безопасного дневного лимита остаётся в виртуальном буфере. "
-            "Он автоматически покрывает будущие обязательные платежи и слабые выплаты."
-        )
-
-    periods = cashflow_period_rows(
-        user_id,
-        today=today,
-        horizon_end=horizon_end,
-        opening_balance_before_today_spend=opening_before_today_spend,
-        daily_target=plan.daily_target,
-        today_target=plan.today_target,
-        spent_today=spent_today,
-        income_overrides=cashflow_income_overrides(user_id, tomorrow, horizon_end)
-        if tomorrow <= horizon_end
-        else {},
-    )
-    buffer_rows = cashflow_period_rows(
-        user_id,
-        today=today,
-        horizon_end=horizon_end,
-        opening_balance_before_today_spend=opening_before_today_spend,
-        daily_target=plan.daily_target,
-        today_target=plan.today_target,
-        spent_today=spent_today,
-        income_overrides=cashflow_income_overrides(user_id, tomorrow, horizon_end)
-        if tomorrow <= horizon_end
-        else {},
-        use_buffer_boundaries=True,
-        buffer_start_date=start_date,
-    )
-
-    # "В буфере сейчас" is money that can stay on the separate buffer
-    # account after the whole current pay period has been funded.  The
-    # calculation in CashflowPlan only subtracts today's allowance, which is
-    # useful for the daily-limit screen but overstates the balance that may be
-    # moved to the buffer account.  The first period row already reserves the
-    # daily budget for every remaining day of the current period and excludes
-    # piggy-bank movements.
-    # The buffer is a separate reserve account.  Its balance comes from the
-    # recorded reserve balance, never from the card remainder or the daily
-    # budget calculation.
-    buffer_balance_now = round(
-        max(0.0, legacy.reserve_balance_before(user_id, today + timedelta(days=1))),
-        2,
-    )
-    if periods:
-        # The current-period row must use the same carried limit and protected
-        # buffer as the home screen.  Future rows remain forecast values.
-        periods[0]["daily"] = carried_daily
-        periods[0]["buffer"] = buffer_balance_now
-        periods[0]["put_aside"] = buffer_balance_now
-        periods[0]["take"] = 0.0
-    if buffer_rows:
-        buffer_rows[0]["buffer"] = buffer_balance_now
-        buffer_rows[0]["put_aside"] = buffer_balance_now
-        buffer_rows[0]["take"] = 0.0
-
-    # Income explicitly sent to the buffer is kept out of the card's daily
-    # allowance and is added to every reserve balance in the current forecast.
-    manual_buffer = manual_buffer_income(user_id, start_date, today)
-    if manual_buffer:
-        buffer_balance_now = round(buffer_balance_now + manual_buffer, 2)
-        for row in periods:
-            row["buffer"] = round(row["buffer"] + manual_buffer, 2)
-        for row in buffer_rows:
-            row["buffer"] = round(row["buffer"] + manual_buffer, 2)
-        if periods:
-            periods[0]["put_aside"] = round(periods[0]["put_aside"] + manual_buffer, 2)
-        if buffer_rows:
-            buffer_rows[0]["put_aside"] = round(buffer_rows[0]["put_aside"] + manual_buffer, 2)
-
-    # Keep the recorded starting capital visible as the first row of the
-    # buffer table.  It is not a salary/advance and must never be presented as
-    # one.  Later rows carry the remaining balance through the calculation;
-    # this display-only row makes the origin of that balance explicit.
-    start_capital_row = {
-        "start": start_date.isoformat(),
-        "end": start_date.isoformat(),
-        "kind": "Стартовый капитал",
-        "initial_capital": True,
-        "received": round(start_capital, 2),
-        "planned_received": round(start_capital, 2),
-        "carryover": 0.0,
-        "income_overridden": False,
-        "received_editable": False,
-        "budget_start": None,
-        "days": 0,
-        "mandatory": 0.0,
-        "free": round(start_capital, 2),
-        "daily": 0.0,
-        "put_aside": 0.0,
-        "take": 0.0,
-        "buffer": 0.0,
-        "shortfall": 0.0,
-    }
-    history_rows = []
-    history_overrides = cashflow_income_overrides(user_id, start_date, today)
-    for payout in payday_boundaries(user_id, start_date, today):
-        budget_start = payout["date"]
-        # The current buffer card already starts on this payday.  Keep the
-        # payout and the following buffer interval together in that card.
-        if buffer_rows and buffer_rows[0]["start"] == (budget_start - timedelta(days=1)).isoformat():
-            planned = round(sum(planned_income_map(user_id, budget_start, budget_start).values()), 2)
-            received = history_overrides.get(budget_start, planned)
-            buffer_rows[0]["budget_start"] = budget_start.isoformat()
-            buffer_rows[0]["received"] = received
-            buffer_rows[0]["planned_received"] = planned
-            buffer_rows[0]["income_overridden"] = budget_start in history_overrides
-            buffer_rows[0]["received_editable"] = True
-            buffer_rows[0]["free"] = round(
-                buffer_rows[0].get("carryover", 0.0) + received - buffer_rows[0]["mandatory"], 2
-            )
-            continue
-        planned = round(sum(planned_income_map(user_id, budget_start, budget_start).values()), 2)
-        received = history_overrides.get(budget_start, planned)
-        history_rows.append({
-            "start": (budget_start - timedelta(days=1)).isoformat(),
-            "end": (budget_start - timedelta(days=1)).isoformat(),
-            "kind": payout["kind"],
-            "historical_payout": True,
-            "initial_capital": False,
-            "budget_start": budget_start.isoformat(),
-            "received": received,
-            "planned_received": planned,
-            "income_overridden": budget_start in history_overrides,
-            "received_editable": True,
-            "carryover": 0.0,
-            "days": 0,
-            "mandatory": 0.0,
-            "free": 0.0,
-            "daily": 0.0,
-            "put_aside": 0.0,
-            "take": 0.0,
-            "buffer": 0.0,
-            "shortfall": 0.0,
-        })
-    buffer_rows[:0] = [start_capital_row, *history_rows]
-
-    return {
-        "enabled": True,
-        "settings": settings,
-        "today": today.isoformat(),
-        "horizon_end": horizon_end.isoformat(),
-        "current_cash": current_cash,
-        "available_cash": available_cash,
-        "reserved_mandatory": reserved_mandatory,
-        "mandatory_period": mandatory_period,
-        "piggy_bank_balance": piggy_bank_balance(user_id),
-        "daily_target": carried_daily,
-        "today_target": carried_daily,
-        "available_today": carried_available_today,
-        "buffer_balance": buffer_balance_now,
-        "capital_shortfall": plan.capital_shortfall,
-        "period_budget": period_budget,
-        "remaining_period": remaining_period,
-        "spent_period": spent_period,
-        "projected_end_balance": plan.projected_end_balance,
-        "minimum_projected_balance": plan.minimum_projected_balance,
-        "next_income": next_income,
-        "reason": reason,
-        "timeline": plan.timeline[:24],
-        "periods": periods,
-        "buffer_periods": buffer_rows,
-    }
 
 
 @app.get("/api/cashflow-settings")
@@ -749,6 +103,8 @@ def save_cashflow_settings(payload: CashflowSettingsIn, user: TelegramUser = Dep
             (int(payload.cashflow_enabled), payload.start_date.isoformat(), payload.start_capital, uid),
         )
         con.execute("DELETE FROM reserve_movements WHERE user_id=? AND source='auto'", (uid,))
+    # A new start point is a new history: every card period is recalculated.
+    engine.forget_allocations(uid)
     return cashflow_settings(uid)
 
 
@@ -758,35 +114,27 @@ def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
     return cashflow_snapshot(uid)
 
 
+BUFFER_KEYS = (
+    "today", "horizon_end", "daily_target", "available_today", "buffer_balance",
+    "capital_shortfall", "shortfall_date", "periods", "card_balance", "tomorrow_limit",
+)
+
+
 @app.get("/api/buffer")
 def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
     snapshot = cashflow_snapshot(uid)
     if not snapshot.get("enabled"):
         return {"enabled": False, "settings": snapshot["settings"], "periods": []}
-    return {
-        "enabled": True,
-        "settings": snapshot["settings"],
-        "today": snapshot["today"],
-        "horizon_end": snapshot["horizon_end"],
-        "daily_target": snapshot["daily_target"],
-        "available_today": snapshot["available_today"],
-        "buffer_balance": snapshot["buffer_balance"],
-        "capital_shortfall": snapshot["capital_shortfall"],
-        "periods": snapshot["buffer_periods"],
-    }
+    return {"enabled": True, "settings": snapshot["settings"], **{k: snapshot[k] for k in BUFFER_KEYS}}
 
 
-def editable_cashflow_period(user_id: int, period_start: date) -> bool:
-    settings = cashflow_settings(user_id)
-    start_date = date.fromisoformat(settings["start_date"])
-    if period_start < start_date:
-        return False
-    today = clock.today()
-    horizon_end = add_months(today, max(1, min(12, int(settings["forecast_months"]))))
-    return any(
-        period["date"] == period_start
-        for period in payday_boundaries(user_id, start_date, horizon_end)
+def editable_payday_row(user_id: int, period_start: date) -> dict | None:
+    snapshot = engine.compute(user_id, force_enabled=bool(cashflow_settings(user_id)["cashflow_enabled"]))
+    return next(
+        (row for row in snapshot["periods"]
+         if row["override_key"] == period_start.isoformat() and row["received_editable"]),
+        None,
     )
 
 
@@ -796,9 +144,12 @@ def save_cashflow_income_override(
     payload: CashflowIncomeOverrideIn,
     user: TelegramUser = Depends(current_user),
 ) -> dict:
+    """Actual amount of the salary/advance that funds the card period
+    starting on ``period_start``.  It replaces the forecast for this and every
+    later calculation; closed periods are not editable."""
     uid = legacy.user_ready(user)
-    if not editable_cashflow_period(uid, period_start):
-        raise HTTPException(422, "Можно изменить только будущую выплату из текущего прогноза")
+    if editable_payday_row(uid, period_start) is None:
+        raise HTTPException(422, "Фактическую сумму можно ввести только для текущей или будущей выплаты")
     with legacy.connect() as con:
         con.execute(
             "INSERT INTO cashflow_income_overrides(user_id,period_start,amount) VALUES(?,?,?) "
@@ -806,7 +157,6 @@ def save_cashflow_income_override(
             "amount=excluded.amount,updated_at=CURRENT_TIMESTAMP",
             (uid, period_start.isoformat(), payload.amount),
         )
-    legacy.invalidate_current_auto_reserve(uid)
     return get_buffer(user)
 
 
@@ -815,14 +165,15 @@ def delete_cashflow_income_override(
     period_start: date, user: TelegramUser = Depends(current_user)
 ) -> dict:
     uid = legacy.user_ready(user)
+    if editable_payday_row(uid, period_start) is None:
+        raise HTTPException(422, "Выплата закрытого периода не изменяется")
     with legacy.connect() as con:
         deleted = con.execute(
-            "DELETE FROM cashflow_income_overrides WHERE user_id=? AND period_start IN (?,?)",
-            (uid, period_start.isoformat(), (period_start - timedelta(days=1)).isoformat()),
+            "DELETE FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
+            (uid, period_start.isoformat()),
         )
     if deleted.rowcount == 0:
         raise HTTPException(404, "Корректировка выплаты не найдена")
-    legacy.invalidate_current_auto_reserve(uid)
     return get_buffer(user)
 
 
@@ -832,32 +183,41 @@ def get_piggy_bank(user: TelegramUser = Depends(current_user)) -> dict:
     return piggy_bank_snapshot(uid)
 
 
-def add_piggy_bank_movement(
-    user_id: int, direction: Literal["deposit", "withdraw"], payload: PiggyBankMovementIn
-) -> dict:
-    if payload.movement_date > clock.today():
-        raise HTTPException(422, "Дата операции не может быть в будущем")
-    if direction == "deposit" and payload.source == "daily_budget":
-        flow = cashflow_snapshot(user_id)
-        available = float(flow.get("available_today", 0)) if flow.get("enabled") else 0.0
-        if payload.amount > max(0.0, available):
-            raise HTTPException(422, "Нельзя перенести больше неизрасходованного остатка за день")
+def _insert_piggy(user_id: int, direction: str, amount: float, day: date, note: str,
+                  source: str, purpose: str | None = None) -> dict:
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         movement_id = con.execute(
-            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source) VALUES(?,?,?,?,?,?)",
-            (user_id, direction, payload.amount, payload.movement_date.isoformat(), payload.note, payload.source),
+            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (user_id, direction, amount, day.isoformat(), note, source, purpose),
         ).lastrowid
         try:
             check_piggy_history(con, user_id)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
-    legacy.invalidate_current_auto_reserve(user_id)
     return legacy.one(
-        "SELECT id,direction,amount,movement_date,note,source,created_at "
+        "SELECT id,direction,amount,movement_date,note,source,purpose,created_at "
         "FROM piggy_bank_movements WHERE id=? AND user_id=?",
         (movement_id, user_id),
     ) or {}
+
+
+def add_piggy_bank_movement(
+    user_id: int, direction: Literal["deposit", "withdraw"], payload: PiggyBankMovementIn
+) -> dict:
+    if payload.movement_date > clock.today():
+        raise HTTPException(422, "Дата операции не может быть в будущем")
+    if direction == "withdraw" and payload.source == "daily_budget":
+        raise HTTPException(422, "Перевод на карту выполняется операцией «Копилка → карта»")
+    if direction == "deposit" and payload.source == "daily_budget":
+        if payload.movement_date != clock.today():
+            raise HTTPException(422, "Перенести можно только остаток сегодняшнего дня")
+        flow = engine.compute(user_id, force_enabled=bool(cashflow_settings(user_id)["cashflow_enabled"]))
+        if cents(payload.amount) > max(0, cents(flow["available_today"])):
+            raise HTTPException(422, "Нельзя перенести больше неизрасходованного остатка за день")
+    return _insert_piggy(user_id, direction, payload.amount, payload.movement_date,
+                         payload.note, payload.source)
 
 
 @app.post("/api/piggy-bank/deposit")
@@ -878,6 +238,23 @@ def withdraw_from_piggy_bank(
     return {"movement": movement, **piggy_bank_snapshot(uid)}
 
 
+@app.post("/api/piggy-bank/to-card")
+def piggy_bank_to_card(payload: PiggyToCardIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """Explicit piggy bank -> card transfer.  The piggy bank decreases and the
+    current card period increases; the buffer is never touched."""
+    uid = legacy.user_ready(user)
+    if payload.movement_date != clock.today():
+        raise HTTPException(422, "Перевод на карту выполняется сегодняшним днём")
+    if payload.purpose == "cover_overspend":
+        flow = engine.compute(uid, force_enabled=bool(cashflow_settings(uid)["cashflow_enabled"]))
+        if cents(payload.amount) > cents(flow["overspend"]):
+            raise HTTPException(422, "Сумма больше сегодняшнего перерасхода")
+    note = payload.note or ("Покрытие перерасхода" if payload.purpose == "cover_overspend" else "Перевод на карту")
+    movement = _insert_piggy(uid, "withdraw", payload.amount, payload.movement_date, note,
+                             "daily_budget", payload.purpose)
+    return {"movement": movement, **piggy_bank_snapshot(uid)}
+
+
 @app.delete("/api/piggy-bank/movements/{movement_id}")
 def delete_piggy_bank_movement(
     movement_id: int, user: TelegramUser = Depends(current_user)
@@ -892,7 +269,6 @@ def delete_piggy_bank_movement(
             check_piggy_history(con, uid)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
-    legacy.invalidate_current_auto_reserve(uid)
     return {"ok": True, **piggy_bank_snapshot(uid)}
 
 

@@ -18,9 +18,12 @@ services:
     restart: unless-stopped
     command: ["python", "bot.py"]
     environment:
+      DATABASE_PATH: /app/data/budget.sqlite3
       BOT_TOKEN: ${BOT_TOKEN:-}
       MINI_APP_URL: ${MINI_APP_URL:-}
       BUDGET_TIMEZONE: ${BUDGET_TIMEZONE:-Europe/Moscow}
       REMINDER_CHECK_SECONDS: ${REMINDER_CHECK_SECONDS:-60}
+    volumes:
+      - ./data:/app/data
     depends_on:
       - web

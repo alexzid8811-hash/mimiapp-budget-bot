@@ -100,10 +100,7 @@ function renderDashboard() {
   $("cardBuffer").textContent = money(d.reserve.balance);
   $("cardPiggy").textContent = "—";
   $("cardReservesTotal").textContent = money(d.reserve.balance);
-  const movement = Number(d.reserve.auto_movement || 0);
-  $("reserveReason").textContent = movement > 0
-    ? `${d.reserve.reason}: ${money(movement)} автоматически исключено из свободного бюджета.`
-    : movement < 0 ? `${d.reserve.reason}: ${money(Math.abs(movement))} возвращено из копилки в период.` : d.reserve.reason;
+  $("reserveReason").textContent = d.reserve.reason;
   const pct = d.period_budget > 0 ? Math.min(100, Math.max(0, d.spent / d.period_budget * 100)) : 0;
   $("dayProgress").style.width = `${pct}%`;
   const warn = $("deficitWarning");
