@@ -622,3 +622,20 @@ def test_backup_restores_bill_history_and_paid_links(client):
     assert len(events) == 1
     assert events[0]['amount'] == 100
     assert events[0]['paid'] is True
+
+
+def test_moving_bill_day_mid_month_keeps_one_occurrence(client, monkeypatch):
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 23))
+    rule = client.post('/api/bill-rules', json={'title':'авто','amount':25000,'day_of_month':22,'effective_date':'2026-09-01'}).json()
+    client.put(f"/api/bill-rules/{rule['id']}", json={'title':'авто','amount':25000,'day_of_month':24,'effective_date':'2026-09-23'})
+    events = planning.bill_events(1, date(2026, 9, 22), date(2026, 10, 6))
+    assert [(e['due_date'], e['amount']) for e in events] == [('2026-09-24', 25000)]
+    assert planning.unpaid_mandatory_map(1, date(2026, 9, 22), date(2026, 10, 6)) == {date(2026, 9, 24): 25000}
+
+
+def test_moving_paid_bill_day_does_not_charge_it_again_that_month(client):
+    rule = client.post('/api/bill-rules', json={'title':'авто','amount':25000,'day_of_month':10,'effective_date':'2026-09-01'}).json()
+    client.post(f"/api/bills/{rule['id']}/pay", json={'due_date':'2026-09-10'})
+    client.put(f"/api/bill-rules/{rule['id']}", json={'title':'авто','amount':25000,'day_of_month':24,'effective_date':'2026-09-15'})
+    events = planning.bill_events(1, date(2026, 9, 1), date(2026, 10, 31))
+    assert [(e['due_date'], e['paid']) for e in events] == [('2026-09-10', True), ('2026-10-24', False)]
