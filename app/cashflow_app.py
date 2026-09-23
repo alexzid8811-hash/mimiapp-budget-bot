@@ -5,7 +5,7 @@ and stores operations.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
 
 from fastapi import Depends, HTTPException
@@ -150,6 +150,10 @@ def save_cashflow_income_override(
     uid = legacy.user_ready(user)
     if editable_payday_row(uid, period_start) is None:
         raise HTTPException(422, "Фактическую сумму можно ввести только для текущей или будущей выплаты")
+    # Lock in the money already shown for every earlier period before this
+    # edit can change the plan, so the edit only ever affects this period and
+    # the ones after it, no matter which order payouts are edited in.
+    engine.freeze_allocations_before(uid, period_start)
     with legacy.connect() as con:
         con.execute(
             "INSERT INTO cashflow_income_overrides(user_id,period_start,amount) VALUES(?,?,?) "
@@ -157,9 +161,6 @@ def save_cashflow_income_override(
             "amount=excluded.amount,updated_at=CURRENT_TIMESTAMP",
             (uid, period_start.isoformat(), payload.amount),
         )
-    # The actual payment changes the periods funded from this payday on;
-    # earlier periods keep the money they already received.
-    engine.forget_allocations(uid, period_start - timedelta(days=1))
     return get_buffer(user)
 
 
@@ -170,6 +171,9 @@ def delete_cashflow_income_override(
     uid = legacy.user_ready(user)
     if editable_payday_row(uid, period_start) is None:
         raise HTTPException(422, "Выплата закрытого периода не изменяется")
+    # Freeze with the override still in effect: resetting it is itself an
+    # edit at this payday, so everything before it stays exactly as shown.
+    engine.freeze_allocations_before(uid, period_start)
     with legacy.connect() as con:
         deleted = con.execute(
             "DELETE FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
@@ -177,7 +181,6 @@ def delete_cashflow_income_override(
         )
     if deleted.rowcount == 0:
         raise HTTPException(404, "Корректировка выплаты не найдена")
-    engine.forget_allocations(uid, period_start - timedelta(days=1))
     return get_buffer(user)
 
 

@@ -202,11 +202,12 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 funded_days={d: n for d, n in funded_days.items() if day <= d <= look_ahead},
             )
             for period in by_funding[day]:
-                # Money already moved to the card stays there: a period funded
-                # on or before today keeps its stored amount.  Corrections that
-                # must recalculate it drop the stored rows explicitly.
-                funded = period.funded_on <= inp.today
-                if funded and period.start in inp.stored_allocations:
+                # A stored period keeps its recorded amount, whether it was
+                # locked in automatically because its funding day has passed
+                # or explicitly frozen before an edit to a later payday.
+                # Recalculating it is an explicit action (a new start, or an
+                # edit at or before this period) that clears the stored row.
+                if period.start in inp.stored_allocations:
                     value = inp.stored_allocations[period.start]
                 else:
                     value = decision.daily * period.days

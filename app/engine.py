@@ -220,9 +220,10 @@ def _period_dict(period) -> dict:
     return {"start": period.start.isoformat(), "end": period.end.isoformat(), "days": period.days}
 
 
-def compute(uid: int, *, force_enabled: bool = False) -> dict:
-    """Full budget snapshot.  With the start capital switched off, the budget
-    is calculated from the latest payday with an empty account."""
+def _run(uid: int, *, force_enabled: bool = False) -> tuple[LedgerInput, dict, date, date, dict, bool]:
+    """Resolve the start/capital, run the ledger and return it with the
+    extras, today, start, settings and whether the calculation is enabled.
+    Shared by :func:`compute` and :func:`freeze_allocations_before`."""
     settings = settings_for(uid)
     today = clock.today()
     months = max(1, min(12, settings["forecast_months"]))
@@ -235,6 +236,35 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         start, capital = (max(recent) if recent else today), 0.0
 
     inp, extras = build_input(uid, start=start, capital=capital, months=months, today=today)
+    return inp, extras, today, start, settings, enabled
+
+
+def freeze_allocations_before(uid: int, boundary: date) -> None:
+    """Snapshot the currently computed card allocations for every period that
+    starts before ``boundary``, so that a later edit to a payday at or after
+    it can never move money already shown for an earlier period.
+
+    Called right before an income override is written or removed: the edit
+    itself only affects periods from ``boundary`` on, whichever order edits
+    are made in.
+    """
+    inp, _extras, _today, _start, _settings, enabled = _run(uid, force_enabled=True)
+    if not enabled:
+        return
+    result = run_ledger(inp)
+    frozen = {
+        period.start: (period.funded_on, result.allocations[period.start])
+        for period in result.periods if period.start < boundary
+    }
+    with connect() as con:
+        con.execute("DELETE FROM card_allocations WHERE user_id=?", (uid,))
+    store_allocations(uid, frozen)
+
+
+def compute(uid: int, *, force_enabled: bool = False) -> dict:
+    """Full budget snapshot.  With the start capital switched off, the budget
+    is calculated from the latest payday with an empty account."""
+    inp, extras, today, start, settings, enabled = _run(uid, force_enabled=force_enabled)
     result = run_ledger(inp)
     if enabled:
         store_allocations(uid, result.to_store)

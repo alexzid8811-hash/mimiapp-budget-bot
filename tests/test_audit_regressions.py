@@ -653,3 +653,48 @@ def test_changing_future_payout_keeps_money_already_moved_to_card(client):
     assert after['daily_target'] == before['daily_target']
     changed = next(p for p in after['periods'] if p['override_key'] == future['override_key'])
     assert changed['to_card'] > future['to_card']
+
+
+def test_editing_a_payout_only_changes_periods_from_it_on_regardless_of_order(client):
+    """Editing period X freezes every period before X exactly as shown, and
+    only recalculates X and later. This holds however many edits are made,
+    whichever order they touch the plan in."""
+    with connect() as con:
+        con.execute("UPDATE settings SET forecast_months=6 WHERE user_id=1")
+
+    def editable(snapshot):
+        return [p for p in snapshot['periods'] if p['received_editable']]
+
+    original = cashflow_snapshot(1)
+    future = editable(original)
+    assert len(future) >= 4, "need at least four editable payouts for this test"
+    # future[0] is the payout funding the period shown as periods[0] (already
+    # received but still open); pick the ones after it so B, C and A are each
+    # a distinct, later period.
+    start_row, b_row, c_row, a_row = original['periods'][0], future[1], future[2], future[3]
+
+    # Edit the later payout A: everything before it (Старт, B, C) must stay
+    # exactly as it was before this edit.
+    resp = client.put(f"/api/cashflow/income-overrides/{a_row['override_key']}",
+                      json={'amount': a_row['payday_amount'] + 200000})
+    assert resp.status_code == 200
+    after_a = cashflow_snapshot(1)
+    for key, before_row in ((start_row['start'], start_row), (b_row['override_key'], b_row), (c_row['override_key'], c_row)):
+        row = start_row if key == start_row['start'] else next(p for p in after_a['periods'] if p['override_key'] == key)
+        assert row['to_card'] == before_row['to_card'], key
+    a_after_first_edit = next(p for p in after_a['periods'] if p['override_key'] == a_row['override_key'])
+    assert a_after_first_edit['to_card'] != a_row['to_card']
+
+    # Now edit the earlier payout B: everything before B (just Старт) keeps
+    # the original value; B onward (including C and A) is recalculated, even
+    # though A was frozen a moment ago by the first edit.
+    resp = client.put(f"/api/cashflow/income-overrides/{b_row['override_key']}",
+                      json={'amount': b_row['payday_amount'] + 500000})
+    assert resp.status_code == 200
+    after_b = cashflow_snapshot(1)
+    assert after_b['periods'][0]['to_card'] == start_row['to_card']
+    c_after_second_edit = next(p for p in after_b['periods'] if p['override_key'] == c_row['override_key'])
+    assert c_after_second_edit['to_card'] != c_row['to_card']
+    a_after_second_edit = next(p for p in after_b['periods'] if p['override_key'] == a_row['override_key'])
+    assert a_after_second_edit['payday_amount'] == a_row['payday_amount'] + 200000
+    assert a_after_second_edit['to_card'] != a_after_first_edit['to_card']
