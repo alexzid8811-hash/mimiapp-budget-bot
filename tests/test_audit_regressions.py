@@ -36,9 +36,8 @@ def salary_rule():
         return dict(con.execute("SELECT * FROM income_rules WHERE user_id=1 AND kind='salary'").fetchone())
 
 
-def test_unreceived_planned_income_does_not_inflate_start_capital(client):
-    # The salary scheduled for September 7 is still only a forecast because no
-    # matching actual income transaction was recorded.
+def test_legacy_recurring_income_needs_actual_transaction(client):
+    # Ordinary legacy income rules do not claim that money reached the card.
     assert cashflow_snapshot(1)["current_cash"] == 1000
 
     response = client.post(
@@ -53,6 +52,30 @@ def test_unreceived_planned_income_does_not_inflate_start_capital(client):
     )
     assert response.status_code == 200
     assert cashflow_snapshot(1)["current_cash"] == 11300
+
+
+def test_payroll_estimate_enters_card_only_after_actual_amount_is_saved(client, monkeypatch):
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 23))
+    with connect() as con:
+        con.execute(
+            "UPDATE settings SET payroll_enabled=1,salary_gross=110689,bonus_gross=15000,"
+            "cashflow_start_date='2026-09-17',cashflow_start_capital=39000 WHERE user_id=1"
+        )
+
+    snapshot = cashflow_snapshot(1)
+    advance = planning.income_map(
+        1, date(2026, 9, 22), date(2026, 9, 22), include_manual=False
+    )[date(2026, 9, 22)]
+    assert snapshot['current_cash'] == 39000
+    assert client.put(
+        '/api/cashflow/income-overrides/2026-09-23', json={'amount': advance}
+    ).status_code == 200
+    corrected = cashflow_snapshot(1)
+    assert corrected['current_cash'] == round(39000 + advance, 2)
+    payment = next(row for row in corrected['buffer_periods'] if row.get('historical_payout'))
+    assert payment['received_editable'] is True
+    assert payment['received'] == advance
+    assert snapshot['daily_target'] > 0
 
 
 @pytest.mark.parametrize('spent,expected_daily,available,shortfall', [(900, 11.11, -800, 0), (1100, 0, -1000, 100)])
@@ -125,7 +148,9 @@ def test_yesterday_overspend_is_not_subtracted_again_after_midnight(client, monk
     assert after['buffer_balance'] == before['buffer_balance']
     assert after['remaining_period'] == round(before['period_budget'] - total_spent, 2)
     assert after['current_cash'] == round(39000 - 1753.55 - total_spent, 2)
-    assert after['remaining_period'] + after['buffer_balance'] == after['available_cash']
+    # The protected buffer is a separate account; it is not the leftover of
+    # the card period and cannot be used to make daily money larger.
+    assert after['buffer_balance'] == 1000
     days_left = (
         date.fromisoformat(after['periods'][0]['end'])
         - date.fromisoformat(after['today'])
@@ -210,7 +235,7 @@ def test_future_received_amount_override_recalculates_entire_cashflow(client, mo
         )
 
     before = cashflow_snapshot(1)
-    planned = next(row for row in before['periods'] if row['start'] == '2026-09-23')
+    planned = next(row for row in before['periods'] if row['budget_start'] == '2026-09-23')
     assert planned['received'] == 39395.22
     assert planned['income_overridden'] is False
 
@@ -219,7 +244,7 @@ def test_future_received_amount_override_recalculates_entire_cashflow(client, mo
     )
     assert response.status_code == 200
     after = cashflow_snapshot(1)
-    corrected = next(row for row in after['periods'] if row['start'] == '2026-09-23')
+    corrected = next(row for row in after['periods'] if row['budget_start'] == '2026-09-23')
     assert corrected['planned_received'] == 39395.22
     assert corrected['received'] == 41000
     assert corrected['free'] == 41000
@@ -241,7 +266,7 @@ def test_income_override_can_be_reset_and_current_row_cannot_be_edited(client):
     ).status_code == 200
     assert client.delete('/api/cashflow/income-overrides/2026-09-23').status_code == 200
     restored = next(
-        row for row in cashflow_snapshot(1)['periods'] if row['start'] == '2026-09-23'
+        row for row in cashflow_snapshot(1)['periods'] if row['budget_start'] == '2026-09-23'
     )
     assert restored['income_overridden'] is False
     assert restored['received'] == restored['planned_received']
@@ -450,7 +475,7 @@ def test_backup_restores_cashflow_income_overrides(client):
     ensure_user(2)
     restore_user_data(2, backup)
     corrected = next(
-        row for row in cashflow_snapshot(2)['periods'] if row['start'] == '2026-09-23'
+        row for row in cashflow_snapshot(2)['periods'] if row['budget_start'] == '2026-09-23'
     )
     assert corrected['received'] == 41000
     assert corrected['income_overridden'] is True
