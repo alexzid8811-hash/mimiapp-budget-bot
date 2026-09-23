@@ -234,6 +234,23 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
  assert.doesNotMatch(get('bufferPeriods').innerHTML,/−5.000,00/);
 });
 
+test('start row shows the start capital as its money and the horizon with a year', async () => {
+ const {get,responses}=setup();
+ Object.assign(responses['/api/cashflow'],{horizon_end:'2027-09-23'});
+ responses['/api/cashflow'].periods=[
+ {start:'2026-09-23',end:'2026-10-06',kind:'Старт',payday:null,days:14,received:0,mandatory:27700,free:-27700,to_card:20269.95,daily:1351.33,buffer_start:68534.33,put_aside:0,take:47969.95,buffer:20564.38},
+ {start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',payday:'2026-10-07',days:15,received:81199.72,mandatory:41900,free:39299.72,to_card:20270.10,daily:1351.33,buffer_start:20564.38,put_aside:0,take:970.38,buffer:19594}
+ ];
+ await get('refreshBtn').listeners.click();
+ const table=get('bufferPeriods').innerHTML;
+ assert.match(table,/68.534,33/);
+ assert.match(table,/40.834,33/);
+ assert.match(table,/20.564,38.₽<\/span><small>в буфер/);
+ assert.doesNotMatch(table,/47.969,95/);
+ assert.doesNotMatch(get('bufWarn').textContent,/23 сент/);
+ assert.match(get('bufferHorizon').textContent,/2027/);
+});
+
 test('future received amount can be edited and sent for budget recalculation', async () => {
  const {sandbox,get,requests,responses}=setup();
  responses['/api/cashflow'].periods=[
