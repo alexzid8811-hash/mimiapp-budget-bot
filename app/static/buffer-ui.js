@@ -46,7 +46,10 @@
     const value = `<span>${formatMoney(period.received)}</span>`;
     if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
     const badge = period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
-    return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.budget_start || period.start}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
+    const periodStart = period.budget_start || period.start;
+    const edit = `<button class="editable-money" type="button" onclick="editCashflowIncome('${periodStart}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
+    if (period.income_overridden) return edit;
+    return `${edit}<button class="secondary confirm-income" type="button" onclick="confirmCashflowIncome('${periodStart}')">Подтвердить сумму</button>`;
   }
 
   function renderBuffer() {
@@ -139,6 +142,20 @@
       `${formatDate(period.start)} — ${formatDate(period.end)} · по расчёту ${formatMoney(period.planned_received)}`;
     document.getElementById("resetCashflowIncomeBtn").hidden = !period.income_overridden;
     document.getElementById("cashflowIncomeDialog").showModal();
+  };
+
+  window.confirmCashflowIncome = async periodStart => {
+    const period = bufferState.buffer?.periods?.find(item => item.budget_start === periodStart || item.start === periodStart);
+    if (!period?.received_editable) return;
+    try {
+      await request(`/api/cashflow/income-overrides/${period.budget_start || period.start}`, {
+        method: "PUT", body: JSON.stringify({ amount: Number(period.planned_received) }),
+      });
+      if (typeof toast === "function") toast("Расчётная выплата подтверждена, дневной бюджет пересчитан");
+      await loadAll();
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
   };
 
   document.getElementById("cashflowIncomeForm")?.addEventListener("submit", async event => {
