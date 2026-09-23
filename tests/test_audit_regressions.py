@@ -72,7 +72,7 @@ def test_payroll_estimate_enters_card_only_after_actual_amount_is_saved(client, 
     ).status_code == 200
     corrected = cashflow_snapshot(1)
     assert corrected['current_cash'] == round(39000 + advance, 2)
-    payment = next(row for row in corrected['buffer_periods'] if row.get('historical_payout'))
+    payment = next(row for row in corrected['buffer_periods'] if row.get('budget_start') == '2026-09-23')
     assert payment['received_editable'] is True
     assert payment['received'] == advance
     assert snapshot['daily_target'] > 0
