@@ -175,7 +175,9 @@ def cashflow_periods(user_id: int, today: date, horizon_end: date) -> list[dict]
     ]
 
 
-def buffer_periods(user_id: int, today: date, horizon_end: date) -> list[dict]:
+def buffer_periods(
+    user_id: int, today: date, horizon_end: date, start_date: date | None = None
+) -> list[dict]:
     """Periods used by the protected buffer.
 
     A card budget starts on the day *after* a payday, because the payday still
@@ -183,17 +185,20 @@ def buffer_periods(user_id: int, today: date, horizon_end: date) -> list[dict]:
     obligations by the real date cash arrives, so its boundaries are the real,
     workday-adjusted payday dates themselves.
     """
-    paydays = []
-    for item in payday_boundaries(user_id, today + timedelta(days=1), horizon_end + timedelta(days=1)):
+    # Unlike the card, the buffer period begins on the real payday itself.
+    # Find the last real payday even if the screen is opened a day later;
+    # otherwise one buffer period was incorrectly split into a payout card
+    # and a separate "current" card.
+    floor = min(start_date or today, today)
+    actual_paydays = []
+    for item in payday_boundaries(user_id, add_months(floor, -1), horizon_end + timedelta(days=1)):
         actual_date = item["date"] - timedelta(days=1)
-        if today <= actual_date <= horizon_end:
-            paydays.append({"date": actual_date, "kind": item["kind"], "budget_start": item["date"]})
-    starts = [{"date": today, "kind": "сейчас", "budget_start": None}, *paydays]
-    # Do not create two rows for an actual payday that is today: the current
-    # buffer segment itself starts on that payday.
-    if paydays and paydays[0]["date"] == today:
-        starts[0] = paydays.pop(0)
-    starts = [starts[0], *paydays]
+        if floor <= actual_date <= horizon_end:
+            actual_paydays.append({"date": actual_date, "kind": item["kind"], "budget_start": item["date"]})
+    past = [item for item in actual_paydays if item["date"] <= today]
+    current = past[-1] if past else {"date": today, "kind": "сейчас", "budget_start": None}
+    paydays = [item for item in actual_paydays if item["date"] > today]
+    starts = [current, *paydays]
     return [
         {
             **item,
@@ -239,6 +244,7 @@ def cashflow_period_rows(
     spent_today: float = 0,
     income_overrides: dict[date, float] | None = None,
     use_buffer_boundaries: bool = False,
+    buffer_start_date: date | None = None,
 ) -> list[dict]:
     """Build buffer rows without rewriting periods before an edited payment.
 
@@ -247,7 +253,7 @@ def cashflow_period_rows(
     ones; rows before it retain the plan that was already shown to the user.
     """
     periods = (
-        buffer_periods(user_id, today, horizon_end)
+        buffer_periods(user_id, today, horizon_end, buffer_start_date)
         if use_buffer_boundaries
         else cashflow_periods(user_id, today, horizon_end)
     )
@@ -586,6 +592,7 @@ def cashflow_snapshot(user_id: int) -> dict:
         if tomorrow <= horizon_end
         else {},
         use_buffer_boundaries=True,
+        buffer_start_date=start_date,
     )
 
     # "В буфере сейчас" is money that can stay on the separate buffer
@@ -656,6 +663,20 @@ def cashflow_snapshot(user_id: int) -> dict:
     history_overrides = cashflow_income_overrides(user_id, start_date, today)
     for payout in payday_boundaries(user_id, start_date, today):
         budget_start = payout["date"]
+        # The current buffer card already starts on this payday.  Keep the
+        # payout and the following buffer interval together in that card.
+        if buffer_rows and buffer_rows[0]["start"] == (budget_start - timedelta(days=1)).isoformat():
+            planned = round(sum(planned_income_map(user_id, budget_start, budget_start).values()), 2)
+            received = history_overrides.get(budget_start, planned)
+            buffer_rows[0]["budget_start"] = budget_start.isoformat()
+            buffer_rows[0]["received"] = received
+            buffer_rows[0]["planned_received"] = planned
+            buffer_rows[0]["income_overridden"] = budget_start in history_overrides
+            buffer_rows[0]["received_editable"] = True
+            buffer_rows[0]["free"] = round(
+                buffer_rows[0].get("carryover", 0.0) + received - buffer_rows[0]["mandatory"], 2
+            )
+            continue
         planned = round(sum(planned_income_map(user_id, budget_start, budget_start).values()), 2)
         received = history_overrides.get(budget_start, planned)
         history_rows.append({
