@@ -2,6 +2,7 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
+from app import clock
 from app.cashflow_app import app, cashflow_period_rows
 from app.db import connect, init_db
 
@@ -34,15 +35,27 @@ def test_period_rows_show_buffer_movements(monkeypatch):
         horizon_end=horizon,
         opening_balance_before_today_spend=1000,
         daily_target=100,
+        use_buffer_boundaries=True,
     )
 
     assert rows[0]["kind"] == "сейчас"
-    assert rows[0]["days"] == 7
-    assert rows[0]["put_aside"] == 300
-    assert rows[0]["buffer"] == 300
+    # Buffer rows start on the actual payday, while card periods start the
+    # following day.  The first partial buffer segment therefore ends before
+    # the 22 September payment.
+    assert rows[0]["days"] == 6
+    # Starting capital and already recorded movements are a carry-over, not
+    # an advance.  The payment column must contain only the real payout.
+    assert rows[0]["carryover"] == 1000
+    assert rows[0]["received"] == 0
+    assert rows[0]["put_aside"] == 400
+    assert rows[0]["buffer"] == 400
     assert rows[1]["kind"] == "аванс"
     assert rows[1]["mandatory"] == 500
-    assert rows[1]["take"] == 300
+    assert rows[1]["start"] == "2026-09-21"
+    assert rows[1]["budget_start"] == "2026-09-22"
+    assert rows[1]["carryover"] == 0
+    assert rows[1]["received"] == 1000
+    assert rows[1]["take"] == 400
     assert rows[1]["buffer"] == 0
 
 
@@ -56,7 +69,7 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
             "/api/cashflow-settings",
             json={
                 "cashflow_enabled": True,
-                "start_date": date.today().isoformat(),
+                "start_date": clock.today().isoformat(),
                 "start_capital": 1000,
             },
         )
@@ -64,7 +77,7 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
 
         deposit = client.post(
             "/api/piggy-bank/deposit",
-            json={"amount": 300, "movement_date": date.today().isoformat(), "note": "Резерв"},
+            json={"amount": 300, "movement_date": clock.today().isoformat(), "note": "Резерв"},
         )
         assert deposit.status_code == 200
         assert deposit.json()["balance"] == 300
@@ -80,7 +93,7 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
             "/api/piggy-bank/deposit",
             json={
                 "amount": transfer_amount,
-                "movement_date": date.today().isoformat(),
+                "movement_date": clock.today().isoformat(),
                 "note": "Остаток дня",
                 "source": "daily_budget",
             },
@@ -90,13 +103,13 @@ def test_piggy_bank_is_separate_until_daily_remainder_is_explicitly_transferred(
 
         too_much = client.post(
             "/api/piggy-bank/withdraw",
-            json={"amount": 301 + transfer_amount, "movement_date": date.today().isoformat(), "note": ""},
+            json={"amount": 301 + transfer_amount, "movement_date": clock.today().isoformat(), "note": ""},
         )
         assert too_much.status_code == 422
 
         withdrawn = client.post(
             "/api/piggy-bank/withdraw",
-            json={"amount": 100, "movement_date": date.today().isoformat(), "note": "Вернул"},
+            json={"amount": 100, "movement_date": clock.today().isoformat(), "note": "Вернул"},
         )
         assert withdrawn.status_code == 200
         assert withdrawn.json()["balance"] == round(300 + transfer_amount - 100, 2)
@@ -136,3 +149,64 @@ def test_daily_remainder_transfer_cannot_exceed_available_today(tmp_path, monkey
             },
         )
         assert response.status_code == 422
+
+
+def test_piggy_transfer_to_card_increases_only_card_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setenv("DEV_MODE", "true")
+    init_db()
+
+    with TestClient(app) as client:
+        client.put(
+            "/api/cashflow-settings",
+            json={
+                "cashflow_enabled": True,
+                "start_date": date.today().isoformat(),
+                "start_capital": 1000,
+            },
+        )
+        assert client.post(
+            "/api/piggy-bank/deposit",
+            json={"amount": 300, "movement_date": clock.today().isoformat(), "note": "Накопления"},
+        ).status_code == 200
+        before = client.get("/api/cashflow").json()
+
+        moved = client.post(
+            "/api/piggy-bank/withdraw",
+            json={
+                "amount": 120,
+                "movement_date": clock.today().isoformat(),
+                "note": "Покрытие перерасхода",
+                "source": "daily_budget",
+            },
+        )
+        assert moved.status_code == 200
+        after = client.get("/api/cashflow").json()
+
+        assert moved.json()["movement"]["source"] == "daily_budget"
+        assert after["piggy_bank_balance"] == 180
+        assert after["current_cash"] == before["current_cash"] + 120
+        assert after["buffer_balance"] == before["buffer_balance"]
+
+
+def test_buffer_table_starts_with_recorded_start_capital(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setenv("DEV_MODE", "true")
+    init_db()
+
+    with TestClient(app) as client:
+        client.put(
+            "/api/cashflow-settings",
+            json={
+                "cashflow_enabled": True,
+                "start_date": date.today().isoformat(),
+                "start_capital": 39000,
+            },
+        )
+        buffer = client.get("/api/buffer").json()
+
+    first = buffer["periods"][0]
+    assert first["initial_capital"] is True
+    assert first["kind"] == "Стартовый капитал"
+    assert first["received"] == 39000
+    assert first["received_editable"] is False
