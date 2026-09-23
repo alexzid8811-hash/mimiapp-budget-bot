@@ -7,7 +7,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from app import clock
 from app.db import init_db
-from app.reminders import pending_bill_reminders, record_bill_reminder
 from app.morning_reports import pending_morning_reports, record_morning_report
 
 
@@ -29,43 +28,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def money(value: float) -> str:
     return f"{value:,.2f}".replace(",", " ").replace(".", ",")
-
-
-def reminder_text(reminder: dict) -> str:
-    if reminder["days_left"] == 0:
-        when = "сегодня"
-    elif reminder["days_left"] == 1:
-        when = "завтра"
-    else:
-        when = f"через {reminder['days_left']} дн."
-    return (
-        "🔔 Напоминание об обязательном платеже\n\n"
-        f"{reminder['title']} — {money(reminder['amount'])} ₽\n"
-        f"Срок: {reminder['due_date'].strftime('%d.%m.%Y')} ({when})."
-    )
-
-
-async def send_bill_reminders(application) -> None:
-    now = clock.now()
-    current_time = now.strftime("%H:%M")
-    for reminder in pending_bill_reminders(now.date()):
-        # Using >= keeps reminders reliable after a short bot restart or a
-        # delayed polling cycle.
-        if current_time < reminder["reminder_time"]:
-            continue
-        try:
-            await application.bot.send_message(
-                chat_id=reminder["user_id"], text=reminder_text(reminder)
-            )
-        except Exception:
-            # Keep it pending: a temporary Telegram error must not lose a
-            # financial reminder. The next hourly check will retry it.
-            logger.exception(
-                "Не удалось отправить напоминание пользователю %s",
-                reminder["user_id"],
-            )
-            continue
-        record_bill_reminder(reminder)
 
 
 def morning_report_text(report: dict) -> str:
@@ -112,7 +74,6 @@ async def send_morning_reports(application) -> None:
 
 async def reminder_loop(application) -> None:
     while True:
-        await send_bill_reminders(application)
         await send_morning_reports(application)
         await asyncio.sleep(REMINDER_CHECK_SECONDS)
 
