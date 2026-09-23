@@ -12,11 +12,9 @@ from pydantic import Field
 
 from . import clock, planning
 from .validation import APIModel, DatedConditionsIn
-from .savings import check_piggy_history, piggy_effect
+from .savings import check_piggy_history
 from .money import amount as money_amount, cents
 from .auth import TelegramUser, current_user
-from .budget import current_period as current_period
-from .budget import dashboard_numbers, reserve_needed_for_future
 from .db import connect, ensure_user, init_db
 
 
@@ -65,7 +63,7 @@ class CategoryOrderIn(APIModel):
 class TransactionIn(APIModel):
     type: Literal["expense", "income"]
     amount: float = Field(gt=0)
-    tx_date: date = Field(default_factory=clock.today)
+    tx_date: date = Field(default_factory=lambda: clock.today())
     category_id: int | None = None
     note: str = Field(default="", max_length=200)
     income_destination: Literal["daily", "buffer", "piggy"] = "daily"
@@ -112,123 +110,6 @@ def require_category(con, uid: int, category_id: int | None) -> None:
         raise HTTPException(422, "Категория не найдена")
 
 
-def payday_days(user_id: int) -> list[int]:
-    data = rows(
-        "SELECT DISTINCT day_of_month FROM income_rules WHERE user_id=? AND active=1 "
-        "AND (is_payday=1 OR kind IN ('salary','advance')) ORDER BY day_of_month",
-        (user_id,),
-    )
-    days = [int(r["day_of_month"]) for r in data]
-    return days or [7, 22]
-
-
-def period_recurring_income(user_id: int, start: date, end: date) -> float:
-    """Scheduled income assigned to the daily-budget period that can use it."""
-    return round(
-        sum(planning.budget_income_map(user_id, start, end, include_manual=False).values()),
-        2,
-    )
-
-
-def period_mandatory(user_id: int, start: date, end: date) -> float:
-    return round(sum(planning.mandatory_map(user_id, start, end).values()), 2)
-
-
-def actual_income(user_id: int, start: date, end: date) -> float:
-    with connect() as con:
-        r = con.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=? AND type='income' "
-            "AND COALESCE(income_destination,'daily')='daily' AND tx_date BETWEEN ? AND ?",
-            (user_id, start.isoformat(), end.isoformat()),
-        ).fetchone()
-        return round(float(r[0]), 2)
-
-
-def discretionary_spent(user_id: int, start: date, end: date) -> float:
-    with connect() as con:
-        r = con.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions "
-            "WHERE user_id=? AND type='expense' AND bill_rule_id IS NULL AND tx_date BETWEEN ? AND ?",
-            (user_id, start.isoformat(), end.isoformat()),
-        ).fetchone()
-        return round(float(r[0]), 2)
-
-
-def paid_mandatory_spent(user_id: int, start: date, end: date) -> float:
-    """Actual obligatory payments, booked on the date money left the account."""
-    with connect() as con:
-        r = con.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions "
-            "WHERE user_id=? AND type='expense' AND bill_rule_id IS NOT NULL "
-            "AND tx_date BETWEEN ? AND ?",
-            (user_id, start.isoformat(), end.isoformat()),
-        ).fetchone()
-        return round(float(r[0]), 2)
-
-
-def reserve_balance_before(user_id: int, before_period: date) -> float:
-    settings = one("SELECT initial_reserve FROM settings WHERE user_id=?", (user_id,)) or {}
-    with connect() as con:
-        r = con.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM reserve_movements WHERE user_id=? AND period_start < ?",
-            (user_id, before_period.isoformat()),
-        ).fetchone()
-    return round(float(settings.get("initial_reserve", 0)) + float(r[0]), 2)
-
-
-def future_reserve_target(user_id: int, current_end: date, count: int) -> tuple[float, list[dict]]:
-    days = payday_days(user_id)
-    periods = planning.next_periods(user_id, current_end + timedelta(days=1), max(2, count * max(1, len(days)) + 1))
-    nets: list[float] = []
-    detail: list[dict] = []
-    for p in periods:
-        income = period_recurring_income(user_id, p.start, p.end)
-        bills = period_mandatory(user_id, p.start, p.end)
-        net = round(income - bills, 2)
-        nets.append(net)
-        detail.append({"start": p.start.isoformat(), "end": p.end.isoformat(), "income": income, "mandatory": bills, "net": net})
-    return reserve_needed_for_future(nets), detail
-
-
-def ensure_auto_reserve(user_id: int, as_of: date) -> dict:
-    period = planning.user_period(user_id, as_of)
-    existing = one(
-        "SELECT * FROM reserve_movements WHERE user_id=? AND period_start=? AND source='auto'",
-        (user_id, period.start.isoformat()),
-    )
-    if existing:
-        return existing
-
-    settings = one("SELECT forecast_months FROM settings WHERE user_id=?", (user_id,)) or {"forecast_months": 4}
-    reserve_before = reserve_balance_before(user_id, period.start)
-    recurring_income = period_recurring_income(user_id, period.start, period.end)
-    extra_income = actual_income(user_id, period.start, period.end)
-    mandatory = period_mandatory(user_id, period.start, period.end)
-    structural_free = recurring_income + extra_income - mandatory - piggy_effect(user_id, period.start, as_of)
-    target, _ = future_reserve_target(user_id, period.end, int(settings["forecast_months"]))
-
-    amount = 0.0
-    reason = "Резерв не требуется"
-    if structural_free < 0 and reserve_before > 0:
-        release = min(reserve_before, -structural_free)
-        amount = -round(release, 2)
-        reason = "Автоподдержка периода с дефицитом обязательных платежей"
-    elif structural_free > 0 and target > reserve_before:
-        contribution = min(structural_free, target - reserve_before)
-        amount = round(contribution, 2)
-        reason = "Автокопилка для будущих обязательных платежей"
-
-    with connect() as con:
-        con.execute(
-            "INSERT INTO reserve_movements(user_id,period_start,amount,reason,source) VALUES(?,?,?,?, 'auto')",
-            (user_id, period.start.isoformat(), amount, reason),
-        )
-    return one(
-        "SELECT * FROM reserve_movements WHERE user_id=? AND period_start=? AND source='auto'",
-        (user_id, period.start.isoformat()),
-    ) or {"amount": amount, "reason": reason}
-
-
 def invalidate_current_auto_reserve(user_id: int) -> None:
     today = clock.today()
     period = planning.user_period(user_id, today)
@@ -257,48 +138,40 @@ def bootstrap(user: TelegramUser = Depends(current_user)) -> dict:
 
 @app.get("/api/dashboard")
 def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
+    """Compact home-screen numbers, derived from the same engine as /api/cashflow."""
+    from . import engine  # local import: engine is independent of this module
+
     uid = user_ready(user)
-    today = clock.today()
-    period = planning.user_period(uid, today)
-    movement = ensure_auto_reserve(uid, today)
-    reserve_before = reserve_balance_before(uid, period.start)
-    reserve_amount = float(movement["amount"])
-    reserve_in = max(0.0, reserve_amount)
-    reserve_out = max(0.0, -reserve_amount)
-
-    recurring = period_recurring_income(uid, period.start, period.end)
-    extras = actual_income(uid, period.start, period.end)
-    mandatory = period_mandatory(uid, period.start, period.end)
-    spent = discretionary_spent(uid, period.start, today)
-    spent_today = discretionary_spent(uid, today, today)
-    remaining_days = (period.end - today).days + 1
-    piggy = piggy_effect(uid, period.start, today)
-    numbers = dashboard_numbers(recurring + extras - piggy, mandatory, spent, reserve_in, reserve_out, remaining_days)
-
-    settings = one("SELECT forecast_months FROM settings WHERE user_id=?", (uid,)) or {"forecast_months": 4}
-    target, forecast = future_reserve_target(uid, period.end, int(settings["forecast_months"]))
-    reserve_now = round(reserve_before + reserve_amount, 2)
-
-    deficit = max(0.0, mandatory + piggy - (recurring + extras + reserve_out))
+    flow = engine.compute(uid)
+    period = flow["period"]
+    forecast = [
+        {
+            "start": row["start"], "end": row["end"], "income": row["received"],
+            "mandatory": row["mandatory"], "net": row["free"],
+        }
+        for row in flow["periods"][1:9]
+    ]
     return {
-        "today": today.isoformat(),
-        "period": {"start": period.start.isoformat(), "end": period.end.isoformat(), "days_left": remaining_days},
-        "income": round(recurring + extras, 2),
-        "mandatory": mandatory,
-        "spent": spent,
-        "spent_today": spent_today,
-        "period_budget": numbers["period_budget"],
-        "remaining": numbers["remaining"],
-        "daily_available": numbers["daily"],
+        "today": flow["today"],
+        "period": {"start": period["start"], "end": period["end"], "days_left": period["days_left"]},
+        "income": flow["period_budget"],
+        "mandatory": flow["mandatory_period"],
+        "spent": flow["spent_period"],
+        "spent_today": flow["spent_today"],
+        "period_budget": flow["period_budget"],
+        "remaining": flow["card_balance"],
+        "daily_available": flow["available_today"],
+        "today_target": flow["today_target"],
+        "overspend": flow["overspend"],
+        "tomorrow_limit": flow["tomorrow_limit"],
         "reserve": {
-            "before": reserve_before,
-            "auto_movement": reserve_amount,
-            "balance": reserve_now,
-            "future_target": target,
-            "reason": movement.get("reason", ""),
+            "balance": flow["buffer_balance"],
+            "auto_movement": 0,
+            "future_target": max([row["buffer"] for row in flow["periods"]] or [0]),
+            "reason": flow["reason"],
         },
-        "deficit": round(deficit, 2),
-        "forecast": forecast[:8],
+        "deficit": flow["capital_shortfall"],
+        "forecast": forecast,
     }
 
 

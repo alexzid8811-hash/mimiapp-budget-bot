@@ -112,6 +112,7 @@ class Piggy(Record):
     movement_date: date
     note: str = Field(default='', max_length=160)
     source: Literal['external', 'daily_budget'] = 'external'
+    purpose: Literal['transfer', 'cover_overspend'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
 
@@ -120,6 +121,12 @@ class Piggy(Record):
         if self.movement_date > clock.today():
             raise ValueError('Дата операции копилки в будущем')
         return self
+
+
+class CardAllocation(Record):
+    period_start: date
+    funded_on: date
+    amount: float
 
 
 class CashflowIncomeOverride(Record):
@@ -143,11 +150,11 @@ class History(APIModel):
 MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'transactions': Transaction, 'vacations': Vacation, 'reserve_movements': Reserve,
           'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
-          'plan_history': History}
+          'plan_history': History, 'card_allocations': CardAllocation}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7, 8):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -156,7 +163,7 @@ def validate_backup(payload):
         raise ValueError('В резервной копии нет настроек')
     data = {'settings': Settings.model_validate(source['settings']).model_dump(mode='json')}
     for table, model in MODELS.items():
-        optional_legacy_tables = {'cashflow_income_overrides'}
+        optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations'}
         if payload['backup_version'] == 1:
             optional_legacy_tables.update({'piggy_bank_movements', 'plan_history'})
         records = source.get(table, [] if table in optional_legacy_tables else None)

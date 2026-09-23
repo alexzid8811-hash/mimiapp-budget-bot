@@ -46,7 +46,7 @@
     const value = `<span>${formatMoney(period.received)}</span>`;
     if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
     const badge = period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
-    return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.start}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
+    return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
   }
 
   function renderBuffer() {
@@ -98,27 +98,29 @@
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"в буфер"]
         : ["zero","—","без движения"];
+    const toCardLine = p => Number(p.to_card) > 0
+      ? `<div><span>На карту</span><b>${formatMoney(p.to_card)}</b></div>` : "";
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     cards.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
-      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div><div class="pc-foot"><span>В день</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div>${toCardLine(p)}</div><div class="pc-foot"><span>В день на карте</span><b>${formatMoney(p.daily)}</b></div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
-    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","В день","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
+    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = periods.map((p,i)=>{
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
-      const tail=[formatMoney(p.mandatory),formatMoney(p.free),formatMoney(p.daily)];
+      const tail=[formatMoney(p.mandatory),formatMoney(p.free),formatMoney(p.to_card)];
       return `<tr class="${i===0?"cur":""}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
   }
 
-  window.editCashflowIncome = periodStart => {
-    const period = bufferState.buffer?.periods?.find(item => item.start === periodStart);
+  window.editCashflowIncome = overrideKey => {
+    const period = bufferState.buffer?.periods?.find(item => item.override_key === overrideKey);
     if (!period?.received_editable) return;
-    document.getElementById("cashflowIncomePeriodStart").value = period.start;
-    document.getElementById("cashflowIncomeAmount").value = period.received;
+    document.getElementById("cashflowIncomePeriodStart").value = period.override_key;
+    document.getElementById("cashflowIncomeAmount").value = period.payday_amount;
     document.getElementById("cashflowIncomeCaption").textContent =
-      `${formatDate(period.start)} — ${formatDate(period.end)} · по расчёту ${formatMoney(period.planned_received)}`;
+      `${safe(period.kind)} ${formatDate(period.payday)} · по расчёту ${formatMoney(period.planned_payday_amount)}`;
     document.getElementById("resetCashflowIncomeBtn").hidden = !period.income_overridden;
     document.getElementById("cashflowIncomeDialog").showModal();
   };
@@ -182,13 +184,21 @@
     }
   }
 
-  function openMovement(direction, source = "external") {
+  // mode: "deposit" | "withdraw" | "toCard" | "coverOverspend".
+  function openMovement(mode) {
+    const direction = mode === "withdraw" ? "withdraw" : "deposit";
+    const purpose = mode === "coverOverspend" ? "cover_overspend" : "transfer";
     document.getElementById("piggyDirection").value = direction;
-    document.getElementById("piggySource").value = source;
-    document.getElementById("piggyDialogTitle").textContent =
-      source === "daily_budget" ? "Перенести остаток дня" : direction === "deposit" ? "Пополнить копилку" : "Снять из копилки";
-    document.getElementById("savePiggyBtn").textContent =
-      source === "daily_budget" ? "Перенести" : direction === "deposit" ? "Пополнить" : "Снять";
+    document.getElementById("piggySource").value = "external";
+    document.getElementById("piggyPurpose").value = purpose;
+    document.getElementById("piggyDialogTitle").textContent = {
+      deposit: "Пополнить копилку", withdraw: "Снять из копилки",
+      toCard: "Копилка → карта", coverOverspend: "Покрыть перерасход из копилки",
+    }[mode];
+    document.getElementById("savePiggyBtn").textContent = {
+      deposit: "Пополнить", withdraw: "Снять", toCard: "Перевести", coverOverspend: "Покрыть",
+    }[mode];
+    document.getElementById("piggyForm").dataset.mode = mode;
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
@@ -196,26 +206,45 @@
   }
 
   document.getElementById("piggyDepositBtn")?.addEventListener("click", () => openMovement("deposit"));
-  document.getElementById("piggyTransferBtn")?.addEventListener("click", () => openMovement("deposit", "daily_budget"));
+  document.getElementById("piggyTransferBtn")?.addEventListener("click", () => {
+    document.getElementById("piggyDirection").value = "deposit";
+    document.getElementById("piggySource").value = "daily_budget";
+    document.getElementById("piggyPurpose").value = "transfer";
+    document.getElementById("piggyDialogTitle").textContent = "Перенести остаток дня";
+    document.getElementById("savePiggyBtn").textContent = "Перенести";
+    document.getElementById("piggyForm").dataset.mode = "dailyToPiggy";
+    document.getElementById("piggyAmount").value = "";
+    document.getElementById("piggyDate").value = window.budgetDate.today();
+    document.getElementById("piggyNote").value = "";
+    document.getElementById("piggyDialog").showModal();
+  });
+  document.getElementById("piggyToCardBtn")?.addEventListener("click", () => openMovement("toCard"));
   document.getElementById("piggyWithdrawBtn")?.addEventListener("click", () => openMovement("withdraw"));
+  window.openCoverOverspend = () => openMovement("coverOverspend");
+
   document.getElementById("piggyForm")?.addEventListener("submit", async event => {
     event.preventDefault();
-    const direction = document.getElementById("piggyDirection").value;
+    const mode = document.getElementById("piggyForm").dataset.mode || "deposit";
     const raw = document.getElementById("piggyAmount").value;
     const amount = window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(raw) : Number(raw);
+    const movement_date = document.getElementById("piggyDate").value;
+    const note = document.getElementById("piggyNote").value;
+    const isToCard = mode === "toCard" || mode === "coverOverspend";
+    const path = isToCard
+      ? "/api/piggy-bank/to-card"
+      : `/api/piggy-bank/${document.getElementById("piggyDirection").value}`;
+    const body = isToCard
+      ? { amount, movement_date, note, purpose: document.getElementById("piggyPurpose").value }
+      : { amount, movement_date, note, source: document.getElementById("piggySource").value };
     try {
-      await request(`/api/piggy-bank/${direction}`, {
-        method: "POST",
-        body: JSON.stringify({
-          amount,
-          movement_date: document.getElementById("piggyDate").value,
-          note: document.getElementById("piggyNote").value,
-          source: document.getElementById("piggySource").value,
-        }),
-      });
+      await request(path, { method: "POST", body: JSON.stringify(body) });
       document.getElementById("piggyDialog").close();
       if (typeof toast === "function") {
-        toast(direction === "deposit" ? "Копилка пополнена" : "Снято из копилки");
+        toast({
+          deposit: "Копилка пополнена", withdraw: "Снято из копилки",
+          dailyToPiggy: "Перенесено в копилку", toCard: "Переведено на карту",
+          coverOverspend: "Перерасход покрыт",
+        }[mode] || "Сохранено");
       }
       await loadAll();
     } catch (error) {

@@ -178,6 +178,19 @@ CREATE TABLE IF NOT EXISTS bill_reminders (
     PRIMARY KEY(user_id, bill_rule_id, due_date)
 );
 
+-- Money moved from the buffer to the card for one card period.  Closed
+-- periods keep their stored amount, so later edits of rules or forecasts never
+-- rewrite past daily limits.  The current period is recalculated live.
+CREATE TABLE IF NOT EXISTS card_allocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    period_start TEXT NOT NULL,
+    funded_on TEXT NOT NULL,
+    amount REAL NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, period_start)
+);
+
 CREATE TABLE IF NOT EXISTS morning_reports (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     report_date TEXT NOT NULL,
@@ -196,9 +209,15 @@ def db_path() -> Path:
 
 
 def connect() -> sqlite3.Connection:
-    con = sqlite3.connect(db_path())
+    # The bot process and the web process share one SQLite file. WAL lets
+    # readers and a writer work concurrently, and the busy timeout makes a
+    # brief write-write collision retry instead of raising "database is
+    # locked" straight away.
+    con = sqlite3.connect(db_path(), timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA busy_timeout = 10000")
     return con
 
 
@@ -252,6 +271,10 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
         con.execute(
             "ALTER TABLE piggy_bank_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'external'"
         )
+    if "purpose" not in piggy_columns:
+        # For piggy -> card transfers: 'cover_overspend' pays for today's
+        # overspend; any other value is spread over the remaining days.
+        con.execute("ALTER TABLE piggy_bank_movements ADD COLUMN purpose TEXT")
     if "income_transaction_id" not in piggy_columns:
         con.execute(
             "ALTER TABLE piggy_bank_movements ADD COLUMN income_transaction_id INTEGER "

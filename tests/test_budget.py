@@ -1,6 +1,6 @@
 from datetime import date
 
-from app.budget import current_period, dashboard_numbers, occurrences, reserve_needed_for_future
+from app.budget import current_period, occurrences
 from app.russian_calendar import payday_on_or_before
 
 
@@ -55,16 +55,3 @@ def test_2027_february_weekend_moves_salary_before_weekend(monkeypatch):
     period = current_period(date(2027, 2, 1), [7, 22])
     assert period.start == date(2027, 1, 23)
     assert period.end == date(2027, 2, 5)
-
-
-def test_reserve_for_future_deficit():
-    assert reserve_needed_for_future([5000, -12000, 2000]) == 7000
-    assert reserve_needed_for_future([5000, 1000, -2000]) == 0
-
-
-def test_daily_recalculates_after_overspend():
-    before = dashboard_numbers(100000, 36000, 0, 5000, 0, 15)
-    after = dashboard_numbers(100000, 36000, 5000, 5000, 0, 14)
-    assert before["period_budget"] == 59000
-    assert after["remaining"] == 54000
-    assert round(after["daily"], 2) == 3857.14

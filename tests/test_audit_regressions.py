@@ -10,8 +10,7 @@ from fastapi.testclient import TestClient
 from app import clock, planning
 from app.auth import current_user
 from app.backup import export_user_data, restore_user_data
-from app.cashflow import calculate_cashflow_plan
-from app.cashflow_app import app, cashflow_period_rows, cashflow_snapshot, add_piggy_bank_movement, PiggyBankMovementIn, piggy_bank_balance
+from app.cashflow_app import app, cashflow_snapshot, add_piggy_bank_movement, PiggyBankMovementIn, piggy_bank_balance
 from app.db import connect, ensure_user, init_db
 
 
@@ -36,61 +35,21 @@ def salary_rule():
         return dict(con.execute("SELECT * FROM income_rules WHERE user_id=1 AND kind='salary'").fetchone())
 
 
-def test_unreceived_planned_income_does_not_inflate_start_capital(client):
-    # The salary scheduled for September 7 is still only a forecast because no
-    # matching actual income transaction was recorded.
-    assert cashflow_snapshot(1)["current_cash"] == 1000
+def test_scheduled_salary_counts_as_forecast_until_actual_amount_is_entered(client):
+    # Start capital 1 000 on 1 September, salary forecast 10 000 on 7 September.
+    assert cashflow_snapshot(1)["current_cash"] == 11000
 
-    response = client.post(
-        "/api/transactions",
-        json={
-            "type": "income",
-            "amount": 10300,
-            "tx_date": "2026-09-11",
-            "category_id": None,
-            "note": "Фактически получено",
-        },
-    )
-    assert response.status_code == 200
+    # The actual amount replaces the forecast for the card period it funds.
+    assert client.put('/api/cashflow/income-overrides/2026-09-08', json={'amount': 10300}).status_code == 200
     assert cashflow_snapshot(1)["current_cash"] == 11300
 
-
-@pytest.mark.parametrize('spent,expected_daily,available,shortfall', [(900, 11.11, -800, 0), (1100, 0, -1000, 100)])
-def test_overspend_uses_actual_cash_without_spending_buffer(spent, expected_daily, available, shortfall):
-    plan = calculate_cashflow_plan(today=date(2026, 9, 15), horizon_end=date(2026, 9, 24),
-                                  opening_balance_before_today_spend=1000, spent_today=spent,
-                                  income_by_date={}, mandatory_by_date={})
-    assert plan.daily_target == expected_daily
-    assert plan.available_today == available
-    assert plan.capital_shortfall == shortfall
-    assert plan.buffer_balance == 900
-    assert plan.projected_end_balance == round(1000 - spent - 9 * expected_daily, 2)
-
-
-def test_rounding_never_spends_nonexistent_kopecks():
-    plan = calculate_cashflow_plan(today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
-                                  opening_balance_before_today_spend=100, spent_today=0,
-                                  income_by_date={}, mandatory_by_date={})
-    assert plan.daily_target == 16.66
-    assert plan.minimum_projected_balance == 0.04
-
-
-def test_period_table_includes_overspend(client):
-    result = cashflow_period_rows(1, today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
-                                 opening_balance_before_today_spend=1000, daily_target=20, spent_today=900)
-    assert result[0]['buffer'] == 0
-
-
-def test_overspend_does_not_reduce_current_period_buffer(client):
-    before = cashflow_period_rows(
-        1, today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
-        opening_balance_before_today_spend=1000, daily_target=100, today_target=100,
+    # A manual income is an additional income, not a confirmation.
+    response = client.post(
+        "/api/transactions",
+        json={"type": "income", "amount": 500, "tx_date": "2026-09-11", "category_id": None, "note": "Возврат"},
     )
-    after = cashflow_period_rows(
-        1, today=date(2026, 9, 15), horizon_end=date(2026, 9, 20),
-        opening_balance_before_today_spend=1000, daily_target=20, today_target=100, spent_today=900,
-    )
-    assert after[0]['buffer'] == before[0]['buffer']
+    assert response.status_code == 200
+    assert cashflow_snapshot(1)["current_cash"] == 11800
 
 
 def test_yesterday_overspend_is_not_subtracted_again_after_midnight(client, monkeypatch):
@@ -125,11 +84,11 @@ def test_yesterday_overspend_is_not_subtracted_again_after_midnight(client, monk
     assert after['buffer_balance'] == before['buffer_balance']
     assert after['remaining_period'] == round(before['period_budget'] - total_spent, 2)
     assert after['current_cash'] == round(39000 - 1753.55 - total_spent, 2)
-    assert after['remaining_period'] + after['buffer_balance'] == after['available_cash']
-    days_left = (
-        date.fromisoformat(after['periods'][0]['end'])
-        - date.fromisoformat(after['today'])
-    ).days + 1
+    assert round(after['remaining_period'] + after['buffer_balance'] + after['pending_card_allocation'], 2) == after['available_cash']
+    # The card period ends on the payday (22nd); the buffer row ends the day before.
+    assert after['periods'][0]['end'] == '2026-09-21'
+    assert after['period']['end'] == '2026-09-22'
+    days_left = after['period']['days_left']
     expected_today = (
         round((after['remaining_period'] + 120) * 100) // days_left
     ) / 100
@@ -137,8 +96,7 @@ def test_yesterday_overspend_is_not_subtracted_again_after_midnight(client, monk
     assert after['available_today'] == round(expected_today - 120, 2)
     assert after['today_target'] * days_left <= after['remaining_period'] + 120
     assert after['periods'][0]['daily'] == after['daily_target']
-    assert after['periods'][0]['buffer'] == after['buffer_balance']
-    assert after['periods'][0]['put_aside'] == after['buffer_balance']
+    assert after['periods'][0]['buffer_start'] == 39000
 
 
 def test_actual_cash_and_unpaid_obligations_are_separate(client):
@@ -147,17 +105,20 @@ def test_actual_cash_and_unpaid_obligations_are_separate(client):
         'effective_date': '2026-09-01',
     }).json()
     before = cashflow_snapshot(1)
-    assert before['current_cash'] == 1000
+    assert before['current_cash'] == 11000
     assert before['reserved_mandatory'] == 100
-    assert before['available_cash'] == 900
+    assert before['available_cash'] == 10900
     assert before['mandatory_period'] == 100
 
     assert client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-15'}).status_code == 200
     after = cashflow_snapshot(1)
-    assert after['current_cash'] == 900
+    assert after['current_cash'] == 10900
     assert after['reserved_mandatory'] == 0
-    assert after['available_cash'] == 900
+    assert after['available_cash'] == 10900
     assert after['mandatory_period'] == 0
+    # Paying the reserved amount changes neither the card nor the buffer.
+    assert after['card_balance'] == before['card_balance']
+    assert after['buffer_balance'] == before['buffer_balance']
 
 
 def test_early_bill_payment_is_not_charged_again_on_due_date(client):
@@ -169,8 +130,9 @@ def test_early_bill_payment_is_not_charged_again_on_due_date(client):
     assert payment.status_code == 200
     assert payment.json()['tx_date'] == '2026-09-15'
     snapshot = cashflow_snapshot(1)
-    assert snapshot['current_cash'] == 900
-    assert all(row['mandatory'] == 0 for row in snapshot['timeline'] if row['date'] == '2026-09-20')
+    assert snapshot['current_cash'] == 10900
+    # Held once, on the day the money actually left the account.
+    assert snapshot['periods'][0]['mandatory'] == 100
 
 
 def test_manual_transaction_can_be_edited_but_not_future_dated(client):
@@ -200,60 +162,73 @@ def test_legacy_vacation_reserve_migrates_into_start_capital(client):
     settings = export_user_data(1)['data']['settings']
     assert settings['cashflow_start_capital'] == 39000
     assert settings['initial_vacation_reserve'] == 0
-    assert cashflow_snapshot(1)['current_cash'] == 39000
+    assert cashflow_snapshot(1)['current_cash'] == 39000 + 10000  # + salary of 7 September
 
 
-def test_future_received_amount_override_recalculates_entire_cashflow(client, monkeypatch):
+def advance_row(snapshot, payday='2026-09-22'):
+    return next(row for row in snapshot['periods'] if row['payday'] == payday)
+
+
+def test_actual_payout_replaces_forecast_from_its_period_on(client, monkeypatch):
     with connect() as con:
         con.execute(
             "UPDATE income_rules SET amount=39395.22 WHERE user_id=1 AND kind='advance'"
         )
 
     before = cashflow_snapshot(1)
-    planned = next(row for row in before['periods'] if row['start'] == '2026-09-23')
-    assert planned['received'] == 39395.22
+    planned = advance_row(before)
+    assert planned['payday_amount'] == 39395.22
     assert planned['income_overridden'] is False
+    assert planned['override_key'] == '2026-09-23'
 
     response = client.put(
         '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     )
     assert response.status_code == 200
     after = cashflow_snapshot(1)
-    corrected = next(row for row in after['periods'] if row['start'] == '2026-09-23')
-    assert corrected['planned_received'] == 39395.22
+    corrected = advance_row(after)
+    assert corrected['planned_payday_amount'] == 39395.22
+    assert corrected['payday_amount'] == 41000
     assert corrected['received'] == 41000
-    assert corrected['free'] == 41000
     assert corrected['income_overridden'] is True
-    # The near-term balance is still the limiting factor for the daily amount,
-    # but the corrected receipt must flow through the rest of the forecast.
+    # Today's limit is bound by the money of the current period.
     assert after['daily_target'] == before['daily_target']
-    assert after['projected_end_balance'] == round(
-        before['projected_end_balance'] + 41000 - 39395.22, 2
-    )
+    assert corrected['buffer'] == round(planned['buffer'] + 41000 - 39395.22 - (
+        corrected['to_card'] - planned['to_card']), 2)
 
+    with connect() as con:
+        closed = dict(con.execute(
+            "SELECT period_start,amount FROM card_allocations WHERE user_id=1"
+        ).fetchall())
     monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 23))
-    assert cashflow_snapshot(1)['current_cash'] == 42000
+    later = cashflow_snapshot(1)
+    assert later['current_cash'] == 52000
+    # Closed periods keep their money; only the new period uses 41 000.
+    with connect() as con:
+        for start, value in closed.items():
+            if start < '2026-09-23':
+                assert con.execute(
+                    "SELECT amount FROM card_allocations WHERE user_id=1 AND period_start=?", (start,)
+                ).fetchone()[0] == value
 
 
-def test_income_override_can_be_reset_and_current_row_cannot_be_edited(client):
-    assert client.put(
-        '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
-    ).status_code == 200
-    assert client.delete('/api/cashflow/income-overrides/2026-09-23').status_code == 200
-    restored = next(
-        row for row in cashflow_snapshot(1)['periods'] if row['start'] == '2026-09-23'
-    )
+def test_actual_amount_is_editable_for_current_period_but_not_closed_one(client):
+    # The current card period (8–22 September) is funded by the salary of the 7th.
+    assert client.put('/api/cashflow/income-overrides/2026-09-08', json={'amount': 9000}).status_code == 200
+    assert advance_row(cashflow_snapshot(1), '2026-09-07')['payday_amount'] == 9000
+    assert client.delete('/api/cashflow/income-overrides/2026-09-08').status_code == 200
+    restored = advance_row(cashflow_snapshot(1), '2026-09-07')
     assert restored['income_overridden'] is False
-    assert restored['received'] == restored['planned_received']
-    assert client.put(
-        '/api/cashflow/income-overrides/2026-09-15', json={'amount': 41000}
-    ).status_code == 422
+    assert restored['payday_amount'] == restored['planned_payday_amount'] == 10000
+    # The payday of 21 August is before the start date: nothing to correct.
+    assert client.put('/api/cashflow/income-overrides/2026-08-22', json={'amount': 1}).status_code == 422
+    assert client.put('/api/cashflow/income-overrides/2026-09-15', json={'amount': 1}).status_code == 422
 
 
 def test_income_edits_and_deletes_preserve_past(client):
     rule = salary_rule()
     before = cashflow_snapshot(1)['current_cash']
-    assert before == 1000
+    assert before == 11000
     rule['amount'] = 20000
     assert client.put(f"/api/income-rules/{rule['id']}", json=rule).status_code == 200
     assert cashflow_snapshot(1)['current_cash'] == before
@@ -267,12 +242,19 @@ def test_new_rules_do_not_appear_in_past_unless_explicit(client):
     body = {'title': 'Доход', 'amount': 500, 'day_of_month': 10}
     rule = client.post('/api/income-rules', json=body).json()
     assert date(2026, 9, 10) not in planning.income_map(1, date(2026, 9, 10), date(2026, 9, 10))
-    assert cashflow_snapshot(1)['current_cash'] == 1000
+    assert cashflow_snapshot(1)['current_cash'] == 11000
 
+    # An explicit earlier date is a deliberate correction of history, but a
+    # past-dated scheduled income still needs an actual transaction to be
+    # counted as received -- the same rule as for salary and vacation pay.
     body['effective_date'] = '2026-09-01'
     assert client.put(f"/api/income-rules/{rule['id']}", json=body).status_code == 200
     assert planning.income_map(1, date(2026, 9, 10), date(2026, 9, 10))[date(2026, 9, 10)] == 500
-    assert cashflow_snapshot(1)['current_cash'] == 1000
+    assert cashflow_snapshot(1)['current_cash'] == 11000
+    assert client.post('/api/transactions', json={
+        'type': 'income', 'amount': 500, 'tx_date': '2026-09-10', 'note': 'Получено',
+    }).status_code == 200
+    assert cashflow_snapshot(1)['current_cash'] == 11500
 
 
 def test_backdated_salary_edit_preserves_unrelated_bill_history(client, monkeypatch):
@@ -382,7 +364,7 @@ def test_bill_remainder_edit_rolls_back_if_it_would_overdraw_piggy(client):
     assert saved == 2000
 
 
-def test_confirmed_period_override_replaces_later_income_in_same_period(client, monkeypatch):
+def test_payout_override_replaces_only_the_payout(client, monkeypatch):
     assert client.post('/api/income-rules', json={
         'title': 'Доход внутри периода', 'amount': 500, 'day_of_month': 25,
         'kind': 'other', 'effective_date': '2026-09-01',
@@ -393,11 +375,10 @@ def test_confirmed_period_override_replaces_later_income_in_same_period(client, 
 
     monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
     snapshot = cashflow_snapshot(1)
-    assert snapshot['current_cash'] == 13000
-    assert not any(
-        '2026-09-23' <= row['date'] <= '2026-10-07' and row['income']
-        for row in snapshot['timeline']
-    )
+    assert snapshot['current_cash'] == 1000 + 10000 + 12000
+    row = advance_row(snapshot)
+    # Other income of the period is still expected on its own date.
+    assert row['received'] == 12500
 
 
 def test_bill_remainder_link_survives_backup_restore(client):
@@ -445,14 +426,12 @@ def test_backup_restores_cashflow_income_overrides(client):
         '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     ).status_code == 200
     backup = export_user_data(1)
-    assert backup['backup_version'] == 7
+    assert backup['backup_version'] == 8
     assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
     ensure_user(2)
     restore_user_data(2, backup)
-    corrected = next(
-        row for row in cashflow_snapshot(2)['periods'] if row['start'] == '2026-09-23'
-    )
-    assert corrected['received'] == 41000
+    corrected = advance_row(cashflow_snapshot(2))
+    assert corrected['payday_amount'] == 41000
     assert corrected['income_overridden'] is True
 
 
@@ -463,10 +442,10 @@ def test_backup_remaps_archived_rule_history(client):
     backup = export_user_data(1)
     ensure_user(2)
     restore_user_data(2, backup)
-    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 1000
+    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 11000
     # A second export/import must remain valid after ID remapping.
     restore_user_data(2, export_user_data(2))
-    assert cashflow_snapshot(2)['current_cash'] == 1000
+    assert cashflow_snapshot(2)['current_cash'] == 11000
 
 
 def test_version_one_backup_without_piggy_replaces_all_data(client):
@@ -589,7 +568,7 @@ def test_existing_database_migration_preserves_data(client):
         con.execute('ALTER TABLE bill_rules DROP COLUMN archived')
     init_db()
     init_db()
-    assert cashflow_snapshot(1)['current_cash'] == 1000
+    assert cashflow_snapshot(1)['current_cash'] == 11000
     assert salary_rule()['amount'] == 10000
 
 
@@ -638,7 +617,7 @@ def test_backup_restores_bill_history_and_paid_links(client):
     client.delete(f"/api/bill-rules/{rule['id']}")
     ensure_user(2)
     restore_user_data(2, export_user_data(1))
-    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 900
+    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 10900
     events = planning.bill_events(2, date(2026, 9, 1), date(2026, 9, 15))
     assert len(events) == 1
     assert events[0]['amount'] == 100

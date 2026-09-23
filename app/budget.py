@@ -56,11 +56,9 @@ def occurrences(
 def budget_period_starts(
     payday_days: list[int], start: date, end: date
 ) -> list[date]:
-    """Return the days on which a received salary becomes a new daily budget.
+    """Days on which a card period starts: the day after each actual payday.
 
-    A salary or advance can arrive late in the day. Its payment date therefore
-    stays in the transaction history, while the next daily-budget period starts
-    on the following calendar day.
+    The payday itself still belongs to the previous card period.
     """
     payments = occurrences(
         payday_days, start - timedelta(days=1), end,
@@ -74,6 +72,7 @@ def budget_period_starts(
 
 
 def current_period(as_of: date, payday_days: list[int]) -> Period:
+    """Card period containing ``as_of`` for plain monthly payday rules."""
     if not payday_days:
         payday_days = [1]
     search_start = add_months(as_of.replace(day=1), -2)
@@ -84,31 +83,3 @@ def current_period(as_of: date, payday_days: list[int]) -> Period:
     if not previous or not future:
         raise ValueError("Could not resolve payday period")
     return Period(start=previous[-1], end=future[0] - timedelta(days=1))
-
-
-def reserve_needed_for_future(period_nets: list[float]) -> float:
-    """Minimum reserve required now so cumulative future structural cash-flow never drops below zero."""
-    running = 0.0
-    minimum = 0.0
-    for net in period_nets:
-        running += net
-        minimum = min(minimum, running)
-    return round(max(0.0, -minimum), 2)
-
-
-def dashboard_numbers(
-    period_income: float,
-    mandatory: float,
-    discretionary_spent: float,
-    reserve_in: float,
-    reserve_out: float,
-    remaining_days: int,
-) -> dict[str, float]:
-    period_budget = max(0.0, period_income + reserve_out - mandatory - reserve_in)
-    remaining = period_budget - discretionary_spent
-    daily = remaining / max(1, remaining_days)
-    return {
-        "period_budget": round(period_budget, 2),
-        "remaining": round(remaining, 2),
-        "daily": round(daily, 2),
-    }
