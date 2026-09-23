@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260919-settings-align" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260923-card-buffer-piggy" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -33,9 +33,13 @@
             </div>
           </div>
           <div class="spend-bar" id="spendBar" role="progressbar" aria-label="Потрачено сегодня" aria-valuemin="0" aria-valuemax="100"><span id="spendFill"></span></div>
-          <div class="warning hidden" id="overspendActions">
-            <span id="overspendCaption"></span>
-            <div class="dialog-actions"><button class="secondary" id="spreadOverspendBtn" type="button">Распределить по дням</button><button class="primary" id="coverOverspendFromPiggyBtn" type="button">Взять из копилки</button></div>
+        </div>
+        <div id="overspendPanel" class="card overspend-panel hidden">
+          <div class="section-head"><h3>Перерасход сегодня</h3><strong class="num" id="overspendAmount">—</strong></div>
+          <p class="muted">Буфер не уменьшается. Выберите, как покрыть перерасход.</p>
+          <div class="overspend-actions">
+            <button class="secondary" id="spreadOverspendBtn" type="button">Распределить по дням периода</button>
+            <button class="secondary" id="coverFromPiggyBtn" type="button">Взять из копилки</button>
           </div>
         </div>
         <button class="primary big quick-expense" id="quickExpenseBtn">Добавить расход</button>
@@ -93,7 +97,7 @@
       </section>
       <section class="page" data-page="piggy"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button></div>
         <div class="card"><span class="muted">В копилке</span><strong class="piggy-balance" id="piggyBalance">—</strong>
-          <p class="muted">Копилка ведётся отдельно и меняет бюджет на карте только при явном переводе.</p>
+          <p class="muted">Копилка ведётся отдельно и не влияет на дневной бюджет без вашего перевода.</p>
           <div class="piggy-actions"><button class="primary" id="piggyDepositBtn">Внести отдельно</button><button class="secondary" id="piggyTransferBtn">Перенести остаток дня</button><button class="secondary" id="piggyToCardBtn">На карту</button><button class="secondary" id="piggyWithdrawBtn">Снять</button></div>
         </div>
         <div class="card"><h3>История</h3><div id="piggyMovements" class="list"></div></div>
@@ -275,6 +279,7 @@
       <div class="section-head"><h2 id="piggyDialogTitle">Копилка</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="piggyDirection" type="hidden" value="deposit" />
       <input id="piggySource" type="hidden" value="external" />
+      <input id="piggyPurpose" type="hidden" value="transfer" />
       <label>Сумма<input id="piggyAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="piggyDate" type="date" required /></label>
       <label>Комментарий<input id="piggyNote" maxlength="160" placeholder="Необязательно" /></label>
@@ -288,7 +293,7 @@
       <input id="cashflowIncomePeriodStart" type="hidden" />
       <p id="cashflowIncomeCaption" class="muted"></p>
       <label>Получено фактически<input id="cashflowIncomeAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
-      <p class="muted">Фактическая сумма заменит прогноз только с этой выплаты: прошлые периоды не изменятся, а текущий и будущие лимиты пересчитаются.</p>
+      <p class="muted">После сохранения приложение автоматически пересчитает дневной лимит, свободные деньги и остаток буфера во всех следующих периодах.</p>
       <div class="dialog-actions"><button class="secondary" id="resetCashflowIncomeBtn" type="button">Вернуть расчёт</button><button class="primary big" value="default">Сохранить и пересчитать</button></div>
     </form>
   </dialog>
@@ -313,10 +318,10 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20260922-payroll-schedule"></script>
-  <script src="/static/cashflow-ui.js?v=20260922-readable-errors"></script>
-  <script src="/static/buffer-ui.js?v=20260923-payment-history"></script>
-  <script src="/static/design-ui.js?v=20260918-today-breakdown"></script>
+  <script src="/static/app.js?v=20260923-card-buffer-piggy"></script>
+  <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
+  <script src="/static/buffer-ui.js?v=20260923-card-buffer-piggy"></script>
+  <script src="/static/design-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/backup.js?v=20260917-full-design"></script>
 </body>
 </html>

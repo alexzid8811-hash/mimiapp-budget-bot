@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 7
+BACKUP_VERSION = 8
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -47,10 +47,12 @@ TABLE_COLUMNS = {
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
     "piggy_bank_movements": (
-        "id", "direction", "amount", "movement_date", "note", "source", "bill_payment_id", "income_transaction_id", "created_at"
+        "id", "direction", "amount", "movement_date", "note", "source", "purpose",
+        "bill_payment_id", "income_transaction_id", "created_at",
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
+    "card_allocations": ("id", "period_start", "funded_on", "amount"),
 }
 
 
@@ -96,7 +98,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             # Versions before v5 stored the cash-flow start balance in
@@ -198,9 +200,10 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             for row in data["piggy_bank_movements"]:
                 con.execute(
                     "INSERT INTO piggy_bank_movements"
-                    "(user_id,direction,amount,movement_date,note,source,bill_payment_id,income_transaction_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    "(user_id,direction,amount,movement_date,note,source,purpose,bill_payment_id,income_transaction_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, row['direction'], row['amount'], row['movement_date'], row['note'], row.get('source', 'external'),
+                        row.get('purpose'),
                         transaction_ids.get(row.get('bill_payment_id')), transaction_ids.get(row.get('income_transaction_id')),
                         _created_at(row),
                     ),
@@ -213,6 +216,11 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                         user_id, row["period_start"], row["amount"],
                         row.get("updated_at") or datetime.now(timezone.utc).isoformat(),
                     ),
+                )
+            for row in data["card_allocations"]:
+                con.execute(
+                    "INSERT INTO card_allocations(user_id,period_start,funded_on,amount) VALUES(?,?,?,?)",
+                    (user_id, row["period_start"], row["funded_on"], row["amount"]),
                 )
             for row in data["plan_history"]:
                 snapshot = row['snapshot']

@@ -115,6 +115,10 @@ h1,h2,h3,p{margin:0}
 .meter{height:6px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin:10px 0 6px}
 .meter span{display:block;height:100%;background:var(--income)}
 .warning{background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-text);border-radius:12px;padding:10px 12px;font-size:13px;margin-top:10px}
+.overspend-panel{border:1px solid var(--warn-line)}
+.overspend-panel .num{color:var(--expense)}
+.overspend-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.overspend-actions button{flex:1 1 auto}
 
 /* ---------- Списки ---------- */
 .list{display:flex;flex-direction:column}

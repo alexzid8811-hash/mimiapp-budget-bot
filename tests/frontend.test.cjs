@@ -11,7 +11,19 @@ function setup() {
       value: '', checked: false, textContent: '', innerHTML: '', style: {}, listeners: {}, dataset: {},
       setAttribute() {}, removeAttribute() {}, replaceChildren() {}, appendChild() {},
       reset() {},
-      classList: {add() {}, remove() {}, toggle() {}},
+      classList: (() => {
+        const classes = new Set();
+        return {
+          add: (...names) => names.forEach(n => classes.add(n)),
+          remove: (...names) => names.forEach(n => classes.delete(n)),
+          toggle: (name, force) => {
+            const on = force === undefined ? !classes.has(name) : Boolean(force);
+            if (on) classes.add(name); else classes.delete(name);
+            return on;
+          },
+          contains: name => classes.has(name),
+        };
+      })(),
       addEventListener(type, fn) { this.listeners[type] = fn; },
       showModal() {}, close() {},
     });
@@ -22,7 +34,7 @@ function setup() {
     '/api/payroll-settings': {settings: {}}, '/api/vacations': [], '/api/transactions': [], '/api/plan': [],
     '/api/dashboard': {daily_available: 999, period: {start:'2026-09-07',end:'2026-09-21',days_left:7}, reserve: {}, forecast: []},
     '/api/cashflow-settings': {cashflow_enabled:1,start_date:'2026-09-01'},
-    '/api/cashflow': {enabled:true,period_budget:100,available_today:5.25,remaining_period:50,buffer_balance:40,current_cash:45.25,periods:[],horizon_end:'2026-10-15'},
+    '/api/cashflow': {enabled:true,period_budget:100,available_today:5.25,remaining_period:50,buffer_balance:40,current_cash:45.25,periods:[],horizon_end:'2026-10-15',overspend:0,today_target:5.25,period:{start:'2026-09-07',end:'2026-09-21',payday:'2026-09-21',payday_kind:'Выплата'}},
     '/api/piggy-bank': {balance:0,movements:[]},
   };
   const sandbox = {
@@ -225,19 +237,58 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
 test('future received amount can be edited and sent for budget recalculation', async () => {
  const {sandbox,get,requests,responses}=setup();
  responses['/api/cashflow'].periods=[
-  {start:'2026-09-15',end:'2026-09-21',kind:'сейчас',days:7,received:26246.45,planned_received:26246.45,received_editable:false,income_overridden:false,mandatory:0,free:26246.45,daily:1000,put_aside:0,take:0,buffer:10000},
-  {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',days:15,received:39395.22,planned_received:39395.22,received_editable:true,income_overridden:false,mandatory:10000,free:29395.22,daily:1000,put_aside:10000,take:0,buffer:20000}
+  {start:'2026-09-15',end:'2026-09-21',kind:'сейчас',days:7,payday:null,received:26246.45,planned_received:26246.45,received_editable:false,income_overridden:false,override_key:null,mandatory:0,free:26246.45,daily:1000,put_aside:0,take:0,buffer:10000,to_card:0},
+  {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',days:15,payday:'2026-09-22',received:39395.22,planned_received:39395.22,received_editable:true,income_overridden:false,override_key:'2026-09-23',payday_amount:39395.22,planned_payday_amount:39395.22,mandatory:10000,free:29395.22,daily:1000,put_aside:10000,take:0,buffer:20000,to_card:10000}
  ];
  await get('refreshBtn').listeners.click();
- assert.match(get('planCards').innerHTML,/editCashflowIncome\('2026-09-22'\)/);
+ assert.match(get('planCards').innerHTML,/editCashflowIncome\('2026-09-23'\)/);
 
- sandbox.window.editCashflowIncome('2026-09-22');
+ sandbox.window.editCashflowIncome('2026-09-23');
  assert.equal(get('cashflowIncomeAmount').value,39395.22);
  get('cashflowIncomeAmount').value='41000';
  await get('cashflowIncomeForm').listeners.submit({preventDefault(){}});
 
- const request=requests.find(row=>row.url==='/api/cashflow/income-overrides/2026-09-22');
+ const request=requests.find(row=>row.url==='/api/cashflow/income-overrides/2026-09-23');
  assert.deepEqual(JSON.parse(request.body),{amount:41000});
+});
+
+test('overspend panel appears with a positive overspend and the spread button hides it', async () => {
+ const {get,responses}=setup();
+ Object.assign(responses['/api/cashflow'],{overspend:1000,available_today:-1000,today_target:100});
+ await get('refreshBtn').listeners.click();
+ assert.equal(get('overspendPanel').classList.contains('hidden'),false);
+ assert.match(get('overspendAmount').textContent,/1.000,00/);
+ get('spreadOverspendBtn').listeners.click();
+ assert.equal(get('overspendPanel').classList.contains('hidden'),true);
+});
+
+test('overspend panel is hidden without an overspend', async () => {
+ const {get,responses}=setup();
+ Object.assign(responses['/api/cashflow'],{overspend:0});
+ await get('refreshBtn').listeners.click();
+ assert.equal(get('overspendPanel').classList.contains('hidden'),true);
+});
+
+test('cover-overspend button opens the piggy dialog set up for the transfer', async () => {
+ const {get}=setup();
+ await get('refreshBtn').listeners.click();
+ get('coverFromPiggyBtn').listeners.click();
+ assert.equal(get('piggyForm').dataset.mode,'coverOverspend');
+ assert.equal(get('piggyPurpose').value,'cover_overspend');
+});
+
+test('piggy to-card transfer posts to the dedicated endpoint with its purpose', async () => {
+ const {get,requests}=setup();
+ await get('refreshBtn').listeners.click();
+ get('piggyToCardBtn').listeners.click();
+ assert.equal(get('piggyForm').dataset.mode,'toCard');
+ get('piggyAmount').value='500';
+ await get('piggyForm').listeners.submit({preventDefault(){}});
+ const request=requests.find(row=>row.url==='/api/piggy-bank/to-card');
+ assert.ok(request,'expected a request to /api/piggy-bank/to-card');
+ const body=JSON.parse(request.body);
+ assert.equal(body.amount,500);
+ assert.equal(body.purpose,'transfer');
 });
 
 test('localized money is parsed before expense submission', async () => {

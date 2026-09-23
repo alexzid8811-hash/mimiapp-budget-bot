@@ -70,6 +70,10 @@ def change_conditions(uid, effective_date=None, *, table=None, record_id=None, p
             con.execute('UPDATE plan_history SET snapshot=? WHERE id=?', (json.dumps(apply_edit(json.loads(row['snapshot']))), row['id']))
         con.execute("DELETE FROM reserve_movements WHERE user_id=? AND source='auto' AND period_start>=?",
                     (uid, effective.replace(day=1).isoformat()))
+        # A backdated correction deliberately recalculates card periods funded
+        # from that day on; earlier closed periods keep their daily limits.
+        con.execute("DELETE FROM card_allocations WHERE user_id=? AND funded_on>=?",
+                    (uid, effective.isoformat()))
 
 
 def condition_segments(uid, start, end):
