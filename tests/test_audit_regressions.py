@@ -639,3 +639,17 @@ def test_moving_paid_bill_day_does_not_charge_it_again_that_month(client):
     client.put(f"/api/bill-rules/{rule['id']}", json={'title':'авто','amount':25000,'day_of_month':24,'effective_date':'2026-09-15'})
     events = planning.bill_events(1, date(2026, 9, 1), date(2026, 10, 31))
     assert [(e['due_date'], e['paid']) for e in events] == [('2026-09-10', True), ('2026-10-24', False)]
+
+
+def test_changing_future_payout_keeps_money_already_moved_to_card(client):
+    before = cashflow_snapshot(1)
+    current = before['periods'][0]
+    future = next(p for p in before['periods'] if p['received_editable'] and p['payday'] > '2026-09-15')
+    response = client.put(f"/api/cashflow/income-overrides/{future['override_key']}",
+                          json={'amount': future['payday_amount'] + 50000})
+    assert response.status_code == 200
+    after = cashflow_snapshot(1)
+    assert after['periods'][0]['to_card'] == current['to_card']
+    assert after['daily_target'] == before['daily_target']
+    changed = next(p for p in after['periods'] if p['override_key'] == future['override_key'])
+    assert changed['to_card'] > future['to_card']
