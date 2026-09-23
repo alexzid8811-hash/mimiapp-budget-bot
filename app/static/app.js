@@ -203,10 +203,6 @@ function renderSettings() {
   const payroll = state.payroll?.settings || {};
   $("initialReserve").value = settings.initial_reserve ?? 0;
   $("forecastMonths").value = settings.forecast_months ?? 4;
-  const reminderDays = $("reminderDays");
-  const reminderTime = $("reminderTime");
-  if (reminderDays) reminderDays.value = settings.reminder_days ?? 3;
-  if (reminderTime) reminderTime.value = settings.reminder_time || "10:00";
   const morningReportTime = $("morningReportTime");
   if (morningReportTime) morningReportTime.value = settings.morning_report_time || "09:00";
 
@@ -557,8 +553,6 @@ function generalSettingsPayload() {
     // it here; the dedicated button below saves the visible start amount.
     initial_reserve: Number(state.bootstrap?.settings?.initial_reserve || 0),
     forecast_months: Number($("forecastMonths").value || 4),
-    reminder_days: Number($("reminderDays")?.value ?? state.bootstrap?.settings?.reminder_days ?? 3),
-    reminder_time: $("reminderTime")?.value || state.bootstrap?.settings?.reminder_time || "10:00",
     morning_report_time: $("morningReportTime")?.value || state.bootstrap?.settings?.morning_report_time || "09:00",
   };
 }
