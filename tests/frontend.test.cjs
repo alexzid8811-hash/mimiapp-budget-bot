@@ -220,8 +220,8 @@ test('redesign uses today target without subtracting expenses twice and preserve
 test('buffer renders responsive cards and table, escaping user-provided labels', async () => {
  const {get,responses}=setup();
  responses['/api/cashflow'].periods=[
- {start:'2026-09-07',end:'2026-09-21',kind:'<img src=x>',days:15,received:30000,mandatory:5000,free:25000,daily:1000,put_aside:10000,take:0,buffer:10000},
- {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',days:15,received:20000,mandatory:10000,free:10000,daily:1000,put_aside:0,take:5000,buffer:5000}
+ {start:'2026-09-07',end:'2026-09-21',kind:'<img src=x>',days:15,received:30000,mandatory:5000,free:25000,to_card:15000,daily:1000,put_aside:10000,take:0,buffer:10000},
+ {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',days:15,received:20000,mandatory:10000,free:10000,to_card:15000,daily:1000,put_aside:0,take:5000,buffer:5000}
  ];
  await get('refreshBtn').listeners.click();
  assert.match(get('planCards').innerHTML,/&lt;img/);
@@ -232,6 +232,9 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
  assert.match(get('bufferPeriods').innerHTML,/5.000,00/);
  assert.match(get('bufferPeriods').innerHTML,/из буфера/);
  assert.doesNotMatch(get('bufferPeriods').innerHTML,/−5.000,00/);
+ // The "На карту" cell shows the card money on top and the daily rate below.
+ assert.match(get('bufferPeriods').innerHTML,/15.000,00.₽<\/strong><br><small>1.000,00.₽ в день/);
+ assert.match(get('planCards').innerHTML,/15.000,00.₽<br><small>1.000,00.₽ в день/);
 });
 
 test('start row shows the start capital as its money and the horizon with a year', async () => {
