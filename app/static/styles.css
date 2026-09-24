@@ -92,7 +92,7 @@ h1,h2,h3,p{margin:0}
 .spend-bar span{display:block;height:100%;background:var(--accent);border-radius:inherit;transition:width .35s ease}
 
 .period{margin-top:18px}
-.strip{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;margin:10px 0 6px}
+.strip{display:flex;flex-wrap:nowrap;gap:3px;margin:10px 0 6px}
 .day{height:34px;border-radius:7px;background:var(--surface-2);position:relative}
 .day.past{background:var(--day-past)}
 .day.today{background:var(--accent)}
@@ -298,7 +298,7 @@ h2{font-size:24px}h3{font-size:16px}.eyebrow{display:none}
 .nav-item svg{width:24px;height:24px}.nav-item small{font-size:11px}.nav-item.active{color:var(--accent)}
 dialog{max-height:90dvh;overflow:auto;overscroll-behavior:contain}
 button:disabled{opacity:.5;cursor:not-allowed}
-.strip .day{min-width:0}.strip{overflow:hidden}
+.strip .day{flex:1 1 0;min-width:0}.strip{overflow:hidden}
 .stats strong{overflow-wrap:anywhere}.summary-number{display:block;font-size:20px;font-weight:700;margin-top:4px}
 .period-summary{margin:0}.buffer-intro{font-size:14px;margin-bottom:14px}.buffer-summary{margin:14px 0}
 .buffer-summary .card{margin:0}
