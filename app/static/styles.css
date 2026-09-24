@@ -358,12 +358,21 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr);
     grid-template-areas:
       "today period"
+      "overspend period"
       "expense period"
       "buffer forecast";
     gap:16px 20px;
     align-items:start;
   }
+  /* Without the overspend panel drop its row, otherwise the empty row adds an extra gap. */
+  .page[data-page="home"].active:has(#overspendPanel.hidden){
+    grid-template-areas:
+      "today period"
+      "expense period"
+      "buffer forecast";
+  }
   .page[data-page="home"] .today{grid-area:today}
+  .page[data-page="home"] .overspend-panel{grid-area:overspend;margin:0}
   .page[data-page="home"] .quick-expense{grid-area:expense;margin:0}
   .page[data-page="home"] .period{grid-area:period;margin:0}
   .page[data-page="home"] .home-buffer{grid-area:buffer;margin:0}
