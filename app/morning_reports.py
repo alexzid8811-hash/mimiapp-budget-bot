@@ -4,8 +4,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 
-from . import planning
-from .cashflow_app import cashflow_snapshot
+from . import engine, planning
 from .db import connect
 
 
@@ -82,7 +81,9 @@ def pending_morning_reports(now: datetime) -> list[dict]:
                 "ORDER BY report_date DESC LIMIT 1", (user_id, today.isoformat())
             ).fetchone()
 
-        flow = cashflow_snapshot(user_id)
+        # The same calculation as the home screen: with the start capital
+        # switched off it still runs from the latest payday.
+        flow = engine.compute(user_id)
         period = planning.user_period(user_id, today)
         nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
         daily_amount = float(flow.get("available_today", 0))

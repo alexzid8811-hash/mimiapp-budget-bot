@@ -269,9 +269,19 @@ def delete_piggy_bank_movement(
     uid = legacy.user_ready(user)
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
-        deleted = con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
-        if deleted.rowcount == 0:
+        movement = con.execute(
+            "SELECT income_transaction_id,bill_payment_id FROM piggy_bank_movements WHERE id=? AND user_id=?",
+            (movement_id, uid),
+        ).fetchone()
+        if movement is None:
             raise HTTPException(404, "Операция копилки не найдена")
+        # A linked movement is one half of an operation; deleting it alone
+        # would leave the income or the bill remainder pointing nowhere.
+        if movement["income_transaction_id"] is not None:
+            raise HTTPException(422, "Это пополнение создано доходом: измените или удалите сам доход")
+        if movement["bill_payment_id"] is not None:
+            raise HTTPException(422, "Это остаток обязательного платежа: измените сумму в самом платеже")
+        con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
         try:
             check_piggy_history(con, uid)
         except ValueError as exc:

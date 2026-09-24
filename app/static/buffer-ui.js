@@ -13,7 +13,9 @@
     const response = await fetch(path, { ...options, headers });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.detail || `Ошибка ${response.status}`);
+      throw new Error(typeof apiErrorMessage === "function"
+        ? apiErrorMessage(body, response.status)
+        : (typeof body.detail === "string" && body.detail) || `Ошибка ${response.status}`);
     }
     return response.json();
   }

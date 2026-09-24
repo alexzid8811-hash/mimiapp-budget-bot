@@ -447,7 +447,7 @@ $("incomeTxForm").addEventListener("submit", async (e) => {
   } catch(e2) { toast(e2.message); }
 });
 
-window.deleteTx = async (id) => { if (!confirm("Удалить операцию?")) return; await api(`/api/transactions/${id}`, {method:"DELETE"}); await loadAll(); };
+window.deleteTx = async (id) => { if (!confirm("Удалить операцию?")) return; try { await api(`/api/transactions/${id}`, {method:"DELETE"}); await loadAll(); } catch(e) { toast(e.message); } };
 window.payBill = async (id, due) => { try { await api(`/api/bills/${id}/pay`, {method:"POST", body:JSON.stringify({due_date:due})}); toast("Отмечено оплачено"); await loadAll(); } catch(e){ toast(e.message); } };
 window.editBillPayment = paymentId => {
   const payment = state.plan.find(item => item.payment_id === paymentId)
@@ -534,7 +534,7 @@ function openRule(mode, rule = null) {
 }
 $("addBillRuleBtn").addEventListener("click", () => openRule("bill"));
 window.editBillRule = id => openRule("bill", state.bootstrap.bill_rules.find(x => x.id === id));
-window.deleteBillRule = async id => { if(!confirm("Удалить платеж?")) return; await api(`/api/bill-rules/${id}`, {method:"DELETE"}); await loadAll(); };
+window.deleteBillRule = async id => { if(!confirm("Удалить платеж?")) return; try { await api(`/api/bill-rules/${id}`, {method:"DELETE"}); await loadAll(); } catch(e) { toast(e.message); } };
 
 $("ruleForm").addEventListener("submit", async (e) => {
   e.preventDefault();

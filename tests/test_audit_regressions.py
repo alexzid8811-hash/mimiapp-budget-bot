@@ -426,7 +426,7 @@ def test_backup_restores_cashflow_income_overrides(client):
         '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     ).status_code == 200
     backup = export_user_data(1)
-    assert backup['backup_version'] == 8
+    assert backup['backup_version'] == 9
     assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
     ensure_user(2)
     restore_user_data(2, backup)
@@ -698,3 +698,48 @@ def test_editing_a_payout_only_changes_periods_from_it_on_regardless_of_order(cl
     a_after_second_edit = next(p for p in after_b['periods'] if p['override_key'] == a_row['override_key'])
     assert a_after_second_edit['payday_amount'] == a_row['payday_amount'] + 200000
     assert a_after_second_edit['to_card'] != a_after_first_edit['to_card']
+
+
+def test_transaction_edit_that_would_overdraw_piggy_is_rejected_not_crashed(client):
+    tx = client.post('/api/transactions', json={
+        'type': 'income', 'amount': 500, 'tx_date': '2026-09-10', 'income_destination': 'piggy',
+    }).json()
+    assert client.post('/api/piggy-bank/withdraw', json={'amount': 500, 'movement_date': '2026-09-12'}).status_code == 200
+    response = client.put(f"/api/transactions/{tx['id']}", json={'type': 'expense', 'amount': 500, 'tx_date': '2026-09-10'})
+    assert response.status_code == 422
+    assert client.get('/api/transactions').json()[0]['income_destination'] == 'piggy'
+
+
+def test_linked_piggy_movement_cannot_be_deleted_on_its_own(client):
+    client.post('/api/transactions', json={
+        'type': 'income', 'amount': 500, 'tx_date': '2026-09-10', 'income_destination': 'piggy',
+    })
+    movement = client.get('/api/piggy-bank').json()['movements'][0]
+    assert client.delete(f"/api/piggy-bank/movements/{movement['id']}").status_code == 422
+    assert piggy_bank_balance(1) == 500
+
+
+def test_backup_keeps_planned_payroll_changes_and_report_time(client):
+    assert client.post('/api/payroll-changes', json={
+        'effective_month': '2026-11-01', 'salary_gross': 150000, 'bonus_gross': 0,
+    }).status_code == 200
+    assert client.put('/api/settings', json={'morning_report_time': '07:30'}).status_code == 200
+    backup = export_user_data(1)
+    with connect() as con:
+        con.execute("DELETE FROM payroll_changes WHERE user_id=1")
+        con.execute("UPDATE settings SET morning_report_time='09:00' WHERE user_id=1")
+    restore_user_data(1, backup)
+    changes = client.get('/api/payroll-settings').json()['changes']
+    assert [(c['effective_month'], c['salary_gross']) for c in changes] == [('2026-11-01', 150000)]
+    assert client.get('/api/bootstrap').json()['settings']['morning_report_time'] == '07:30'
+
+
+def test_morning_report_matches_home_screen_without_start_capital(client):
+    from app.morning_reports import pending_morning_reports
+    with connect() as con:
+        con.execute("UPDATE settings SET cashflow_enabled=0 WHERE user_id=1")
+    home = client.get('/api/dashboard').json()
+    report = pending_morning_reports(datetime(2026, 9, 15, 12, 0))[0]
+    assert home['daily_available'] > 0
+    assert report['daily_amount'] == home['daily_available']
+    assert report['period_remaining'] == home['remaining']
