@@ -196,7 +196,11 @@ test('layout expands responsively on tablets and desktop screens', () => {
   assert.match(html,/class="card home-forecast"/);
   assert.match(styles,/#app\{width:100%;max-width:none/);
   assert.match(styles,/@media\(min-width:900px\)[\s\S]*\.page\[data-page="home"\]\.active[\s\S]*grid-template-columns/);
-  assert.match(styles,/\.page\[data-page="settings"\]\.active[\s\S]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  // Cards flow into whichever column is shortest so far, so a short card
+  // never leaves a gap below it next to a tall neighbour (a plain 2-column
+  // grid would lock every row's height to its tallest cell).
+  assert.match(styles,/\.page\[data-page="settings"\]\.active\{[\s\S]*column-count:2/);
+  assert.match(styles,/\.page\[data-page="settings"\]>\.card\{[\s\S]*break-inside:avoid/);
   assert.match(styles,/max-width:1360px/);
   assert.match(styles,/body\.wide \.page\[data-page="buffer"\]\{[\s\S]*max-width:none/);
 });

@@ -378,14 +378,22 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   .page[data-page="home"] .home-buffer{grid-area:buffer;margin:0}
   .page[data-page="home"] .home-forecast{grid-area:forecast;margin:0}
 
+  /* A plain 2-column grid locks every row's height to its tallest cell, so a
+     short card next to a tall one (e.g. "Тема оформления" next to "Зарплата
+     и аванс") leaves a visible gap below it. CSS columns flow each card into
+     whichever column is shortest so far, closing those gaps. */
   .page[data-page="settings"].active{
-    display:grid;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:16px 20px;
-    align-items:start;
+    column-count:2;
+    column-gap:20px;
   }
-  .page[data-page="settings"]>.section-head{grid-column:1/-1}
-  .page[data-page="settings"]>.card{margin:0}
+  .page[data-page="settings"]>.section-head{
+    column-span:all;
+    margin:0 0 16px;
+  }
+  .page[data-page="settings"]>.card{
+    break-inside:avoid;
+    margin:0 0 20px;
+  }
 
   .page[data-page="operations"],
   .page[data-page="plan"],
