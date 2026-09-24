@@ -27,6 +27,7 @@ class Settings(Payroll):
     cashflow_enabled: bool = False
     cashflow_start_date: date | None = None
     cashflow_start_capital: float | None = Field(default=None, ge=0)
+    morning_report_time: str = Field(default='09:00', pattern=r'^(?:[01]\d|2[0-3]):[0-5]\d$')
 
     @model_validator(mode='after')
     def valid_start(self):
@@ -135,6 +136,18 @@ class CashflowIncomeOverride(Record):
     updated_at: datetime | None = None
 
 
+class PayrollChange(Record):
+    effective_month: date
+    salary_gross: float = Field(ge=0)
+    bonus_gross: float = Field(ge=0)
+
+    @model_validator(mode='after')
+    def first_of_month(self):
+        if self.effective_month.day != 1:
+            raise ValueError('Изменение зарплаты начинается с первого дня месяца')
+        return self
+
+
 class Conditions(APIModel):
     settings: Payroll
     income_rules: list[Income]
@@ -150,11 +163,12 @@ class History(APIModel):
 MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'transactions': Transaction, 'vacations': Vacation, 'reserve_movements': Reserve,
           'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
-          'plan_history': History, 'card_allocations': CardAllocation}
+          'plan_history': History, 'card_allocations': CardAllocation,
+          'payroll_changes': PayrollChange}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7, 8):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -163,7 +177,7 @@ def validate_backup(payload):
         raise ValueError('В резервной копии нет настроек')
     data = {'settings': Settings.model_validate(source['settings']).model_dump(mode='json')}
     for table, model in MODELS.items():
-        optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations'}
+        optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations', 'payroll_changes'}
         if payload['backup_version'] == 1:
             optional_legacy_tables.update({'piggy_bank_movements', 'plan_history'})
         records = source.get(table, [] if table in optional_legacy_tables else None)
@@ -216,5 +230,8 @@ def validate_backup(payload):
         row['snapshot'] = conditions
     if dates and min(dates) != '0001-01-01':
         raise ValueError('Нет начального состояния истории условий')
+    months = [r['effective_month'] for r in data['payroll_changes']]
+    if len(set(months)) != len(months):
+        raise ValueError('Повторяющийся месяц изменения зарплаты')
     validate_piggy_history(data['piggy_bank_movements'])
     return data

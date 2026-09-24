@@ -220,32 +220,35 @@ def update_transaction(
     uid = user_ready(user)
     if payload.tx_date > clock.today():
         raise HTTPException(422, "Дата операции не может быть в будущем")
-    with connect() as con:
-        require_category(con, uid, payload.category_id)
-        current = con.execute(
-            "SELECT bill_rule_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
-        ).fetchone()
-        if current is None:
-            raise HTTPException(404, "Операция не найдена")
-        if current["bill_rule_id"] is not None:
-            raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
-        con.execute(
-            "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=? "
-            "WHERE id=? AND user_id=?",
-            (
-                payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-                payload.note, payload.income_destination if payload.type == "income" else "daily", tx_id, uid,
-            ),
-        )
-        con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
-        if payload.type == "income" and payload.income_destination == "piggy":
+    try:
+        with connect() as con:
+            require_category(con, uid, payload.category_id)
+            current = con.execute(
+                "SELECT bill_rule_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
+            ).fetchone()
+            if current is None:
+                raise HTTPException(404, "Операция не найдена")
+            if current["bill_rule_id"] is not None:
+                raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
             con.execute(
-                "INSERT INTO piggy_bank_movements"
-                "(user_id,direction,amount,movement_date,note,source,income_transaction_id) "
-                "VALUES(?, 'deposit', ?, ?, ?, 'external', ?)",
-                (uid, payload.amount, payload.tx_date.isoformat(), payload.note, tx_id),
+                "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=? "
+                "WHERE id=? AND user_id=?",
+                (
+                    payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
+                    payload.note, payload.income_destination if payload.type == "income" else "daily", tx_id, uid,
+                ),
             )
-        check_piggy_history(con, uid)
+            con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
+            if payload.type == "income" and payload.income_destination == "piggy":
+                con.execute(
+                    "INSERT INTO piggy_bank_movements"
+                    "(user_id,direction,amount,movement_date,note,source,income_transaction_id) "
+                    "VALUES(?, 'deposit', ?, ?, ?, 'external', ?)",
+                    (uid, payload.amount, payload.tx_date.isoformat(), payload.note, tx_id),
+                )
+            check_piggy_history(con, uid)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     invalidate_current_auto_reserve(uid)
     return one("SELECT * FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)) or {}
 

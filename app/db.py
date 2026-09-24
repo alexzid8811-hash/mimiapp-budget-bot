@@ -165,9 +165,10 @@ CREATE TABLE IF NOT EXISTS payroll_changes (
     UNIQUE(user_id, effective_month)
 );
 
--- Money moved from the buffer to the card for one card period.  Closed
--- periods keep their stored amount, so later edits of rules or forecasts never
--- rewrite past daily limits.  The current period is recalculated live.
+-- Money moved from the buffer to the card for one card period.  A period is
+-- stored once its funding day has passed (the current one included), so later
+-- edits never rewrite money already on the card.  A backdated edit, a new
+-- start or an actual payout amount clears the rows it affects.
 CREATE TABLE IF NOT EXISTS card_allocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

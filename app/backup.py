@@ -18,7 +18,7 @@ from .db import connect, ensure_user
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 8
+BACKUP_VERSION = 9
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -34,6 +34,7 @@ SETTINGS_COLUMNS = (
     "cashflow_enabled",
     "cashflow_start_date",
     "cashflow_start_capital",
+    "morning_report_time",
 )
 
 TABLE_COLUMNS = {
@@ -53,6 +54,7 @@ TABLE_COLUMNS = {
     "cashflow_income_overrides": ("id", "period_start", "amount", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
     "card_allocations": ("id", "period_start", "funded_on", "amount"),
+    "payroll_changes": ("id", "effective_month", "salary_gross", "bonus_gross", "created_at"),
 }
 
 
@@ -98,7 +100,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             # Versions before v5 stored the cash-flow start balance in
@@ -124,6 +126,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     if settings.get("cashflow_start_capital") is not None
                     else legacy_start_capital
                 ),
+                "morning_report_time": str(settings.get("morning_report_time") or "09:00"),
             }
             assignments = ",".join(f"{column}=?" for column in SETTINGS_COLUMNS)
             con.execute(
@@ -221,6 +224,11 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 con.execute(
                     "INSERT INTO card_allocations(user_id,period_start,funded_on,amount) VALUES(?,?,?,?)",
                     (user_id, row["period_start"], row["funded_on"], row["amount"]),
+                )
+            for row in data["payroll_changes"]:
+                con.execute(
+                    "INSERT INTO payroll_changes(user_id,effective_month,salary_gross,bonus_gross,created_at) VALUES(?,?,?,?,?)",
+                    (user_id, row["effective_month"], float(row["salary_gross"]), float(row["bonus_gross"]), _created_at(row)),
                 )
             for row in data["plan_history"]:
                 snapshot = row['snapshot']
