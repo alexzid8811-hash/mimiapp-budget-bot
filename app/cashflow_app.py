@@ -296,3 +296,7 @@ def delete_piggy_bank_movement(
 from .backup import router as backup_router
 
 app.include_router(backup_router)
+
+from .excel_export import router as excel_router
+
+app.include_router(excel_router)
