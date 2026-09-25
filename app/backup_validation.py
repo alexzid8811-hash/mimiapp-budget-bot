@@ -113,7 +113,7 @@ class Piggy(Record):
     movement_date: date
     note: str = Field(default='', max_length=160)
     source: Literal['external', 'daily_budget'] = 'external'
-    purpose: Literal['transfer', 'cover_overspend'] | None = None
+    purpose: Literal['transfer', 'today', 'cover_overspend'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
 

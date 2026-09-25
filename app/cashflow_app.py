@@ -40,10 +40,11 @@ class PiggyToCardIn(APIModel):
     amount: float = Field(gt=0)
     movement_date: date = Field(default_factory=lambda: clock.today())
     note: str = Field(default="", max_length=160)
-    # "cover_overspend" pays for today's overspend: the remaining days keep
-    # their limit.  "transfer" adds money to the period and is spread over the
-    # remaining days.
-    purpose: Literal["transfer", "cover_overspend"] = "transfer"
+    # "today" adds the whole amount to today's sum (e.g. a purchase paid from
+    # the piggy bank); "cover_overspend" does the same but only up to today's
+    # overspend.  In both cases the remaining days keep their limit.
+    # "transfer" adds money to the period and is spread over the remaining days.
+    purpose: Literal["transfer", "today", "cover_overspend"] = "transfer"
 
 
 class CashflowIncomeOverrideIn(APIModel):
@@ -77,7 +78,8 @@ def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
 
 def piggy_bank_snapshot(user_id: int, limit: int = 80) -> dict:
     movements = legacy.rows(
-        "SELECT id,direction,amount,movement_date,note,source,purpose,created_at FROM piggy_bank_movements "
+        "SELECT id,direction,amount,movement_date,note,source,purpose,bill_payment_id,"
+        "income_transaction_id,created_at FROM piggy_bank_movements "
         "WHERE user_id=? ORDER BY movement_date DESC,id DESC LIMIT ?",
         (user_id, min(max(limit, 1), 300)),
     )
@@ -256,7 +258,9 @@ def piggy_bank_to_card(payload: PiggyToCardIn, user: TelegramUser = Depends(curr
         flow = engine.compute(uid, force_enabled=bool(cashflow_settings(uid)["cashflow_enabled"]))
         if cents(payload.amount) > cents(flow["overspend"]):
             raise HTTPException(422, "Сумма больше сегодняшнего перерасхода")
-    note = payload.note or ("Покрытие перерасхода" if payload.purpose == "cover_overspend" else "Перевод на карту")
+    note = payload.note or {
+        "cover_overspend": "Покрытие перерасхода", "today": "Перевод на сегодня",
+    }.get(payload.purpose, "Перевод на карту")
     movement = _insert_piggy(uid, "withdraw", payload.amount, payload.movement_date, note,
                              "daily_budget", payload.purpose)
     return {"movement": movement, **piggy_bank_snapshot(uid)}

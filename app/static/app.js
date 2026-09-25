@@ -67,12 +67,13 @@ let loadVersion = 0;
 async function loadAll() {
   const version = ++loadVersion;
   try {
-    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow] = await Promise.all([
-      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow")
+    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy] = await Promise.all([
+      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
+      api("/api/piggy-bank").catch(() => ({ movements: [] }))
     ]);
     if (version !== loadVersion) return;
     window.budgetDate.configure(bootstrap.budget_timezone);
-    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow };
+    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy };
     render();
     window.applyCashflowSettings?.(cashflowSettings);
     window.applyCashflow?.(cashflow);
@@ -148,12 +149,31 @@ function renderTransactionRow(t) {
   return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
 }
 
+// Transfers between the card and the piggy bank change the day's money, so
+// they are listed with the operations.  Movements created by an income or a
+// bill payment are already shown through that operation.
+function cardPiggyTransfers() {
+  return (state.piggy?.movements || [])
+    .filter(m => m.source === "daily_budget" && !m.bill_payment_id && !m.income_transaction_id)
+    .map(m => ({ ...m, type: "transfer", tx_date: m.movement_date, piggy: true }));
+}
+
+function renderPiggyTransferRow(m) {
+  const toCard = m.direction === "withdraw";
+  const title = toCard ? "Копилка → карта" : "Карта → копилка";
+  const how = !toCard ? "" : m.purpose === "transfer" ? " · по дням периода" : " · на сегодня";
+  const note = m.note ? ` · ${escapeHtml(m.note)}` : "";
+  return `<div class="list-row"><div class="row-main"><div class="emoji">🐷</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${fmtDate(m.movement_date)}${how}${note}</div></div></div><div><div class="amount ${toCard ? "income" : "expense"}">${toCard ? "+" : "-"}${money(m.amount)}</div><div class="actions"><button class="tiny danger" onclick="deletePiggyMovement(${m.id})">Удалить</button></div></div></div>`;
+}
+
 function renderTransactions() {
   const el = $("transactionsList");
-  if (!state.transactions.length) { el.innerHTML = `<div class="empty">Пока нет операций.</div>`; return; }
+  const items = [...state.transactions, ...cardPiggyTransfers()]
+    .sort((a, b) => b.tx_date.localeCompare(a.tx_date) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  if (!items.length) { el.innerHTML = `<div class="empty">Пока нет операций.</div>`; return; }
 
   const weeks = new Map();
-  state.transactions.forEach(t => {
+  items.forEach(t => {
     const weekStart = transactionWeekStart(t.tx_date);
     if (!weeks.has(weekStart)) weeks.set(weekStart, []);
     weeks.get(weekStart).push(t);
@@ -174,7 +194,7 @@ function renderTransactions() {
           <span><strong>${transactionWeekTitle(weekStart)}</strong><small>${countLabel}</small></span>
           <span class="transaction-week-summary">${expenseTotal ? `−${money(expenseTotal)}` : ""}<i aria-hidden="true">⌄</i></span>
         </button>
-        <div class="transaction-week-rows">${transactions.map(renderTransactionRow).join("")}</div>
+        <div class="transaction-week-rows">${transactions.map(t => t.piggy ? renderPiggyTransferRow(t) : renderTransactionRow(t)).join("")}</div>
       </section>`;
     }).join("");
 }

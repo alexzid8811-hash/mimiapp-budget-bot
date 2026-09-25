@@ -65,6 +65,25 @@ def test_overspend_offers_two_ways_and_never_uses_buffer(client):
     assert flow["buffer_balance"] == before["buffer_balance"]
 
 
+def test_piggy_to_card_for_today_adds_to_todays_sum(client):
+    assert client.post("/api/piggy-bank/deposit", json={"amount": 5000, "movement_date": "2026-09-13"}).status_code == 200
+    # The transfer may come before the purchase and is not limited by an overspend.
+    response = client.post("/api/piggy-bank/to-card", json={"amount": 1400, "purpose": "today"})
+    assert response.status_code == 200
+    assert response.json()["balance"] == 3600
+    flow = cashflow_snapshot(1)
+    assert flow["today_target"] == 1500
+    assert flow["available_today"] == 1500
+    spend(client, 1400)
+    spend(client, 100)
+    flow = cashflow_snapshot(1)
+    assert flow["today_target"] == 1500
+    assert flow["available_today"] == 0
+    assert flow["overspend"] == 0
+    assert flow["tomorrow_limit"] == 100  # the other days are not touched
+    assert flow["card_balance"] == 900
+
+
 def test_piggy_to_card_cannot_exceed_piggy_balance(client):
     assert client.post("/api/piggy-bank/deposit", json={"amount": 300, "movement_date": "2026-09-13"}).status_code == 200
     assert client.post("/api/piggy-bank/to-card", json={"amount": 300.01}).status_code == 422
