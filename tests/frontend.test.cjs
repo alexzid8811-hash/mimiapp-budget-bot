@@ -312,7 +312,35 @@ test('piggy to-card transfer posts to the dedicated endpoint with its purpose', 
  assert.ok(request,'expected a request to /api/piggy-bank/to-card');
  const body=JSON.parse(request.body);
  assert.equal(body.amount,500);
- assert.equal(body.purpose,'transfer');
+ assert.equal(body.purpose,'today');
+ assert.equal(get('piggyPurposeField').classList.contains('hidden'),false);
+});
+
+test('piggy to-card transfer can be spread over the period', async () => {
+ const {get,requests}=setup();
+ await get('refreshBtn').listeners.click();
+ get('piggyToCardBtn').listeners.click();
+ get('piggyPurposeChoice').value='transfer';
+ get('piggyAmount').value='500';
+ await get('piggyForm').listeners.submit({preventDefault(){}});
+ const request=requests.find(row=>row.url==='/api/piggy-bank/to-card');
+ assert.equal(JSON.parse(request.body).purpose,'transfer');
+});
+
+test('operations list shows card and piggy bank transfers', async () => {
+ const {get,responses}=setup();
+ responses['/api/piggy-bank']={balance:100,movements:[
+  {id:5,direction:'withdraw',amount:1400,movement_date:'2026-09-15',note:'интернет',source:'daily_budget',purpose:'today'},
+  {id:6,direction:'deposit',amount:50,movement_date:'2026-09-15',note:'',source:'daily_budget',purpose:null,bill_payment_id:9},
+  {id:7,direction:'deposit',amount:70,movement_date:'2026-09-15',note:'',source:'external',purpose:null},
+ ]};
+ await get('refreshBtn').listeners.click();
+ const html=get('transactionsList').innerHTML;
+ assert.match(html,/Копилка → карта/);
+ assert.match(html,/на сегодня/);
+ assert.match(html,/deletePiggyMovement\(5\)/);
+ assert.doesNotMatch(html,/deletePiggyMovement\(6\)/);
+ assert.doesNotMatch(html,/deletePiggyMovement\(7\)/);
 });
 
 test('localized money is parsed before expense submission', async () => {

@@ -278,6 +278,10 @@
       <input id="piggyDirection" type="hidden" value="deposit" />
       <input id="piggySource" type="hidden" value="external" />
       <input id="piggyPurpose" type="hidden" value="transfer" />
+      <label id="piggyPurposeField" class="hidden">Как учесть<select id="piggyPurposeChoice">
+        <option value="today">На сегодня — прибавить к сумме дня</option>
+        <option value="transfer">Распределить по дням периода</option>
+      </select></label>
       <label>Сумма<input id="piggyAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="piggyDate" type="date" required /></label>
       <label>Комментарий<input id="piggyNote" maxlength="160" placeholder="Необязательно" /></label>
@@ -316,9 +320,9 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20260924-logic-audit"></script>
+  <script src="/static/app.js?v=20260925-piggy-today"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
-  <script src="/static/buffer-ui.js?v=20260924-logic-audit"></script>
+  <script src="/static/buffer-ui.js?v=20260925-piggy-today"></script>
   <script src="/static/design-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/backup.js?v=20260917-full-design"></script>
 </body>

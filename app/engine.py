@@ -142,7 +142,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
             value = cents(row["amount"])
             if row["direction"] == "deposit":
                 _add(card_to_piggy, day, value)
-            elif row["purpose"] == "cover_overspend":
+            elif row["purpose"] in ("today", "cover_overspend"):
                 _add(card_cover, day, value)
             else:
                 _add(card_in, day, value)
@@ -361,8 +361,9 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         } if next_forecast else None,
         "card_balance": amount(card_now),
         "card_start_today": amount(result.card_start_today),
-        "today_target": amount(result.today_limit),
-        "daily_target": amount(result.today_limit),
+        # Money moved from the piggy bank "for today" belongs to today only.
+        "today_target": amount(result.today_limit + inp.card_cover.get(today, 0)),
+        "daily_target": amount(result.today_limit + inp.card_cover.get(today, 0)),
         "available_today": amount(result.available_today),
         "spent_today": amount(result.spent_today),
         "overspend": amount(result.overspend),

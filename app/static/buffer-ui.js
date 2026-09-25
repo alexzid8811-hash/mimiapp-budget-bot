@@ -186,7 +186,9 @@
     }
     list.innerHTML = piggy.movements.map(item => {
       const deposit = item.direction === "deposit";
-      const title = deposit && item.source === "daily_budget" ? "Из остатка дня" : deposit ? "Пополнение" : "Снятие";
+      const toCard = !deposit && item.source === "daily_budget";
+      const title = deposit && item.source === "daily_budget" ? "Из остатка дня" : deposit ? "Пополнение"
+        : toCard ? (item.purpose === "transfer" ? "На карту · по дням периода" : "На карту · на сегодня") : "Снятие";
       return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div><div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div></div></div>`;
     }).join("");
   }
@@ -219,6 +221,11 @@
       deposit: "Пополнить", withdraw: "Снять", toCard: "Перевести", coverOverspend: "Покрыть",
     }[mode];
     document.getElementById("piggyForm").dataset.mode = mode;
+    // A plain transfer to the card asks whether it is for today or for the
+    // whole period; "today" is the usual case of a purchase paid from savings.
+    document.getElementById("piggyPurposeField")?.classList.toggle("hidden", mode !== "toCard");
+    const choice = document.getElementById("piggyPurposeChoice");
+    if (choice) choice.value = "today";
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
@@ -233,6 +240,7 @@
     document.getElementById("piggyDialogTitle").textContent = "Перенести остаток дня";
     document.getElementById("savePiggyBtn").textContent = "Перенести";
     document.getElementById("piggyForm").dataset.mode = "dailyToPiggy";
+    document.getElementById("piggyPurposeField")?.classList.add("hidden");
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
@@ -250,11 +258,14 @@
     const movement_date = document.getElementById("piggyDate").value;
     const note = document.getElementById("piggyNote").value;
     const isToCard = mode === "toCard" || mode === "coverOverspend";
+    const purpose = mode === "toCard"
+      ? document.getElementById("piggyPurposeChoice")?.value || "today"
+      : document.getElementById("piggyPurpose").value;
     const path = isToCard
       ? "/api/piggy-bank/to-card"
       : `/api/piggy-bank/${document.getElementById("piggyDirection").value}`;
     const body = isToCard
-      ? { amount, movement_date, note, purpose: document.getElementById("piggyPurpose").value }
+      ? { amount, movement_date, note, purpose }
       : { amount, movement_date, note, source: document.getElementById("piggySource").value };
     try {
       await request(path, { method: "POST", body: JSON.stringify(body) });

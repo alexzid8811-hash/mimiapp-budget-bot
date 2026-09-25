@@ -258,8 +258,8 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
             "ALTER TABLE piggy_bank_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'external'"
         )
     if "purpose" not in piggy_columns:
-        # For piggy -> card transfers: 'cover_overspend' pays for today's
-        # overspend; any other value is spread over the remaining days.
+        # For piggy -> card transfers: 'today' and 'cover_overspend' add to
+        # today's sum only; any other value is spread over the remaining days.
         con.execute("ALTER TABLE piggy_bank_movements ADD COLUMN purpose TEXT")
     if "income_transaction_id" not in piggy_columns:
         con.execute(
