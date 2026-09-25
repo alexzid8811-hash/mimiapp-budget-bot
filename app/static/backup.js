@@ -38,7 +38,21 @@
     }
   }
 
+  const excelButton = $("exportExcelBtn");
+  async function sendExcel() {
+    excelButton.disabled = true;
+    try {
+      await api("/api/export/xlsx/send", { method: "POST", body: "{}" });
+      toast("Excel-файл отправлен в чат с ботом");
+    } catch (error) {
+      toast(error.message || "Не удалось отправить Excel-файл");
+    } finally {
+      excelButton.disabled = false;
+    }
+  }
+
   exportButton.addEventListener("click", sendBackup);
+  excelButton?.addEventListener("click", sendExcel);
   importButton.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", async () => {
     const file = fileInput.files?.[0];

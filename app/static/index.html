@@ -187,6 +187,14 @@
           </div>
           <input id="backupFileInput" type="file" accept=".json,application/json" hidden />
         </div>
+
+        <div class="card">
+          <h3>Выгрузка в Excel</h3>
+          <p class="muted backup-note">Таблица с операциями, расходами по категориям и месяцам, историей копилки, платежами и доходами. Бот отправит файл .xlsx в этот чат.</p>
+          <div class="backup-actions">
+            <button class="primary" id="exportExcelBtn" type="button">Отправить Excel в чат</button>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -324,6 +332,6 @@
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20260925-piggy-today"></script>
   <script src="/static/design-ui.js?v=20260923-card-buffer-piggy"></script>
-  <script src="/static/backup.js?v=20260917-full-design"></script>
+  <script src="/static/backup.js?v=20260925-excel"></script>
 </body>
 </html>
