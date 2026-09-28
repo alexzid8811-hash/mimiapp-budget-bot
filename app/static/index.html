@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260928-redesign" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260928-reserves-bills" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -121,14 +121,13 @@
         </div>
       </section>
 
-      <section class="page" data-page="plan">
-        <div class="section-head"><div><h2>Обязательные платежи</h2></div></div>
-        <p class="muted">Эти суммы уже зарезервированы и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными.</p>
+      <section class="page" data-page="plan"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="false">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button><button role="tab" data-seg="plan" aria-selected="true">Платежи</button></div>
+        <p class="muted">Обязательные платежи текущего периода. Эти суммы уже зарезервированы в буфере и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными.</p>
         <div id="planList" class="list cards-list"></div>
       </section>
 
 
-      <section class="page" data-page="buffer"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button></div>
+      <section class="page" data-page="buffer"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button><button role="tab" data-seg="plan" aria-selected="false">Платежи</button></div>
         <p class="muted buffer-intro">Приложение откладывает деньги из периодов с большими выплатами для будущих обязательных платежей и периодов с меньшими выплатами. Деньги остаются на вашем счёте.</p>
         <div id="bufferDisabled" class="warning hidden">Включите безопасный дневной лимит в настройках.</div>
         <div class="grid2 buffer-summary">
@@ -146,7 +145,7 @@
           <div class="plan-table-wrap"><table class="plan-table"><thead id="bufferHead"></thead><tbody id="bufferPeriods"></tbody></table></div>
         </div>
       </section>
-      <section class="page" data-page="piggy"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button></div>
+      <section class="page" data-page="piggy"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="true">Буфер</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button><button role="tab" data-seg="plan" aria-selected="false">Платежи</button></div>
         <div class="card"><span class="muted">В копилке</span><strong class="piggy-balance" id="piggyBalance">—</strong>
           <p class="muted">Копилка ведётся отдельно и не влияет на дневной бюджет без вашего перевода.</p>
           <div class="piggy-actions"><button class="primary" id="piggyDepositBtn">Внести отдельно</button><button class="secondary" id="piggyTransferBtn">Перенести остаток дня</button><button class="secondary" id="piggyToCardBtn">На карту</button><button class="secondary" id="piggyWithdrawBtn">Снять</button></div>
@@ -249,7 +248,7 @@
       </section>
     </main>
 
-    <nav class="bottom-nav" aria-label="Разделы"><div class="nav-inner"><div class="nav-brand" aria-hidden="true"><i>₽</i>Мой бюджет</div><button class="nav-item active" data-nav="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><small>Главная</small></button><button class="nav-item" data-nav="operations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><small>Операции</small></button><button class="nav-fab" id="navAddExpense" type="button" aria-label="Добавить расход"><span aria-hidden="true">+</span><small>Добавить расход</small></button><button class="nav-item" data-nav="analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 20V11M11 20V5M17 20v-7M3 20h18"/></svg><small>Аналитика</small></button><button class="nav-item nav-desktop" data-nav="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><small>Платежи</small></button><button class="nav-item" data-nav="buffer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><small>Резервы</small></button><button class="nav-item nav-desktop" data-nav="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><small>Настройки</small></button></div></nav>
+    <nav class="bottom-nav" aria-label="Разделы"><div class="nav-inner"><div class="nav-brand" aria-hidden="true"><i>₽</i>Мой бюджет</div><button class="nav-item active" data-nav="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><small>Главная</small></button><button class="nav-item" data-nav="operations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><small>Операции</small></button><button class="nav-fab" id="navAddExpense" type="button" aria-label="Добавить расход"><span aria-hidden="true">+</span><small>Добавить расход</small></button><button class="nav-item" data-nav="analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 20V11M11 20V5M17 20v-7M3 20h18"/></svg><small>Аналитика</small></button><button class="nav-item" data-nav="buffer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><small>Резервы</small></button><button class="nav-item nav-desktop" data-nav="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><small>Настройки</small></button></div></nav>
   </div>
 
   <dialog id="expenseDialog">
@@ -379,10 +378,10 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20260928-redesign"></script>
+  <script src="/static/app.js?v=20260928-reserves-bills"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20260925-piggy-today"></script>
-  <script src="/static/design-ui.js?v=20260928-redesign"></script>
+  <script src="/static/design-ui.js?v=20260928-reserves-bills"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20260928-redesign"></script>
 </body>

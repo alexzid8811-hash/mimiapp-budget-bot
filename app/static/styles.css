@@ -602,6 +602,8 @@ html,body{background:var(--page-bg)}
 .cards-list{background:var(--bg);border-radius:14px;padding:0 12px;margin-top:6px;box-shadow:var(--tile-shadow)}
 .segmented{background:var(--bg);margin:4px 0 6px;box-shadow:var(--tile-shadow)}
 .segmented button[aria-selected="true"]{background:var(--accent);color:var(--accent-text)}
+/* Резервы: Буфер · Копилка · Платежи */
+.page[data-page="buffer"] .segmented,.page[data-page="piggy"] .segmented,.page[data-page="plan"] .segmented{grid-template-columns:repeat(3,minmax(0,1fr))}
 .primary,.secondary{min-height:38px;padding:9px 14px;border-radius:12px}
 /* Blocks nested in a card used the page colour; cards are now that colour. */
 .card .pc,.card .preview,.card .payroll-preview,.category-order-item{background:var(--surface)}
