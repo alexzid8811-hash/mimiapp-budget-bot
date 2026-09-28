@@ -11,6 +11,7 @@
     const titles={home:"Мой бюджет",operations:"Операции",analytics:"Аналитика",plan:"Платежи",buffer:"Резервы",piggy:"Резервы",settings:"Настройки"};
     $("hello").textContent=titles[page] || "Мой бюджет";
     document.body.classList.toggle("wide",page==="buffer");
+    if(document.body.dataset) document.body.dataset.page=page;
     document.querySelectorAll("[data-nav]").forEach(b=>{
       if(b.dataset.nav===(page==="piggy"?"buffer":page)) b.setAttribute("aria-current","page");
       else b.removeAttribute("aria-current");
@@ -30,15 +31,13 @@
     const left=Number(flow ? flow.available_today : d.daily_available)||0;
     const target=flow ? Number(flow.today_target ?? left+spent) : left+spent;
     // The daily limit is always the full amount available at the start of today.
-    // Overspending is shown separately in the remaining amount.
-    const headline=left<0 ? left : target;
-    $("dailyAvailable").textContent=money(headline);
-    $("dailyAvailable").style.color=left<0?"var(--expense)":"";
+    // Overspending shows up in the remaining amount, the card's headline.
+    $("dailyAvailable").textContent=money(target);
     $("leftToday").textContent=money(left);
-    $("leftToday").style.color=left<0?"var(--expense)":"";
+    // The "today" card is coloured as a whole: red text on the blue card would be unreadable.
+    $("todayHero")?.classList.toggle("over",left<0);
     const pct=target>0 ? Math.min(100,Math.max(0,spent/target*100)) : spent>0?100:0;
     $("spendFill").style.width=pct+"%";
-    $("spendFill").style.background=left<0?"var(--expense)":"var(--accent)";
     $("spendBar").setAttribute("aria-valuenow",String(Math.round(pct)));
     const overspend=Number(flow ? flow.overspend : 0)||0;
     const panel=$("overspendPanel");

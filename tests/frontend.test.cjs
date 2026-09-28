@@ -211,7 +211,8 @@ test('redesign uses today target without subtracting expenses twice and preserve
  responses['/api/dashboard'].spent_today=2190;
  Object.assign(responses['/api/cashflow'],{today_target:1272.13,available_today:-917.87});
  await get('refreshBtn').listeners.click();
- assert.match(get('dailyAvailable').textContent,/-917,87/);
+ // The limit stays the limit; the overspend is the (negative) remaining amount.
+ assert.match(get('dailyAvailable').textContent,/1.272,13/);
  assert.match(get('leftToday').textContent,/-917,87/);
  assert.equal(get('spendFill').style.width,'100%');
  Object.assign(responses['/api/cashflow'],{today_target:4255,available_today:2975});
@@ -351,4 +352,45 @@ test('localized money is parsed before expense submission', async () => {
   await get('expenseForm').listeners.submit({preventDefault(){},target:get('expenseForm')});
   const request = requests.find(item => item.url === '/api/transactions' && item.body);
   assert.equal(JSON.parse(request.body).amount,2070);
+});
+
+test('home screen lists upcoming unpaid bills and the latest operations', async () => {
+  const {get,responses} = setup();
+  responses['/api/plan'] = [
+    {id:1,title:'Аренда',amount:35000,due_date:'2099-10-05',paid:false},
+    {id:2,title:'<b>Связь</b>',amount:450,due_date:'2099-09-30',paid:false},
+    {id:3,title:'Кредит',amount:12000,due_date:'2026-09-15',paid:true},
+  ];
+  responses['/api/transactions'] = [
+    {id:9,type:'expense',amount:897,tx_date:'2026-09-15',note:'Пятёрочка',category_title:'Продукты',category_emoji:'🛒'},
+    {id:8,type:'income',amount:5000,tx_date:'2026-09-14',note:'Премия'},
+  ];
+  await get('refreshBtn').listeners.click();
+  const bills = get('homeBills').innerHTML;
+  assert.match(bills, /&lt;b&gt;Связь[\s\S]*Аренда/);
+  assert.doesNotMatch(bills, /Кредит/);
+  const recent = get('homeRecent').innerHTML;
+  assert.match(recent, /Пятёрочка[\s\S]*Продукты · 15 сент\.[\s\S]*−897,00/);
+  assert.match(recent, /class="amount income">\+5[\s ]000,00/);
+});
+
+test('operations can be searched and filtered by type', async () => {
+  const {sandbox,get,responses} = setup();
+  responses['/api/transactions'] = [
+    {id:1,type:'expense',amount:100,tx_date:'2026-09-15',note:'Кофе',category_title:'Кафе'},
+    {id:2,type:'income',amount:500,tx_date:'2026-09-14',note:'Возврат'},
+    {id:3,type:'expense',amount:900,tx_date:'2026-09-10',bill_rule_id:4,bill_title:'Интернет'},
+  ];
+  await get('refreshBtn').listeners.click();
+  get('txSearch').value = 'кафе';
+  vm.runInContext('renderTransactions()', sandbox);
+  assert.match(get('transactionsList').innerHTML, /Кофе/);
+  assert.doesNotMatch(get('transactionsList').innerHTML, /Возврат|Интернет/);
+  get('txSearch').value = '';
+  vm.runInContext('transactionFilter="bills"; renderTransactions()', sandbox);
+  assert.match(get('transactionsList').innerHTML, /Интернет/);
+  assert.doesNotMatch(get('transactionsList').innerHTML, /Кофе|Возврат/);
+  get('txSearch').value = 'нет такого';
+  vm.runInContext('renderTransactions()', sandbox);
+  assert.match(get('transactionsList').innerHTML, /Ничего не найдено/);
 });
