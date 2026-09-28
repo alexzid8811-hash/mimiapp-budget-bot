@@ -551,3 +551,191 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .analytics-bill small{display:block;font-size:12px;color:var(--muted)}
 .analytics-bill-due{border-top:1px solid var(--line);padding-top:8px;color:var(--muted)}
 .analytics-bill small.ok{color:var(--income)}
+
+/* =====================================================================
+   Редизайн: компактная раскладка, карточка «Осталось на сегодня»,
+   плитки денег, нижнее меню с «+» и боковое меню на компьютере.
+   ===================================================================== */
+:root{
+  --page-bg:#f4f5f8;
+  --hero-a:#2481cc; --hero-b:#1a67a8;
+  --hero-over-a:#d0454c; --hero-over-b:#a8323a;
+  --kind-buffer:#8a6fd6; --kind-piggy:#1f8f57;
+  --tile-shadow:0 1px 2px rgba(14,17,22,.05),0 2px 8px rgba(14,17,22,.04);
+  --sidebar-w:232px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --page-bg:#0f161d;
+    --hero-a:#1f5f99; --hero-b:#173f66;
+    --hero-over-a:#9c343b; --hero-over-b:#6f2429;
+    --kind-buffer:#9f88ec; --kind-piggy:#4cc38a;
+    --tile-shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --page-bg:#0f161d;
+  --hero-a:#1f5f99; --hero-b:#173f66;
+  --hero-over-a:#9c343b; --hero-over-b:#6f2429;
+  --kind-buffer:#9f88ec; --kind-piggy:#4cc38a;
+  --tile-shadow:none;
+}
+
+/* Общая компактность */
+html,body{background:var(--page-bg)}
+.topbar{background:var(--page-bg);padding:calc(10px + var(--app-safe-top)) 12px 6px}
+.topbar h1{font-size:19px}
+.topbar .sub{font-size:12px}
+.top-actions{gap:5px}
+.icon-btn{width:34px;height:34px;border-radius:10px;background:var(--bg);box-shadow:var(--tile-shadow)}
+.icon-btn svg{width:18px;height:18px}
+.page{padding:2px 10px 16px}
+.page .section-head h2,.page-title{font-size:20px;margin:4px 0 2px}
+.card{background:var(--bg);border-radius:14px;padding:8px 12px;margin:0 0 6px;box-shadow:var(--tile-shadow)}
+.card h3{font-size:14px}
+.section-head{margin-bottom:4px;gap:8px}
+.muted{font-size:12.5px}
+.list-row{padding:5px 0}
+.emoji,.movement-icon{width:30px;height:30px;border-radius:9px;font-size:15px}
+.row-title{font-size:14px}
+.row-sub{font-size:11.5px;margin-top:1px}
+.cards-list{background:var(--bg);border-radius:14px;padding:0 12px;margin-top:6px;box-shadow:var(--tile-shadow)}
+.segmented{background:var(--bg);margin:4px 0 6px;box-shadow:var(--tile-shadow)}
+.segmented button[aria-selected="true"]{background:var(--accent);color:var(--accent-text)}
+.primary,.secondary{min-height:38px;padding:9px 14px;border-radius:12px}
+/* Blocks nested in a card used the page colour; cards are now that colour. */
+.card .pc,.card .preview,.card .payroll-preview,.category-order-item{background:var(--surface)}
+.category-drag-handle{background:var(--bg)}
+.link-btn{border:0;background:none;padding:2px 0;color:var(--accent);font-weight:600;font-size:13px;cursor:pointer}
+.settings-btn{display:grid}
+
+/* Карточка «Осталось на сегодня» */
+.page[data-page="home"] .today.hero-card{
+  display:block;padding:11px 14px;margin:0 0 6px;border-radius:16px;
+  background:linear-gradient(145deg,var(--hero-a),var(--hero-b));color:#fff;
+}
+.today.hero-card.over{background:linear-gradient(145deg,var(--hero-over-a),var(--hero-over-b))}
+.hero-label{display:block;font-size:12px;opacity:.85}
+.hero-big{display:block;font-size:34px;font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:1px 0 7px;overflow-wrap:anywhere}
+.today.hero-card .spend-bar{height:6px;margin:0;background:rgba(255,255,255,.24)}
+.today.hero-card .spend-bar span{background:#fff}
+.hero-row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 12px;margin-top:6px;font-size:12px;opacity:.92}
+.hero-row b{font-weight:650;white-space:nowrap}
+
+/* Быстрые действия */
+.quick-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0 0 6px}
+.qa{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;border:0;border-radius:12px;padding:7px 4px;
+  background:var(--bg);box-shadow:var(--tile-shadow);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.qa i{display:grid;place-items:center;width:22px;height:22px;flex:none;border-radius:7px;font-style:normal;font-size:14px;font-weight:700}
+.qa-out i{background:color-mix(in srgb,var(--expense) 14%,transparent);color:var(--expense)}
+.qa-in i{background:color-mix(in srgb,var(--income) 14%,transparent);color:var(--income)}
+.qa-pig i{background:var(--accent-soft);color:var(--accent)}
+
+/* Плитки денег */
+.money-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:0 0 6px}
+.mtile{min-width:0;padding:8px 10px;border-radius:14px;background:var(--bg);box-shadow:var(--tile-shadow);text-align:center}
+.mtile span{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--muted);font-size:12px;font-weight:600}
+.mtile strong{display:block;margin-top:2px;font-size:18px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mtile small{display:block;color:var(--muted);font-size:11px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mtile-sum{background:var(--accent-soft);box-shadow:none}
+.mtile-sum strong{color:var(--accent)}
+.dot{display:inline-block;width:9px;height:9px;flex:none;border-radius:3px}
+.dot-card{background:var(--accent)}
+.dot-buffer{background:var(--kind-buffer)}
+.dot-piggy{background:var(--kind-piggy)}
+.dot-split{background:linear-gradient(135deg,var(--kind-buffer) 50%,var(--kind-piggy) 50%)}
+
+/* Период, списки на главной */
+.page[data-page="home"] .period{margin-top:0}
+.strip{margin:4px 0 3px;gap:3px}
+.day{height:20px;border-radius:5px}
+.day.bill::after{bottom:2px;width:4px;height:4px;margin-left:-2px}
+.strip-legend{font-size:11px}
+.compact-row .amount{font-size:14px}
+.home-bills .empty,.home-recent .empty{padding:8px}
+.meter{margin:4px 0}
+.warning{margin-top:6px;padding:8px 10px}
+.overspend-panel{margin-bottom:6px}
+
+/* Операции: поиск и фильтры */
+.ops-tools{display:grid;gap:6px;margin:0 0 6px}
+.ops-tools input[type="search"]{padding:8px 12px;border-radius:10px;font-size:15px;background:var(--bg);box-shadow:var(--tile-shadow)}
+.ops-tools .chips{display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;scrollbar-width:none}
+.ops-tools .chips::-webkit-scrollbar{display:none}
+.ops-tools .chip{flex:none;border:0;border-radius:99px;padding:5px 11px;font-size:12.5px;background:var(--bg);box-shadow:var(--tile-shadow);cursor:pointer}
+.ops-tools .chip[aria-pressed="true"]{background:var(--text);color:var(--bg)}
+.transaction-week-toggle{padding:9px 0 6px}
+
+/* Нижнее меню: 5 пунктов и «+» в центре */
+body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
+.bottom-nav{padding:4px 4px calc(6px + env(safe-area-inset-bottom));background:color-mix(in srgb,var(--bg) 92%,transparent)}
+.bottom-nav .nav-inner{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-items:end}
+.nav-brand,.nav-desktop{display:none}
+.nav-item{min-height:44px;padding:4px 2px}
+.nav-item svg{width:22px;height:22px}
+.nav-fab{justify-self:center;width:48px;height:48px;margin-top:-18px;border:0;border-radius:15px;background:var(--accent);color:#fff;
+  font-size:26px;line-height:1;cursor:pointer;box-shadow:0 6px 16px color-mix(in srgb,var(--accent) 40%,transparent)}
+.nav-fab small{display:none}
+.toast{bottom:calc(76px + env(safe-area-inset-bottom))}
+
+/* Планшет и компьютер: колонки на главной */
+@media(min-width:720px){
+  .topbar,.page{padding-left:16px;padding-right:16px}
+  .money-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+@media(min-width:900px){
+  .page{padding:4px 16px 20px}
+  .page[data-page="home"].active,
+  .page[data-page="home"].active:has(#overspendPanel.hidden){
+    display:grid;
+    grid-template-columns:repeat(6,minmax(0,1fr));
+    grid-template-areas:
+      "today today period period period period"
+      "quick quick money money money money"
+      "overspend overspend overspend overspend overspend overspend"
+      "recent recent recent bills bills bills"
+      "buffer buffer buffer forecast forecast forecast";
+    gap:8px;
+    align-items:start;
+  }
+  .page[data-page="home"].active:has(#overspendPanel.hidden){
+    grid-template-areas:
+      "today today period period period period"
+      "quick quick money money money money"
+      "recent recent recent bills bills bills"
+      "buffer buffer buffer forecast forecast forecast";
+  }
+  .page[data-page="home"] .today.hero-card{grid-area:today;margin:0;align-self:stretch}
+  .page[data-page="home"] .quick-actions{grid-area:quick;margin:0;align-self:stretch;grid-template-columns:1fr}
+  .page[data-page="home"] .money-tiles{grid-area:money;margin:0}
+  .page[data-page="home"] .period{grid-area:period;margin:0;align-self:stretch}
+  .page[data-page="home"] .home-recent{grid-area:recent;margin:0}
+  .page[data-page="home"] .home-bills{grid-area:bills;margin:0}
+  .page[data-page="home"] .home-buffer{grid-area:buffer;margin:0}
+  .page[data-page="home"] .home-forecast{grid-area:forecast;margin:0}
+  .page[data-page="home"] .overspend-panel{grid-area:overspend;margin:0}
+  .hero-big{font-size:40px}
+  .page[data-page="settings"]>.card{margin:0 0 10px}
+  .cards-list{padding-left:14px;padding-right:14px}
+}
+
+/* Компьютер: меню слева */
+@media(min-width:1024px){
+  body{padding-bottom:0;padding-left:var(--sidebar-w)}
+  #app,.topbar{max-width:1280px}
+  .settings-btn{display:none}
+  .bottom-nav{top:0;bottom:0;left:0;right:auto;width:var(--sidebar-w);padding:14px 10px;border-top:0;
+    border-right:1px solid var(--line);background:var(--bg);backdrop-filter:none;-webkit-backdrop-filter:none}
+  .bottom-nav .nav-inner{display:flex;flex-direction:column;align-items:stretch;gap:2px;height:100%;max-width:none;padding:0}
+  .nav-brand{display:flex;align-items:center;gap:10px;padding:2px 8px 12px;font-weight:750;font-size:16px;color:var(--text)}
+  .nav-brand i{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;font-style:normal}
+  .nav-desktop{display:flex}
+  .nav-item{flex-direction:row;justify-content:flex-start;gap:10px;min-height:0;padding:8px 10px;border-radius:10px}
+  .nav-item svg{width:20px;height:20px}
+  .nav-item small{font-size:14px;font-weight:550}
+  .nav-item.active{background:var(--accent-soft)}
+  .nav-fab{order:10;justify-self:auto;width:100%;height:auto;margin:10px 0 0;padding:10px;border-radius:12px;font-size:14px;font-weight:650;box-shadow:none}
+  .nav-fab span{display:none}
+  .nav-fab small{display:inline;font-size:14px}
+  .toast{bottom:24px;left:calc(50% + var(--sidebar-w) / 2)}
+}

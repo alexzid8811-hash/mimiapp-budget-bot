@@ -83,7 +83,41 @@ async function loadAll() {
 }
 
 function render() {
-  renderHeader(); renderDashboard(); renderTransactions(); renderPlan(); renderSettings(); fillCategorySelects();
+  renderHeader(); renderDashboard(); renderHomeLists(); renderTransactions(); renderPlan(); renderSettings(); fillCategorySelects();
+}
+
+function daysUntil(iso) {
+  return Math.round((Date.parse(`${iso}T12:00:00Z`) - Date.parse(`${todayISO()}T12:00:00Z`)) / 86400000);
+}
+
+function dueLabel(iso) {
+  const n = daysUntil(iso);
+  if (n < 0) return "просрочен";
+  if (n === 0) return "сегодня";
+  if (n === 1) return "завтра";
+  const word = n % 100 >= 11 && n % 100 <= 14 ? "дней" : n % 10 === 1 ? "день" : n % 10 >= 2 && n % 10 <= 4 ? "дня" : "дней";
+  return `через ${n} ${word}`;
+}
+
+// Short lists on the home screen: the next unpaid bills and the latest operations.
+function renderHomeLists() {
+  const bills = $("homeBills");
+  if (bills) {
+    const upcoming = (state.plan || []).filter(p => !p.paid)
+      .sort((a, b) => a.due_date.localeCompare(b.due_date)).slice(0, 3);
+    bills.innerHTML = upcoming.length ? upcoming.map(p => `<div class="list-row compact-row"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || "📌"}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · ${dueLabel(p.due_date)}</div></div></div><div class="amount">${money(p.amount)}</div></div>`).join("")
+      : `<div class="empty">В этом периоде всё оплачено.</div>`;
+  }
+  const recent = $("homeRecent");
+  if (recent) {
+    const items = (state.transactions || []).slice(0, 4);
+    recent.innerHTML = items.length ? items.map(t => {
+      const isExpense = t.type === "expense";
+      const title = t.bill_title || t.note || t.category_title || (isExpense ? "Расход" : "Доход");
+      const sub = [t.category_title, fmtDate(t.tx_date)].filter(Boolean).map(escapeHtml).join(" · ");
+      return `<div class="list-row compact-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? "💳" : "💰")}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${sub}</div></div></div><div class="amount ${isExpense ? "" : "income"}">${isExpense ? "−" : "+"}${money(t.amount)}</div></div>`;
+    }).join("") : `<div class="empty">Пока нет операций.</div>`;
+  }
 }
 
 function renderHeader() {
@@ -95,6 +129,8 @@ function renderDashboard() {
   const d = state.dashboard; if (!d) return;
   $("dailyAvailable").textContent = money(d.daily_available);
   $("periodCaption").textContent = `${fmtDate(d.period.start)} — ${fmtDate(d.period.end)} · ${d.period.days_left} дн.`;
+  const cashNote = $("cardCashNote");
+  if (cashNote) cashNote.textContent = `на ${d.period.days_left} дн. периода`;
   $("spentToday").textContent = money(d.spent_today);
   // Fallback values until the detailed cash-flow snapshot loads.
   $("cardCash").textContent = money(d.remaining);
@@ -166,11 +202,32 @@ function renderPiggyTransferRow(m) {
   return `<div class="list-row"><div class="row-main"><div class="emoji">🐷</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${fmtDate(m.movement_date)}${how}${note}</div></div></div><div><div class="amount ${toCard ? "income" : "expense"}">${toCard ? "+" : "-"}${money(m.amount)}</div><div class="actions"><button class="tiny danger" onclick="deletePiggyMovement(${m.id})">Удалить</button></div></div></div>`;
 }
 
+let transactionFilter = "all";
+const TRANSACTION_FILTERS = {
+  all: () => true,
+  expense: t => !t.piggy && t.type === "expense" && !t.bill_rule_id,
+  income: t => !t.piggy && t.type === "income",
+  bills: t => Boolean(t.bill_rule_id),
+  piggy: t => Boolean(t.piggy),
+};
+
+function transactionMatches(t, query) {
+  if (!(TRANSACTION_FILTERS[transactionFilter] || TRANSACTION_FILTERS.all)(t)) return false;
+  if (!query) return true;
+  const text = [t.note, t.category_title, t.bill_title, t.piggy ? "копилка" : ""].join(" ").toLowerCase();
+  return text.includes(query);
+}
+
 function renderTransactions() {
   const el = $("transactionsList");
-  const items = [...state.transactions, ...cardPiggyTransfers()]
+  const query = String($("txSearch")?.value || "").trim().toLowerCase();
+  const all = [...state.transactions, ...cardPiggyTransfers()];
+  const items = all.filter(t => transactionMatches(t, query))
     .sort((a, b) => b.tx_date.localeCompare(a.tx_date) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
-  if (!items.length) { el.innerHTML = `<div class="empty">Пока нет операций.</div>`; return; }
+  if (!items.length) {
+    el.innerHTML = `<div class="empty">${all.length ? "Ничего не найдено." : "Пока нет операций."}</div>`;
+    return;
+  }
 
   const weeks = new Map();
   items.forEach(t => {
@@ -419,14 +476,25 @@ function switchPage(page) {
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.nav)));
 $("refreshBtn").addEventListener("click", () => loadAll());
 let editingTransactionId = null;
-$("quickExpenseBtn").addEventListener("click", () => {
+function openExpenseDialog() {
   editingTransactionId = null; $("expenseForm").reset(); $("expenseDate").value = todayISO();
   $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50);
-});
-$("addIncomeTxBtn").addEventListener("click", () => {
+}
+function openIncomeDialog() {
   editingTransactionId = null; $("incomeTxForm").reset(); $("incomeTxDate").value = todayISO();
   $("incomeTxDialog").showModal();
-});
+}
+["quickExpenseBtn", "navAddExpense"].forEach(id => $(id)?.addEventListener("click", openExpenseDialog));
+["addIncomeTxBtn", "quickIncomeBtn"].forEach(id => $(id)?.addEventListener("click", openIncomeDialog));
+// "В копилку" on the home screen is the same card → piggy transfer as on the reserves page.
+$("quickPiggyBtn")?.addEventListener("click", () => $("piggyTransferBtn")?.click());
+
+$("txSearch")?.addEventListener("input", () => renderTransactions());
+document.querySelectorAll("[data-txf]").forEach(btn => btn.addEventListener("click", () => {
+  transactionFilter = btn.dataset.txf;
+  document.querySelectorAll("[data-txf]").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+  renderTransactions();
+}));
 
 window.editTransaction = id => {
   const transaction = state.transactions.find(item => item.id === id && !item.bill_rule_id);
