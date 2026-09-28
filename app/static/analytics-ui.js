@@ -80,12 +80,13 @@
     const cats = data.categories;
     if (!cats.length) { $("analyticsCategories").innerHTML = `<div class="empty">Расходов за этот период нет.</div>`; return; }
     const max = cats[0].amount || 1;
-    $("analyticsCategories").innerHTML = cats.map((c, i) => {
+    const note = data.previous_totals.daily > 0
+      ? `<p class="muted analytics-cats-note">Изменение ${(data.previous_partial ? COMPARE_SAME_DAY : COMPARE)[data.mode]}</p>` : "";
+    $("analyticsCategories").innerHTML = note + cats.map((c, i) => {
       const key = String(c.id ?? "none"), expanded = open.has(key), d = delta(c.amount, c.previous);
       // Without any spending in the previous range there is nothing to compare with.
       const hadPrevious = data.previous_totals.daily > 0;
-      const since = (data.previous_partial ? COMPARE_SAME_DAY : COMPARE)[data.mode];
-      const change = d === null ? (hadPrevious ? "новая категория" : "") : d === 0 ? "без изменений" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}% ${since}`;
+      const change = d === null ? (hadPrevious ? "новая" : "") : d === 0 ? "без изменений" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}%`;
       const drill = expanded ? `<span class="analytics-drill">${c.top.map(op => `<span><span>${esc(op.note || "Без комментария")}, ${day(op.date)}</span><span class="num">${rub(op.amount)}</span></span>`).join("")}${c.count > c.top.length ? `<span><span>ещё ${c.count - c.top.length} опер.</span><span></span></span>` : ""}</span>` : "";
       return `<button type="button" class="analytics-cat" aria-expanded="${expanded}" data-cat="${esc(key)}">
         <span class="emoji">${esc(c.emoji)}</span>
