@@ -8,7 +8,7 @@
   let currentPage = "home";
   function navigation(page) {
     currentPage = page;
-    const titles={home:"Мой бюджет",operations:"Операции",plan:"Платежи",buffer:"Резервы",piggy:"Резервы",settings:"Настройки"};
+    const titles={home:"Мой бюджет",operations:"Операции",analytics:"Аналитика",plan:"Платежи",buffer:"Резервы",piggy:"Резервы",settings:"Настройки"};
     $("hello").textContent=titles[page] || "Мой бюджет";
     document.body.classList.toggle("wide",page==="buffer");
     document.querySelectorAll("[data-nav]").forEach(b=>{

@@ -300,3 +300,7 @@ app.include_router(backup_router)
 from .excel_export import router as excel_router
 
 app.include_router(excel_router)
+
+from .analytics import router as analytics_router
+
+app.include_router(analytics_router)
