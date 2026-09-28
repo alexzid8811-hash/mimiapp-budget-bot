@@ -519,17 +519,20 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .analytics-kind i,.analytics-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
 .analytics-kind .pct{color:var(--muted);font-size:13px;min-width:38px;text-align:right}
 .analytics-cats{display:grid;gap:8px;padding-bottom:6px}
-.analytics-cat{display:grid;grid-template-columns:24px 1fr;gap:10px;align-items:center;width:100%;border:0;background:transparent;text-align:left;padding:4px;border-radius:10px;cursor:pointer}
+.analytics-cat{display:grid;grid-template-columns:38px minmax(0,1fr);gap:12px;align-items:center;width:100%;border:0;background:transparent;text-align:left;padding:4px;border-radius:10px;cursor:pointer}
 .analytics-cat[aria-expanded="true"]{background:var(--surface-2)}
-.analytics-cat .emoji{font-size:18px;text-align:center}
+.analytics-cat .emoji{align-self:center}
 .analytics-cat .top{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+.analytics-cat .top > span{min-width:0;overflow-wrap:anywhere}
 .analytics-cat .top strong{font-weight:600;white-space:nowrap}
 .analytics-cat .bar{height:8px;background:var(--surface-2);border-radius:4px;margin-top:5px;overflow:hidden}
 .analytics-cat[aria-expanded="true"] .bar{background:var(--bg)}
 .analytics-cat .bar b{display:block;height:100%;border-radius:0 4px 4px 0}
 .analytics-cat .meta{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;margin-top:3px}
+.analytics-cat .meta span{white-space:nowrap}
+.analytics-cats-note{margin:-4px 0 2px}
 .analytics-cat .up{color:var(--expense)} .analytics-cat .down{color:var(--income)}
-.analytics-drill{grid-column:1/-1;display:grid;gap:4px;padding:4px 4px 2px 34px;font-size:13px}
+.analytics-drill{grid-column:1/-1;display:grid;gap:4px;padding:4px 4px 2px 50px;font-size:13px}
 .analytics-drill > span{display:flex;justify-content:space-between;gap:8px;color:var(--muted)}
 .analytics-drill > span span:last-child{color:var(--text);white-space:nowrap}
 .analytics-chart{position:relative}

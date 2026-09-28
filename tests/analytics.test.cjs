@@ -64,7 +64,8 @@ test('analytics page renders totals, categories and bills', async () => {
   const cats = get('analyticsCategories').innerHTML;
   assert.match(cats, /Кафе[\s\S]*Продукты/);
   assert.match(cats, /▲ 100%/);
-  assert.match(cats, /новая категория/);
+  assert.match(cats, /новая/);
+  assert.match(cats, /Изменение к этому дню прошлого месяца/);
   // Colour follows the category's position in the settings list, not its rank.
   assert.match(cats, /Кафе[\s\S]*?var\(--cat-2\)/);
 
