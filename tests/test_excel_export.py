@@ -1,13 +1,17 @@
 import io
+from datetime import date
 
 from openpyxl import load_workbook
 
+from app import clock
 from app.db import connect, ensure_user, init_db
 from app.excel_export import build_workbook
 
 
 def test_excel_export_contains_operations_pivot_and_piggy(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 15))
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda _: None)
     init_db()
     ensure_user(1, "Alex")
     with connect() as con:
@@ -45,3 +49,31 @@ def test_excel_export_contains_operations_pivot_and_piggy(tmp_path, monkeypatch)
 
     piggy = list(wb["Копилка"].iter_rows(min_row=2, values_only=True))
     assert [(r[1], r[2], r[3]) for r in piggy] == [("Пополнение", 1000, 1000), ("Снятие", -400, 600)]
+
+    assert wb.sheetnames[1] == "Графики"
+    charts = wb["Графики"]
+    assert charts["A1"].value == "Аналитика расходов · Сентябрь 2026"
+    values = [row for row in charts.iter_rows(values_only=True) if any(v is not None for v in row)]
+    kinds = {r[0]: r[1] for r in values}
+    assert (kinds["Повседневные траты"], kinds["Обязательные платежи"], kinds["Отложено в копилку"]) == (700, 0, 1000)
+    assert any(r[0] == "☕ Тестовая кофейня" and r[1] == 700 and r[3] == 300 for r in values)
+    assert any(r[0] == "Сентябрь 2026" and r[1] == 700 and r[3] == 1000 for r in values)
+
+
+def test_excel_charts_are_embedded(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 15))
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda _: None)
+    init_db()
+    ensure_user(1, "Alex")
+    with connect() as con:
+        con.execute(
+            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note) "
+            "SELECT 1,'expense',500,'2026-09-10',id,'' FROM categories WHERE user_id=1 LIMIT 1"
+        )
+    import zipfile
+
+    content = build_workbook(1)
+    names = zipfile.ZipFile(io.BytesIO(content)).namelist()
+    # Pie, categories, days and months on "Графики" plus the pivot chart.
+    assert len([n for n in names if n.startswith("xl/charts/chart")]) == 5

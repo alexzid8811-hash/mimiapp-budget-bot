@@ -9,13 +9,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, PieChart, Reference
+from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.marker import DataPoint
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from telegram import Bot, InputFile
 from telegram.error import TelegramError
 
+from . import analytics, clock
 from .auth import TelegramUser, current_user
+from .budget import add_months
 from .db import connect, ensure_user
 
 
@@ -83,6 +88,170 @@ def _write_table(
         ws.auto_filter.ref = ws.dimensions
 
 
+# Same colours as the analytics page, so the file reads like the app.
+CATEGORY_COLORS = ("2A78D6", "EB6834", "1BAF7A", "EDA100", "E87BA4", "008300", "4A3AA7", "E34948")
+OTHER_COLOR = "9AA1AD"
+KIND_COLORS = {"daily": "2481CC", "bills": "8A6FD6", "piggy": "1F8F57"}
+KIND_TITLES = {"daily": "Повседневные траты", "bills": "Обязательные платежи", "piggy": "Отложено в копилку"}
+SECTION_FONT = Font(bold=True, size=13)
+CHART_ROWS = 18
+
+
+def _category_color(order: dict, category_id) -> str:
+    index = order.get(category_id)
+    return CATEGORY_COLORS[index] if index is not None and index < len(CATEGORY_COLORS) else OTHER_COLOR
+
+
+def _fill(series, color: str) -> None:
+    series.graphicalProperties.solidFill = color
+    series.graphicalProperties.line.solidFill = color
+
+
+def _header(ws: Worksheet, row: int, headers: list[str]) -> None:
+    for column, title in enumerate(headers, start=1):
+        cell = ws.cell(row=row, column=column, value=title)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
+def _rows(ws: Worksheet, row: int, values: list[list[Any]], money_columns: set[int]) -> int:
+    for values_row in values:
+        for column, value in enumerate(values_row, start=1):
+            cell = ws.cell(row=row, column=column, value=value)
+            if column in money_columns:
+                cell.number_format = MONEY_FORMAT
+        row += 1
+    return row
+
+
+def _bar_chart(title: str, *, horizontal: bool = False, stacked: bool = False, height: float = 8.5) -> BarChart:
+    chart = BarChart()
+    chart.type = "bar" if horizontal else "col"
+    chart.title = title
+    chart.style = 10
+    chart.height, chart.width = height, 17
+    chart.gapWidth = 40
+    chart.y_axis.numFmt = "#,##0"
+    chart.x_axis.delete = False
+    chart.y_axis.delete = False
+    if stacked:
+        chart.grouping = "stacked"
+        chart.overlap = 100
+    return chart
+
+
+def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None:
+    """Sheet with the same charts as the analytics page: the current month
+    and the last twelve months."""
+    data = analytics.summary(user_id, "month", today, today)
+    with connect() as con:
+        order = {
+            row["id"]: index
+            for index, row in enumerate(con.execute(
+                "SELECT id FROM categories WHERE user_id=? ORDER BY sort_order,id", (user_id,)
+            ))
+        }
+    ws = wb.create_sheet("Графики", 1)
+    ws.column_dimensions["A"].width = 26
+    for letter in "BCDE":
+        ws.column_dimensions[letter].width = 16
+    ws["A1"] = f"Аналитика расходов · {data['label']}"
+    ws["A1"].font = Font(bold=True, size=15)
+    row = 3
+
+    # 1. Where the money went.
+    ws.cell(row=row, column=1, value="Куда ушли деньги").font = SECTION_FONT
+    start = row + 1
+    _header(ws, start, ["Направление", f"Сумма, {currency}", "Доля"])
+    total = data["totals"]["total"]
+    kinds = ["daily", "bills", "piggy"]
+    end = _rows(ws, start + 1, [
+        [KIND_TITLES[key], data["totals"][key], (data["totals"][key] / total) if total else 0]
+        for key in kinds
+    ], {2})
+    for r in range(start + 1, end):
+        ws.cell(row=r, column=3).number_format = "0%"
+    ws.cell(row=end, column=1, value="Итого").font = TOTAL_FONT
+    ws.cell(row=end, column=2, value=total).number_format = MONEY_FORMAT
+    ws.cell(row=end, column=2).font = TOTAL_FONT
+    if total:
+        pie = PieChart()
+        pie.title = "Куда ушли деньги"
+        pie.height, pie.width = 8.5, 12
+        pie.add_data(Reference(ws, min_col=2, min_row=start, max_row=end - 1), titles_from_data=True)
+        pie.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
+        series = pie.series[0]
+        for index, key in enumerate(kinds):
+            point = DataPoint(idx=index)
+            point.graphicalProperties.solidFill = KIND_COLORS[key]
+            point.graphicalProperties.line.solidFill = "FFFFFF"
+            series.dPt.append(point)
+        pie.dataLabels = DataLabelList()
+        pie.dataLabels.showPercent = True
+        ws.add_chart(pie, f"G{row}")
+    row = max(end + 2, row + CHART_ROWS)
+
+    # 2. What it was spent on.
+    ws.cell(row=row, column=1, value="На что потрачено (обычные траты)").font = SECTION_FONT
+    start = row + 1
+    _header(ws, start, ["Категория", f"Сумма, {currency}", "Доля", "Прошлый месяц"])
+    cats = data["categories"]
+    end = _rows(ws, start + 1, [
+        [f"{c['emoji']} {c['title']}", c["amount"], c["share"], c["previous"]] for c in cats
+    ], {2, 4})
+    for r in range(start + 1, end):
+        ws.cell(row=r, column=3).number_format = "0%"
+    if cats:
+        chart = _bar_chart("На что потрачено", horizontal=True, height=max(6, 1 + 0.8 * len(cats)))
+        chart.add_data(Reference(ws, min_col=2, min_row=start, max_row=end - 1), titles_from_data=True)
+        chart.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
+        chart.x_axis.scaling.orientation = "maxMin"  # largest on top, as in the app
+        chart.legend = None
+        series = chart.series[0]
+        for index, c in enumerate(cats):
+            point = DataPoint(idx=index)
+            point.graphicalProperties.solidFill = _category_color(order, c["id"])
+            point.graphicalProperties.line.solidFill = _category_color(order, c["id"])
+            series.dPt.append(point)
+        ws.add_chart(chart, f"G{row}")
+    else:
+        ws.cell(row=start + 1, column=1, value="Расходов за месяц нет")
+    row = max(end + 2, row + max(CHART_ROWS, int(1 + 0.8 * len(cats) * 2)))
+
+    # 3. By day.
+    ws.cell(row=row, column=1, value="Траты по дням").font = SECTION_FONT
+    start = row + 1
+    _header(ws, start, ["Дата", f"Сумма, {currency}"])
+    end = _rows(ws, start + 1, [[_date(d["date"]), d["amount"]] for d in data["days"]], {2})
+    for r in range(start + 1, end):
+        ws.cell(row=r, column=1).number_format = DATE_FORMAT
+    chart = _bar_chart("Траты по дням")
+    chart.add_data(Reference(ws, min_col=2, min_row=start, max_row=end - 1), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
+    chart.x_axis.number_format = "DD"
+    chart.legend = None
+    _fill(chart.series[0], KIND_COLORS["daily"])
+    ws.add_chart(chart, f"G{row}")
+    row = max(end + 2, row + CHART_ROWS)
+
+    # 4. Last twelve months.
+    ws.cell(row=row, column=1, value="По месяцам").font = SECTION_FONT
+    start = row + 1
+    _header(ws, start, ["Месяц", *(KIND_TITLES[key] for key in kinds)])
+    months = analytics.monthly(user_id, add_months(today.replace(day=1), -11), 12)
+    end = _rows(ws, start + 1, [
+        [f"{m['label']} {m['month'][:4]}", *(m[key] for key in kinds)] for m in months
+    ], {2, 3, 4})
+    chart = _bar_chart("Куда ушли деньги по месяцам", stacked=True)
+    chart.add_data(Reference(ws, min_col=2, max_col=4, min_row=start, max_row=end - 1), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
+    for series, key in zip(chart.series, kinds):
+        _fill(series, KIND_COLORS[key])
+    chart.legend.position = "b"
+    ws.add_chart(chart, f"G{row}")
+
+
 def _query(con: Any, sql: str, params: tuple) -> list[dict]:
     return [dict(row) for row in con.execute(sql, params).fetchall()]
 
@@ -121,6 +290,11 @@ def build_workbook(user_id: int) -> bytes:
         vacations = _query(
             con, "SELECT * FROM vacations WHERE user_id=? ORDER BY start_date,id", (user_id,)
         )
+        category_order = [
+            row["title"] for row in con.execute(
+                "SELECT title FROM categories WHERE user_id=? ORDER BY sort_order,id", (user_id,)
+            )
+        ]
     currency = settings["currency"] or "RUB"
 
     wb = Workbook()
@@ -170,6 +344,27 @@ def build_workbook(user_id: int) -> bytes:
     if pivot_rows:
         for cell in ws[ws.max_row]:
             cell.font = TOTAL_FONT
+    if pivot_rows and months:
+        # Stacked columns: one colour per category, months along the axis.
+        chart = _bar_chart("Расходы по месяцам", stacked=True, height=10)
+        chart.width = max(17, 3 + 2 * len(months))
+        chart.add_data(
+            Reference(ws, min_col=1, max_col=len(months) + 1, min_row=2, max_row=len(categories) + 1),
+            from_rows=True, titles_from_data=True,
+        )
+        chart.set_categories(Reference(ws, min_col=2, max_col=len(months) + 1, min_row=1))
+        order = {title: index for index, title in enumerate(category_order)}
+        for series, name in zip(chart.series, categories):
+            if name == "Обязательные платежи":
+                color = KIND_COLORS["bills"]
+            else:
+                index = order.get(name)
+                color = CATEGORY_COLORS[index] if index is not None and index < len(CATEGORY_COLORS) else OTHER_COLOR
+            _fill(series, color)
+        chart.legend.position = "b"
+        ws.add_chart(chart, f"A{ws.max_row + 3}")
+
+    build_charts_sheet(wb, user_id, currency, clock.today())
 
     ws = wb.create_sheet("Копилка")
     balance = 0.0
@@ -249,7 +444,7 @@ async def send_xlsx_to_chat(user: TelegramUser = Depends(current_user)) -> dict:
             message = await bot.send_document(
                 chat_id=user.id,
                 document=InputFile(io.BytesIO(content), filename=filename),
-                caption="Выгрузка бюджета в Excel: операции, расходы по месяцам, копилка и правила.",
+                caption="Выгрузка бюджета в Excel: операции, графики расходов, расходы по месяцам, копилка и правила.",
             )
     except TelegramError as exc:
         raise HTTPException(502, "Не удалось отправить файл в чат с ботом") from exc

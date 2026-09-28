@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260924-settings-columns" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260928-analytics" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -68,6 +68,43 @@
       <section class="page" data-page="operations">
         <div class="section-head"><div><h2>Операции</h2></div><button class="secondary" id="addIncomeTxBtn">＋ Доход</button></div>
         <div id="transactionsList" class="list cards-list"></div>
+      </section>
+
+      <section class="page" data-page="analytics">
+        <div class="segmented analytics-modes" role="tablist" aria-label="Период аналитики">
+          <button role="tab" data-amode="period" aria-selected="false">Период карты</button>
+          <button role="tab" data-amode="month" aria-selected="true">Месяц</button>
+          <button role="tab" data-amode="year" aria-selected="false">Год</button>
+        </div>
+        <div class="analytics-nav">
+          <button class="icon-btn" id="analyticsPrev" type="button" aria-label="Предыдущий период">‹</button>
+          <strong id="analyticsLabel">—</strong>
+          <button class="icon-btn" id="analyticsNext" type="button" aria-label="Следующий период">›</button>
+        </div>
+        <div class="card analytics-hero">
+          <span class="muted" id="analyticsTotalCaption">Всего ушло</span>
+          <div class="analytics-total-row"><strong class="num analytics-total" id="analyticsTotal">—</strong><span class="analytics-delta hidden" id="analyticsDelta"></span></div>
+          <div class="analytics-stack" id="analyticsStack" aria-hidden="true"></div>
+          <div class="analytics-kinds" id="analyticsKinds"></div>
+        </div>
+        <div class="card">
+          <div class="section-head"><h3>На что потрачено</h3><span class="muted">обычные траты</span></div>
+          <div class="analytics-cats" id="analyticsCategories"></div>
+        </div>
+        <div class="card" id="analyticsDaysCard">
+          <div class="section-head"><h3>По дням</h3><span class="muted" id="analyticsDaysNote"></span></div>
+          <div class="analytics-chart" id="analyticsDays"></div>
+          <div class="analytics-legend" id="analyticsDaysLegend"></div>
+        </div>
+        <div class="card">
+          <div class="section-head"><h3>По месяцам</h3><span class="muted">обычные траты</span></div>
+          <div class="analytics-chart" id="analyticsMonths"></div>
+          <p class="muted" id="analyticsMonthsNote"></p>
+        </div>
+        <div class="card">
+          <div class="section-head"><h3>Обязательные платежи</h3><span class="muted num" id="analyticsBillsTotal"></span></div>
+          <div class="analytics-bills" id="analyticsBills"></div>
+        </div>
       </section>
 
       <section class="page" data-page="plan">
@@ -198,7 +235,7 @@
       </section>
     </main>
 
-    <nav class="bottom-nav" aria-label="Разделы"><div class="nav-inner"><button class="nav-item active" data-nav="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><small>Главная</small></button><button class="nav-item" data-nav="operations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><small>Операции</small></button><button class="nav-item" data-nav="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><small>Платежи</small></button><button class="nav-item" data-nav="buffer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><small>Резервы</small></button><button class="nav-item" data-nav="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><small>Настройки</small></button></div></nav>
+    <nav class="bottom-nav" aria-label="Разделы"><div class="nav-inner"><button class="nav-item active" data-nav="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><small>Главная</small></button><button class="nav-item" data-nav="operations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><small>Операции</small></button><button class="nav-item" data-nav="analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 20V11M11 20V5M17 20v-7M3 20h18"/></svg><small>Аналитика</small></button><button class="nav-item" data-nav="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><small>Платежи</small></button><button class="nav-item" data-nav="buffer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg><small>Резервы</small></button><button class="nav-item" data-nav="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><small>Настройки</small></button></div></nav>
   </div>
 
   <dialog id="expenseDialog">
@@ -333,5 +370,6 @@
   <script src="/static/buffer-ui.js?v=20260925-piggy-today"></script>
   <script src="/static/design-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
+  <script src="/static/analytics-ui.js?v=20260928-analytics"></script>
 </body>
 </html>
