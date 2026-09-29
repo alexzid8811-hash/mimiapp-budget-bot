@@ -721,6 +721,22 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
   .cards-list{padding-left:14px;padding-right:14px}
 }
 
+/* Аналитика на широком экране: слева итоги и графики, справа категории */
+@media(min-width:1024px){
+  .page[data-page="analytics"].active{
+    display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:8px;align-items:start;
+    grid-template-areas:"modes modes" "nav nav" "hero cats" "days cats" "months cats" "bills cats";
+  }
+  .page[data-page="analytics"] .analytics-modes{grid-area:modes;margin:0}
+  .page[data-page="analytics"] .analytics-nav{grid-area:nav;margin:0}
+  .page[data-page="analytics"] .analytics-hero{grid-area:hero}
+  .page[data-page="analytics"] .analytics-cats-card{grid-area:cats}
+  .page[data-page="analytics"] #analyticsDaysCard{grid-area:days}
+  .page[data-page="analytics"] .analytics-months-card{grid-area:months}
+  .page[data-page="analytics"] .analytics-bills-card{grid-area:bills}
+  .page[data-page="analytics"] .card{margin:0}
+}
+
 /* Компьютер: меню слева */
 @media(min-width:1024px){
   body{padding-bottom:0;padding-left:var(--sidebar-w)}

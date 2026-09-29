@@ -20,7 +20,8 @@ const sample = {
            {month: '2026-09', label: 'Сентябрь', daily: 1000, bills: 3000, piggy: 1000}],
   bills: [
     {title: 'Аренда', paid_amount: 3000, due_amount: 0, count: 1, paid_count: 1, next_due: null},
-    {title: 'Связь', paid_amount: 0, due_amount: 450, count: 1, paid_count: 0, next_due: '2026-09-30'},
+    {title: 'Связь', paid_amount: 0, due_amount: 450, count: 1, paid_count: 0, next_due: '2026-09-30', next_amount: 450},
+    {title: 'Авто', paid_amount: 0, due_amount: 85500, count: 3, paid_count: 0, next_due: '2026-10-08', next_amount: 28500},
   ],
 };
 
@@ -72,8 +73,10 @@ test('analytics page renders totals, categories and bills', async () => {
   const bills = get('analyticsBills').innerHTML;
   assert.match(bills, /Аренда<small class="ok">✓ оплачено<\/small>/);
   assert.match(bills, /Связь<small>к оплате 30 сент\.<\/small>/);
+  // Several unpaid months: the row says how many and names the nearest payment.
+  assert.match(bills, /Авто<small>3 платежа · ближайший 8 окт\. — 28[\s ]500[\s ]₽<\/small>/);
   assert.match(get('analyticsBillsTotal').textContent, /оплачено 3[\s\u00a0]000/);
-  assert.match(bills, /Ещё к оплате<\/span><span class="num">450/);
+  assert.match(bills, /Ещё к оплате<\/span><span class="num">85[\s\u00a0]950/);
   assert.match(get('analyticsDaysNote').textContent, /в среднем/);
 });
 

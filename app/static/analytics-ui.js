@@ -109,7 +109,9 @@
   // Column chart shared by the day and month views: one y-scale, thin bars,
   // 4px rounded tops, a recessive grid and a hover/tap tooltip.
   function barChart(host, values, labels, opts) {
-    const W = 380, H = 160, L = 34, R = 4, T = 10, B = 22;
+    // Draw at the real width so axis text keeps its size on wide screens
+    // instead of being scaled up with the whole picture.
+    const W = Math.max(280, Math.round(host.clientWidth || 380)), H = 170, L = 34, R = 4, T = 10, B = 22;
     const step4 = niceStep(Math.max(opts.line || 0, ...values) / 4), top = step4 * 4;
     const ticks = [0, step4, step4 * 2, step4 * 3, top];
     const step = (W - L - R) / Math.max(1, values.length), bw = Math.max(3, Math.min(step - 2, 40));
@@ -177,15 +179,21 @@
       : "Трат за эти месяцы нет.";
   }
 
+  const paymentsWord = n => n % 100 >= 11 && n % 100 <= 14 ? "платежей" : n % 10 === 1 ? "платёж" : n % 10 >= 2 && n % 10 <= 4 ? "платежа" : "платежей";
+
   function renderBills() {
     const bills = data.bills;
     const paid = bills.reduce((s, b) => s + b.paid_amount, 0), due = bills.reduce((s, b) => s + b.due_amount, 0);
     $("analyticsBillsTotal").textContent = bills.length ? `оплачено ${rub(paid)}` : "";
     $("analyticsBills").innerHTML = bills.length ? bills.map(b => {
+      // Several unpaid months are one row: name how many and the nearest one,
+      // otherwise the total looks like a single payment due on that date.
+      const left = b.count - b.paid_count;
+      const nearest = !b.next_due ? "" : left > 1 ? `${left} ${paymentsWord(left)} · ближайший ${day(b.next_due)} — ${rub(b.next_amount)}` : `к оплате ${day(b.next_due)}`;
       let status, value = b.paid_amount;
       if (!b.due_amount) status = `<small class="ok">✓ оплачено${b.count > 1 ? ` ×${b.count}` : ""}</small>`;
-      else if (!b.paid_count) { status = `<small>к оплате ${day(b.next_due)}</small>`; value = b.due_amount; }
-      else status = `<small>оплачено ${b.paid_count} из ${b.count} · ещё ${rub(b.due_amount)}</small>`;
+      else if (!b.paid_count) { status = `<small>${nearest}</small>`; value = b.due_amount; }
+      else status = `<small>оплачено ${b.paid_count} из ${b.count} · ${left > 1 ? `осталось ${left} · ближайший ${day(b.next_due)} — ${rub(b.next_amount)}` : `ещё ${rub(b.due_amount)} — ${day(b.next_due)}`}</small>`;
       return `<div class="analytics-bill"><span>${esc(b.title)}${status}</span><span class="num">${rub(value)}</span></div>`;
     }).join("") + (due > 0 ? `<div class="analytics-bill analytics-bill-due"><span>Ещё к оплате</span><span class="num">${rub(due)}</span></div>` : "")
       : `<div class="empty">Обязательных платежей за этот период нет.</div>`;
@@ -208,6 +216,14 @@
   document.querySelector('[data-nav="analytics"]')?.addEventListener("click", () => load());
   $("refreshBtn")?.addEventListener("click", () => {
     if (document.querySelector('[data-page="analytics"]')?.classList.contains("active")) load();
+  });
+  let resizeTimer = null, lastWidth = 0;
+  window.addEventListener?.("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const width = $("analyticsMonths")?.clientWidth || 0;
+      if (data && width && width !== lastWidth) { lastWidth = width; renderDays(); renderMonths(); }
+    }, 150);
   });
   window.budgetAnalytics = {load, render: () => render(), get data() { return data; }};
 })();

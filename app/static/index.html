@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260928-reserves-bills" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260929-analytics-desktop" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -101,7 +101,7 @@
           <div class="analytics-stack" id="analyticsStack" aria-hidden="true"></div>
           <div class="analytics-kinds" id="analyticsKinds"></div>
         </div>
-        <div class="card">
+        <div class="card analytics-cats-card">
           <div class="section-head"><h3>На что потрачено</h3><span class="muted">обычные траты</span></div>
           <div class="analytics-cats" id="analyticsCategories"></div>
         </div>
@@ -110,12 +110,12 @@
           <div class="analytics-chart" id="analyticsDays"></div>
           <div class="analytics-legend" id="analyticsDaysLegend"></div>
         </div>
-        <div class="card">
+        <div class="card analytics-months-card">
           <div class="section-head"><h3>По месяцам</h3><span class="muted">обычные траты</span></div>
           <div class="analytics-chart" id="analyticsMonths"></div>
           <p class="muted" id="analyticsMonthsNote"></p>
         </div>
-        <div class="card">
+        <div class="card analytics-bills-card">
           <div class="section-head"><h3>Обязательные платежи</h3><span class="muted num" id="analyticsBillsTotal"></span></div>
           <div class="analytics-bills" id="analyticsBills"></div>
         </div>
@@ -383,6 +383,6 @@
   <script src="/static/buffer-ui.js?v=20260925-piggy-today"></script>
   <script src="/static/design-ui.js?v=20260928-reserves-bills"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
-  <script src="/static/analytics-ui.js?v=20260928-redesign"></script>
+  <script src="/static/analytics-ui.js?v=20260929-analytics-desktop"></script>
 </body>
 </html>

@@ -67,7 +67,7 @@ def test_month_summary_splits_spending_by_destination_and_category(client):
     assert data['days'][1] == {'date': '2026-09-02', 'amount': 650.5}
     assert [m['month'] for m in data['months']] == ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09']
     assert data['months'][-1] == {'month': '2026-09', 'label': 'Сентябрь', 'daily': 1650.5, 'bills': 3000.0, 'piggy': 700.0}
-    assert data['bills'] == [{'title': 'Аренда', 'paid_amount': 3000.0, 'due_amount': 0.0, 'count': 1, 'paid_count': 1, 'next_due': None}]
+    assert data['bills'] == [{'title': 'Аренда', 'paid_amount': 3000.0, 'due_amount': 0.0, 'count': 1, 'paid_count': 1, 'next_due': None, 'next_amount': 0.0}]
 
 
 def test_previous_month_can_step_forward_and_future_anchor_is_clamped(client):
@@ -88,7 +88,8 @@ def test_year_summary_has_twelve_months_and_no_days(client):
     # Unpaid months before the current card period are history, not plans.
     rent = data['bills'][0]
     assert (rent['count'], rent['paid_count'], rent['paid_amount'], rent['due_amount']) == (4, 1, 3000, 9000)
-    assert rent['next_due'] == '2026-10-10'
+    # The row shows three payments left, not one 9 000 payment on 10 October.
+    assert (rent['next_due'], rent['next_amount']) == ('2026-10-10', 3000)
 
 
 def test_card_period_runs_from_payday_to_payday(client):

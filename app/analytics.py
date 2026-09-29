@@ -179,7 +179,7 @@ def _bills(uid: int, start: date, end: date, today: date) -> list[dict]:
             continue
         group = groups.setdefault(event["id"], {
             "title": event.get("title") or "Платёж", "paid": 0, "due": 0,
-            "count": 0, "paid_count": 0, "next_due": None,
+            "count": 0, "paid_count": 0, "next_due": None, "next_amount": 0,
         })
         group["count"] += 1
         if event.get("paid"):
@@ -187,12 +187,15 @@ def _bills(uid: int, start: date, end: date, today: date) -> list[dict]:
             group["paid_count"] += 1
         else:
             group["due"] += cents(event["amount"])
+            # Events come sorted by date, so the first unpaid one is the nearest.
             if group["next_due"] is None:
                 group["next_due"] = event["due_date"]
+                group["next_amount"] = cents(event["amount"])
     return [
         {
             "title": g["title"], "paid_amount": amount(g["paid"]), "due_amount": amount(g["due"]),
             "count": g["count"], "paid_count": g["paid_count"], "next_due": g["next_due"],
+            "next_amount": amount(g["next_amount"]),
         }
         for g in sorted(groups.values(), key=lambda g: -(g["paid"] + g["due"]))
     ]
