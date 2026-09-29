@@ -184,17 +184,20 @@
   function renderBills() {
     const bills = data.bills;
     const paid = bills.reduce((s, b) => s + b.paid_amount, 0), due = bills.reduce((s, b) => s + b.due_amount, 0);
-    $("analyticsBillsTotal").textContent = bills.length ? `оплачено ${rub(paid)}` : "";
+    $("analyticsBillsTotal").textContent = bills.length ? `оплачено ${rub(paid)} из ${rub(paid + due)}` : "";
     $("analyticsBills").innerHTML = bills.length ? bills.map(b => {
-      // Several unpaid months are one row: name how many and the nearest one,
-      // otherwise the total looks like a single payment due on that date.
+      // The amount column always means the same thing: every payment of the
+      // period, paid or not. The caption says how much of it is paid and
+      // which payment is next, so a total never reads as one payment.
       const left = b.count - b.paid_count;
-      const nearest = !b.next_due ? "" : left > 1 ? `${left} ${paymentsWord(left)} · ближайший ${day(b.next_due)} — ${rub(b.next_amount)}` : `к оплате ${day(b.next_due)}`;
-      let status, value = b.paid_amount;
+      const next = !b.next_due ? "" : left > 1
+        ? `ещё ${left} ${paymentsWord(left)}, ближайший ${day(b.next_due)} — ${rub(b.next_amount)}`
+        : `к оплате ${day(b.next_due)}`;
+      let status;
       if (!b.due_amount) status = `<small class="ok">✓ оплачено${b.count > 1 ? ` ×${b.count}` : ""}</small>`;
-      else if (!b.paid_count) { status = `<small>${nearest}</small>`; value = b.due_amount; }
-      else status = `<small>оплачено ${b.paid_count} из ${b.count} · ${left > 1 ? `осталось ${left} · ближайший ${day(b.next_due)} — ${rub(b.next_amount)}` : `ещё ${rub(b.due_amount)} — ${day(b.next_due)}`}</small>`;
-      return `<div class="analytics-bill"><span>${esc(b.title)}${status}</span><span class="num">${rub(value)}</span></div>`;
+      else if (!b.paid_count) status = `<small>${next}</small>`;
+      else status = `<small>оплачено ${rub(b.paid_amount)} (${b.paid_count} из ${b.count}) · ${next}</small>`;
+      return `<div class="analytics-bill"><span>${esc(b.title)}${status}</span><span class="num">${rub(b.paid_amount + b.due_amount)}</span></div>`;
     }).join("") + (due > 0 ? `<div class="analytics-bill analytics-bill-due"><span>Ещё к оплате</span><span class="num">${rub(due)}</span></div>` : "")
       : `<div class="empty">Обязательных платежей за этот период нет.</div>`;
   }

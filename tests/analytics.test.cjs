@@ -22,6 +22,7 @@ const sample = {
     {title: 'Аренда', paid_amount: 3000, due_amount: 0, count: 1, paid_count: 1, next_due: null},
     {title: 'Связь', paid_amount: 0, due_amount: 450, count: 1, paid_count: 0, next_due: '2026-09-30', next_amount: 450},
     {title: 'Авто', paid_amount: 0, due_amount: 85500, count: 3, paid_count: 0, next_due: '2026-10-08', next_amount: 28500},
+    {title: 'Ипотека', paid_amount: 25000, due_amount: 75000, count: 4, paid_count: 1, next_due: '2026-10-24', next_amount: 25000},
   ],
 };
 
@@ -73,10 +74,12 @@ test('analytics page renders totals, categories and bills', async () => {
   const bills = get('analyticsBills').innerHTML;
   assert.match(bills, /Аренда<small class="ok">✓ оплачено<\/small>/);
   assert.match(bills, /Связь<small>к оплате 30 сент\.<\/small>/);
-  // Several unpaid months: the row says how many and names the nearest payment.
-  assert.match(bills, /Авто<small>3 платежа · ближайший 8 окт\. — 28[\s ]500[\s ]₽<\/small>/);
-  assert.match(get('analyticsBillsTotal').textContent, /оплачено 3[\s\u00a0]000/);
-  assert.match(bills, /Ещё к оплате<\/span><span class="num">85[\s\u00a0]950/);
+  // Several unpaid months: the row says how many and names the nearest payment,
+  // and the amount column is the whole period for every row.
+  assert.match(bills, /Авто<small>ещё 3 платежа, ближайший 8 окт\. — 28[\s ]500[\s ]₽<\/small><\/span><span class="num">85[\s ]500/);
+  assert.match(bills, /Ипотека<small>оплачено 25[\s ]000[\s ]₽ \(1 из 4\) · ещё 3 платежа, ближайший 24 окт\. — 25[\s ]000[\s ]₽<\/small><\/span><span class="num">100[\s ]000/);
+  assert.match(get('analyticsBillsTotal').textContent, /оплачено 28[\s ]000[\s ]₽ из 188[\s ]950/);
+  assert.match(bills, /Ещё к оплате<\/span><span class="num">160[\s ]950/);
   assert.match(get('analyticsDaysNote').textContent, /в среднем/);
 });
 
