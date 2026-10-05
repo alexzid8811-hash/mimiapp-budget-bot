@@ -162,7 +162,7 @@
     });
     $("analyticsDaysLegend").innerHTML = limit
       ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход</span><span><i class="line"></i>Лимит дня</span>`
-      : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span><span><i class="avg"></i>В среднем</span>`;
+      : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span><span><i class="avg"></i>Средний уровень</span>`;
   }
 
   function renderMonths() {
