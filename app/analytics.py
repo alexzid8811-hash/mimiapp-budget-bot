@@ -191,13 +191,36 @@ def _bills(uid: int, start: date, end: date, today: date) -> list[dict]:
             if group["next_due"] is None:
                 group["next_due"] = event["due_date"]
                 group["next_amount"] = cents(event["amount"])
-    return [
+    rows = [
         {
             "title": g["title"], "paid_amount": amount(g["paid"]), "due_amount": amount(g["due"]),
             "count": g["count"], "paid_count": g["paid_count"], "next_due": g["next_due"],
             "next_amount": amount(g["next_amount"]),
         }
         for g in sorted(groups.values(), key=lambda g: -(g["paid"] + g["due"]))
+    ]
+    return rows + _upcoming_bills(uid, start, end, today, set(groups))
+
+
+def _upcoming_bills(uid: int, start: date, end: date, today: date, shown: set) -> list[dict]:
+    """Active bills with no payment in the current range, e.g. one added after
+    its day of month had passed: it starts next month, but the user should
+    still see it. These rows carry no amount, so period totals don't change."""
+    if not start <= today <= end:
+        return []
+    # Only bills that are new: a regular bill whose day just falls outside a
+    # card period already had payments before it and is not "first".
+    shown = shown | {e["id"] for e in planning.bill_events(uid, start - timedelta(days=62), start - timedelta(days=1))}
+    first: dict = {}
+    for event in planning.bill_events(uid, end + timedelta(days=1), end + timedelta(days=62)):
+        if event["id"] not in shown and not event.get("paid") and event.get("active", True):
+            first.setdefault(event["id"], event)
+    return [
+        {
+            "title": e.get("title") or "Платёж", "paid_amount": 0.0, "due_amount": 0.0,
+            "count": 0, "paid_count": 0, "next_due": e["due_date"], "next_amount": amount(cents(e["amount"])),
+        }
+        for e in sorted(first.values(), key=lambda e: e["due_date"])
     ]
 
 

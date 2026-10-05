@@ -23,6 +23,7 @@ const sample = {
     {title: 'Связь', paid_amount: 0, due_amount: 450, count: 1, paid_count: 0, next_due: '2026-09-30', next_amount: 450},
     {title: 'Авто', paid_amount: 0, due_amount: 85500, count: 3, paid_count: 0, next_due: '2026-10-08', next_amount: 28500},
     {title: 'Ипотека', paid_amount: 25000, due_amount: 75000, count: 4, paid_count: 1, next_due: '2026-10-24', next_amount: 25000},
+    {title: 'Интернет', paid_amount: 0, due_amount: 0, count: 0, paid_count: 0, next_due: '2026-10-03', next_amount: 800},
   ],
 };
 
@@ -80,6 +81,8 @@ test('analytics page renders totals, categories and bills', async () => {
   assert.match(bills, /Ипотека<small>оплачено 25[\s ]000[\s ]₽ \(1 из 4\) · ещё 3 платежа, ближайший 24 окт\. — 25[\s ]000[\s ]₽<\/small><\/span><span class="num">100[\s ]000/);
   assert.match(get('analyticsBillsTotal').textContent, /оплачено 28[\s ]000[\s ]₽ из 188[\s ]950/);
   assert.match(bills, /Ещё к оплате<\/span><span class="num">160[\s ]950/);
+  // A bill that starts after the period is listed but not summed.
+  assert.match(bills, /Интернет<small>первый платёж 3 окт\. — 800[\s\u00a0]₽<\/small><\/span><span class="num muted">—/);
   assert.equal(get('analyticsDaysNote').textContent, '');
   assert.equal(get('analyticsDaysLegend').innerHTML.match(/в среднем/gi).length, 1);
 });

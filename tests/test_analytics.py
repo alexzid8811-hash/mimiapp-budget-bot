@@ -109,3 +109,17 @@ def test_in_progress_month_is_compared_with_the_same_days(client):
     data = client.get('/api/analytics', params={'mode': 'month'}).json()
     # 14 August counts, 20 August (after "today" minus a month) does not.
     assert data['previous_totals']['daily'] == 80
+
+
+def test_new_bill_after_its_day_is_listed_without_changing_totals(client):
+    # Today is the 15th: a bill on the 3rd added today starts next month.
+    assert client.post('/api/bill-rules', json={'title': 'Интернет', 'amount': 800, 'day_of_month': 3}).status_code == 200
+    data = client.get('/api/analytics', params={'mode': 'month'}).json()
+    assert data['bills'][-1] == {
+        'title': 'Интернет', 'paid_amount': 0.0, 'due_amount': 0.0, 'count': 0, 'paid_count': 0,
+        'next_due': '2026-10-03', 'next_amount': 800.0,
+    }
+    assert data['totals']['bills'] == 3000.0
+    # A past range doesn't list future bills.
+    past = client.get('/api/analytics', params={'mode': 'month', 'anchor': '2026-08-10'}).json()
+    assert all(b['title'] != 'Интернет' for b in past['bills'])
