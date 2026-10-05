@@ -194,6 +194,8 @@
       const next = !b.next_due ? "" : left > 1
         ? `ещё ${left} ${paymentsWord(left)}, ближайший ${day(b.next_due)} — ${rub(b.next_amount)}`
         : `к оплате ${day(b.next_due)}`;
+      // A bill that starts after this period: shown, but not part of its sums.
+      if (!b.count) return `<div class="analytics-bill"><span>${esc(b.title)}<small>первый платёж ${day(b.next_due)} — ${rub(b.next_amount)}</small></span><span class="num muted">—</span></div>`;
       let status;
       if (!b.due_amount) status = `<small class="ok">✓ оплачено${b.count > 1 ? ` ×${b.count}` : ""}</small>`;
       else if (!b.paid_count) status = `<small>${next}</small>`;
