@@ -152,7 +152,8 @@
     const average = passed.length ? passed.reduce((s, d) => s + d.amount, 0) / passed.length : 0;
     const every = days.length > 20 ? 7 : days.length > 10 ? 3 : 1;
     const labels = days.map((d, i) => i % every === 0 ? String(Number(d.date.slice(8))) : "");
-    $("analyticsDaysNote").textContent = limit ? `лимит ${rub(limit)}/день` : `в среднем ${rub(average)}/день`;
+    // The line's value lives in the legend only, so the caption isn't repeated.
+    $("analyticsDaysNote").textContent = "";
     barChart($("analyticsDays"), values, labels, {
       aria: "Траты по дням",
       line: limit || average,
@@ -161,8 +162,8 @@
       tip: (v, i) => `<b>${day(days[i].date)}</b> · ${rub(v)}${limit && v > limit ? ` · +${rub(v - limit)}` : ""}`,
     });
     $("analyticsDaysLegend").innerHTML = limit
-      ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход</span><span><i class="line"></i>Лимит дня</span>`
-      : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span><span><i class="avg"></i>Средний уровень</span>`;
+      ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход</span><span><i class="line"></i>Лимит ${rub(limit)}/день</span>`
+      : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span><span><i class="avg"></i>В среднем ${rub(average)}/день</span>`;
   }
 
   function renderMonths() {

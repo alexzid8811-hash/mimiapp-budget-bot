@@ -80,7 +80,8 @@ test('analytics page renders totals, categories and bills', async () => {
   assert.match(bills, /Ипотека<small>оплачено 25[\s ]000[\s ]₽ \(1 из 4\) · ещё 3 платежа, ближайший 24 окт\. — 25[\s ]000[\s ]₽<\/small><\/span><span class="num">100[\s ]000/);
   assert.match(get('analyticsBillsTotal').textContent, /оплачено 28[\s ]000[\s ]₽ из 188[\s ]950/);
   assert.match(bills, /Ещё к оплате<\/span><span class="num">160[\s ]950/);
-  assert.match(get('analyticsDaysNote').textContent, /в среднем/);
+  assert.equal(get('analyticsDaysNote').textContent, '');
+  assert.equal(get('analyticsDaysLegend').innerHTML.match(/в среднем/gi).length, 1);
 });
 
 test('switching mode and expanding a category', async () => {
