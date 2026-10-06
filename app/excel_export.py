@@ -21,7 +21,7 @@ from telegram.error import TelegramError
 from . import analytics, clock
 from .auth import TelegramUser, current_user
 from .budget import add_months
-from .db import connect, ensure_user
+from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/export", tags=["export"])
@@ -257,6 +257,11 @@ def _query(con: Any, sql: str, params: tuple) -> list[dict]:
 
 
 def build_workbook(user_id: int) -> bytes:
+    with user_scope(user_id):
+        return _build_workbook(user_id)
+
+
+def _build_workbook(user_id: int) -> bytes:
     with connect() as con:
         con.execute("BEGIN")
         settings = con.execute("SELECT currency FROM settings WHERE user_id=?", (user_id,)).fetchone()

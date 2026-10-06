@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing, contextmanager
+from contextvars import ContextVar, Token
 from pathlib import Path
 
 
@@ -190,23 +192,92 @@ CREATE TABLE IF NOT EXISTS morning_reports (
 """
 
 
+# Every user lives in a file of their own: <DATABASE_PATH dir>/users/<id>.sqlite3.
+# The data of two users never share a file, so a missing WHERE user_id=? can
+# not leak anything.  The connection is bound to the user of the current
+# request (or bot job); without one, connect() fails instead of guessing.
+_current_user: ContextVar[int | None] = ContextVar("budget_user_id", default=None)
+
+
 def db_path() -> Path:
+    """The legacy single-file database; its parent directory is the data directory."""
     path = Path(os.getenv("DATABASE_PATH", "./data/budget.sqlite3"))
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def connect() -> sqlite3.Connection:
-    # The bot process and the web process share one SQLite file. WAL lets
+def users_dir() -> Path:
+    path = db_path().parent / "users"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def user_db_path(user_id: int) -> Path:
+    return users_dir() / f"{int(user_id)}.sqlite3"
+
+
+def set_current_user(user_id: int | None) -> Token:
+    return _current_user.set(None if user_id is None else int(user_id))
+
+
+def reset_current_user(token: Token) -> None:
+    _current_user.reset(token)
+
+
+@contextmanager
+def user_scope(user_id: int):
+    token = set_current_user(user_id)
+    try:
+        yield
+    finally:
+        reset_current_user(token)
+
+
+def all_user_ids() -> list[int]:
+    return sorted(int(p.stem) for p in users_dir().glob("*.sqlite3") if p.stem.isdigit())
+
+
+def _open(path: Path) -> sqlite3.Connection:
+    # The bot process and the web process open the same user file. WAL lets
     # readers and a writer work concurrently, and the busy timeout makes a
     # brief write-write collision retry instead of raising "database is
     # locked" straight away.
-    con = sqlite3.connect(db_path(), timeout=10)
+    con = sqlite3.connect(path, timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     con.execute("PRAGMA journal_mode = WAL")
     con.execute("PRAGMA busy_timeout = 10000")
     return con
+
+
+def _provision(user_id: int) -> None:
+    """Create an empty, fully migrated database for a new user (race-safe)."""
+    path = user_db_path(user_id)
+    tmp = path.with_name(f".{int(user_id)}.{os.getpid()}.new")
+    tmp.unlink(missing_ok=True)
+    con = sqlite3.connect(tmp)
+    try:
+        con.row_factory = sqlite3.Row
+        _prepare(con)
+        con.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (int(user_id),))
+        con.commit()
+    finally:
+        con.close()
+    try:
+        os.link(tmp, path)  # fails if another process was faster: never clobbers
+    except FileExistsError:
+        pass
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def connect(user_id: int | None = None) -> sqlite3.Connection:
+    uid = _current_user.get() if user_id is None else int(user_id)
+    if uid is None:
+        raise RuntimeError("Не выбран пользователь: подключение к базе без user_id запрещено")
+    if not user_db_path(uid).exists():
+        _provision(uid)
+    return _open(user_db_path(uid))
 
 
 def _ensure_settings_columns(con: sqlite3.Connection) -> None:
@@ -289,26 +360,90 @@ def _ensure_morning_report_columns(con: sqlite3.Connection) -> None:
         con.execute("ALTER TABLE morning_reports ADD COLUMN daily_limit REAL")
 
 
+def _prepare(con: sqlite3.Connection) -> None:
+    con.executescript(SCHEMA)
+    _ensure_settings_columns(con)
+    _ensure_morning_report_columns(con)
+    _ensure_payment_columns(con)
+    category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
+    if "sort_order" not in category_columns:
+        con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+    # Positions are one-based, so zero safely identifies rows created
+    # before ordering was introduced.
+    con.execute("UPDATE categories SET sort_order=id WHERE sort_order=0")
+    for table in ('income_rules', 'bill_rules'):
+        columns = {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
+        if 'archived' not in columns:
+            con.execute(f'ALTER TABLE {table} ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
+
+
+def _split_legacy_database() -> None:
+    """One-time move from the old shared file to one file per user.
+
+    The shared file is copied per user, every other user's rows are deleted
+    and the file is VACUUMed, so no trace of other users stays in free pages.
+    The old file is renamed (not deleted) once every user has been moved.
+    """
+    legacy = db_path()
+    if not legacy.exists():
+        return
+    try:
+        src = sqlite3.connect(legacy, timeout=10)
+        has_users = src.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if not has_users:
+            src.close()
+            return
+        src.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        ids = [int(row[0]) for row in src.execute("SELECT id FROM users")]
+        for uid in ids:
+            dest = user_db_path(uid)
+            if dest.exists():
+                continue
+            tmp = dest.with_name(f".{uid}.{os.getpid()}.migrating")
+            tmp.unlink(missing_ok=True)
+            dst = sqlite3.connect(tmp)
+            try:
+                src.backup(dst)
+                dst.execute("PRAGMA foreign_keys = OFF")
+                tables = [r[0] for r in dst.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+                for table in tables:
+                    columns = {r[1] for r in dst.execute(f"PRAGMA table_info({table})")}
+                    if "user_id" in columns:
+                        dst.execute(f"DELETE FROM {table} WHERE user_id != ?", (uid,))
+                dst.execute("DELETE FROM users WHERE id != ?", (uid,))
+                dst.commit()
+                dst.execute("VACUUM")
+            finally:
+                dst.close()
+            try:
+                os.link(tmp, dest)
+            except FileExistsError:
+                pass
+            finally:
+                tmp.unlink(missing_ok=True)
+        src.close()
+        target = legacy.with_name(legacy.name + ".migrated")
+        for suffix in ("", "-wal", "-shm"):
+            old = legacy.with_name(legacy.name + suffix)
+            if old.exists():
+                os.replace(old, target.with_name(target.name + suffix))
+    except FileNotFoundError:
+        pass  # another process finished the move first
+
+
 def init_db() -> None:
-    with connect() as con:
-        con.executescript(SCHEMA)
-        _ensure_settings_columns(con)
-        _ensure_morning_report_columns(con)
-        _ensure_payment_columns(con)
-        category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
-        if "sort_order" not in category_columns:
-            con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
-        # Positions are one-based, so zero safely identifies rows created
-        # before ordering was introduced.
-        con.execute("UPDATE categories SET sort_order=id WHERE sort_order=0")
-        for table in ('income_rules', 'bill_rules'):
-            columns = {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
-            if 'archived' not in columns:
-                con.execute(f'ALTER TABLE {table} ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
+    _split_legacy_database()
+    for uid in all_user_ids():
+        with closing(_open(user_db_path(uid))) as con:
+            _prepare(con)
+            con.commit()
 
 
 def ensure_user(user_id: int, first_name: str = "", username: str | None = None) -> None:
-    with connect() as con:
+    with connect(user_id) as con:
         con.execute(
             "INSERT INTO users(id, first_name, username) VALUES(?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET first_name=excluded.first_name, username=excluded.username",

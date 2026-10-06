@@ -10,6 +10,8 @@ from urllib.parse import parse_qsl
 
 from fastapi import Header, HTTPException
 
+from .db import set_current_user
+
 
 @dataclass(frozen=True)
 class TelegramUser:
@@ -56,11 +58,16 @@ async def current_user(x_telegram_init_data: str | None = Header(default=None)) 
 
     if x_telegram_init_data and bot_token:
         try:
-            return validate_init_data(x_telegram_init_data, bot_token, max_age)
+            user = validate_init_data(x_telegram_init_data, bot_token, max_age)
         except Exception as exc:
             raise HTTPException(status_code=401, detail=f"Telegram auth failed: {exc}") from exc
+        # From here on every database call of this request is bound to this
+        # user's own database file.
+        set_current_user(user.id)
+        return user
 
     if dev_mode:
+        set_current_user(1)
         return TelegramUser(id=1, first_name="Локальный пользователь")
 
     raise HTTPException(status_code=401, detail="Open the app from Telegram or enable DEV_MODE locally")

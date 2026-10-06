@@ -11,7 +11,12 @@ from app import clock, planning
 from app.auth import current_user
 from app.backup import export_user_data, restore_user_data
 from app.cashflow_app import app, cashflow_snapshot, add_piggy_bank_movement, PiggyBankMovementIn, piggy_bank_balance
-from app.db import connect, ensure_user, init_db
+from app.db import connect, ensure_user, init_db, user_scope
+
+
+def as_user(uid, fn, *args, **kwargs):
+    with user_scope(uid):
+        return fn(*args, **kwargs)
 
 
 @pytest.fixture
@@ -393,8 +398,8 @@ def test_bill_remainder_link_survives_backup_restore(client):
     ensure_user(2)
     restore_user_data(2, backup)
 
-    assert piggy_bank_balance(2) == 2000
-    with connect() as con:
+    assert as_user(2, piggy_bank_balance, 2) == 2000
+    with connect(2) as con:
         linked = con.execute(
             'SELECT t.amount,p.amount FROM transactions t JOIN piggy_bank_movements p '
             'ON p.bill_payment_id=t.id WHERE t.user_id=2'
@@ -415,7 +420,7 @@ def test_backup_restores_piggy_to_new_and_existing_users(client):
     backup = export_user_data(1)
     ensure_user(2)
     restore_user_data(2, backup)
-    assert piggy_bank_balance(2) == 300
+    assert as_user(2, piggy_bank_balance, 2) == 300
     client.post('/api/piggy-bank/deposit', json={'amount': 100, 'movement_date': '2026-09-13'})
     restore_user_data(1, backup)
     assert piggy_bank_balance(1) == 300
@@ -430,7 +435,7 @@ def test_backup_restores_cashflow_income_overrides(client):
     assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
     ensure_user(2)
     restore_user_data(2, backup)
-    corrected = advance_row(cashflow_snapshot(2))
+    corrected = advance_row(as_user(2, cashflow_snapshot, 2))
     assert corrected['payday_amount'] == 41000
     assert corrected['income_overridden'] is True
 
@@ -442,10 +447,10 @@ def test_backup_remaps_archived_rule_history(client):
     backup = export_user_data(1)
     ensure_user(2)
     restore_user_data(2, backup)
-    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 11000
+    assert as_user(2, cashflow_snapshot, 2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 11000
     # A second export/import must remain valid after ID remapping.
     restore_user_data(2, export_user_data(2))
-    assert cashflow_snapshot(2)['current_cash'] == 11000
+    assert as_user(2, cashflow_snapshot, 2)['current_cash'] == 11000
 
 
 def test_version_one_backup_without_piggy_replaces_all_data(client):
@@ -487,8 +492,9 @@ def test_legacy_dashboard_only_tracks_explicit_daily_budget_piggy_transfers(clie
 @pytest.mark.parametrize('operation', ['expense', 'new_bill', 'edit_bill'])
 def test_foreign_categories_rejected(client, operation):
     ensure_user(2)
-    with connect() as con:
-        category = con.execute('SELECT id FROM categories WHERE user_id=2 LIMIT 1').fetchone()[0]
+    category = 99999  # exists only in user 2's own database
+    with connect(2) as con:
+        con.execute("INSERT INTO categories(id,user_id,title,emoji) VALUES(?,2,'Чужая','🕵️')", (category,))
     body = {'title': 'Тест', 'amount': 1, 'day_of_month': 15, 'category_id': category}
     if operation == 'expense':
         response = client.post('/api/transactions', json={'type': 'expense', 'amount': 1, 'category_id': category})
@@ -532,7 +538,8 @@ def test_simultaneous_withdrawals_cannot_overdraw(client):
     client.post('/api/piggy-bank/deposit', json={'amount': 100, 'movement_date': '2026-09-12'})
     def withdraw():
         try:
-            add_piggy_bank_movement(1, 'withdraw', PiggyBankMovementIn(amount=80, movement_date=date(2026, 9, 15)))
+            with user_scope(1):  # worker threads do not inherit the request's user
+                add_piggy_bank_movement(1, 'withdraw', PiggyBankMovementIn(amount=80, movement_date=date(2026, 9, 15)))
             return 200
         except HTTPException as exc:
             return exc.status_code
@@ -577,6 +584,9 @@ def test_payment_columns_are_added_before_linked_piggy_index(tmp_path, monkeypat
     monkeypatch.setenv('DATABASE_PATH', str(database))
     with sqlite3.connect(database) as con:
         con.executescript('''
+            CREATE TABLE users (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL DEFAULT '', username TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+            INSERT INTO users(id) VALUES(1);
             CREATE TABLE transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -602,7 +612,7 @@ def test_payment_columns_are_added_before_linked_piggy_index(tmp_path, monkeypat
 
     init_db()
     init_db()
-    with sqlite3.connect(database) as con:
+    with connect(1) as con:
         transaction_columns = {row[1] for row in con.execute('PRAGMA table_info(transactions)')}
         piggy_columns = {row[1] for row in con.execute('PRAGMA table_info(piggy_bank_movements)')}
         indexes = {row[1] for row in con.execute('PRAGMA index_list(piggy_bank_movements)')}
@@ -617,8 +627,8 @@ def test_backup_restores_bill_history_and_paid_links(client):
     client.delete(f"/api/bill-rules/{rule['id']}")
     ensure_user(2)
     restore_user_data(2, export_user_data(1))
-    assert cashflow_snapshot(2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 10900
-    events = planning.bill_events(2, date(2026, 9, 1), date(2026, 9, 15))
+    assert as_user(2, cashflow_snapshot, 2)['current_cash'] == cashflow_snapshot(1)['current_cash'] == 10900
+    events = as_user(2, planning.bill_events, 2, date(2026, 9, 1), date(2026, 9, 15))
     assert len(events) == 1
     assert events[0]['amount'] == 100
     assert events[0]['paid'] is True

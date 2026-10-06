@@ -5,7 +5,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 
 from . import engine, planning
-from .db import connect
+from .db import all_user_ids, connect, user_scope
 
 
 def _next_rule_due_date(day_of_month: int, today: date) -> date:
@@ -49,70 +49,77 @@ def _nearest_unpaid_bills(user_id: int, today: date) -> tuple[date | None, list[
 
 
 def pending_morning_reports(now: datetime) -> list[dict]:
+    reports: list[dict] = []
+    for user_id in all_user_ids():
+        # One user at a time, each inside the scope of their own database.
+        with user_scope(user_id):
+            report = _pending_report(user_id, now)
+        if report is not None:
+            reports.append(report)
+    return reports
+
+
+def _pending_report(user_id: int, now: datetime) -> dict | None:
     today = now.date()
     yesterday = today - timedelta(days=1)
     current_time = now.strftime("%H:%M")
     with connect() as con:
-        settings = [dict(row) for row in con.execute(
-            "SELECT user_id,morning_report_time FROM settings"
+        setting = con.execute(
+            "SELECT morning_report_time FROM settings WHERE user_id=?", (user_id,)
+        ).fetchone()
+        sent = con.execute(
+            "SELECT 1 FROM morning_reports WHERE user_id=? AND report_date=?",
+            (user_id, today.isoformat()),
+        ).fetchone()
+    if setting is None or sent or current_time < setting["morning_report_time"]:
+        return None
+    with connect() as con:
+        # Keep every operation separate. A grouped category can hide a
+        # transaction after its category was edited or reordered.
+        expenses = [dict(row) for row in con.execute(
+            "SELECT t.id,COALESCE(NULLIF(t.note,''),c.title,'Расход') AS title,t.amount "
+            "FROM transactions t LEFT JOIN categories c "
+            "ON c.id=t.category_id AND c.user_id=t.user_id "
+            "WHERE t.user_id=? AND t.type='expense' AND t.tx_date=? ORDER BY t.id",
+            (user_id, yesterday.isoformat()),
         )]
-        sent = {row[0] for row in con.execute(
-            "SELECT user_id FROM morning_reports WHERE report_date=?", (today.isoformat(),)
-        )}
+        previous = con.execute(
+            "SELECT daily_limit FROM morning_reports WHERE user_id=? "
+            "AND report_date<? AND daily_limit IS NOT NULL "
+            "ORDER BY report_date DESC LIMIT 1", (user_id, today.isoformat())
+        ).fetchone()
 
-    reports: list[dict] = []
-    for setting in settings:
-        user_id = setting["user_id"]
-        if user_id in sent or current_time < setting["morning_report_time"]:
-            continue
-        with connect() as con:
-            # Keep every operation separate. A grouped category can hide a
-            # transaction after its category was edited or reordered.
-            expenses = [dict(row) for row in con.execute(
-                "SELECT t.id,COALESCE(NULLIF(t.note,''),c.title,'Расход') AS title,t.amount "
-                "FROM transactions t LEFT JOIN categories c "
-                "ON c.id=t.category_id AND c.user_id=t.user_id "
-                "WHERE t.user_id=? AND t.type='expense' AND t.tx_date=? ORDER BY t.id",
-                (user_id, yesterday.isoformat()),
-            )]
-            previous = con.execute(
-                "SELECT daily_limit FROM morning_reports WHERE user_id=? "
-                "AND report_date<? AND daily_limit IS NOT NULL "
-                "ORDER BY report_date DESC LIMIT 1", (user_id, today.isoformat())
-            ).fetchone()
-
-        # The same calculation as the home screen: with the start capital
-        # switched off it still runs from the latest payday.
-        flow = engine.compute(user_id)
-        period = planning.user_period(user_id, today)
-        nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
-        daily_amount = float(flow.get("available_today", 0))
-        daily_limit = float(flow.get("today_target", daily_amount))
-        reports.append({
-            "user_id": user_id,
-            "report_date": today,
-            "yesterday": yesterday,
-            "expenses": expenses,
-            "spent_total": round(sum(float(item["amount"]) for item in expenses), 2),
-            "period_days_left": (period.end - today).days + 1,
-            "period_remaining": float(flow.get("remaining_period", 0)),
-            "card_balance": float(flow.get("current_cash", 0)),
-            "daily_amount": daily_amount,
-            "daily_limit": daily_limit,
-            "daily_change": None if previous is None
-                else round(daily_limit - float(previous["daily_limit"]), 2),
-            "piggy_balance": float(flow.get("piggy_bank_balance", 0)),
-            "buffer_balance": float(flow.get("buffer_balance", 0)),
-            "nearest_due_date": nearest_date,
-            "nearest_days_left": None if nearest_date is None
-                else (datetime.fromisoformat(nearest_date).date() - today).days,
-            "nearest_bills": nearest,
-        })
-    return reports
+    # The same calculation as the home screen: with the start capital
+    # switched off it still runs from the latest payday.
+    flow = engine.compute(user_id)
+    period = planning.user_period(user_id, today)
+    nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
+    daily_amount = float(flow.get("available_today", 0))
+    daily_limit = float(flow.get("today_target", daily_amount))
+    return {
+        "user_id": user_id,
+        "report_date": today,
+        "yesterday": yesterday,
+        "expenses": expenses,
+        "spent_total": round(sum(float(item["amount"]) for item in expenses), 2),
+        "period_days_left": (period.end - today).days + 1,
+        "period_remaining": float(flow.get("remaining_period", 0)),
+        "card_balance": float(flow.get("current_cash", 0)),
+        "daily_amount": daily_amount,
+        "daily_limit": daily_limit,
+        "daily_change": None if previous is None
+            else round(daily_limit - float(previous["daily_limit"]), 2),
+        "piggy_balance": float(flow.get("piggy_bank_balance", 0)),
+        "buffer_balance": float(flow.get("buffer_balance", 0)),
+        "nearest_due_date": nearest_date,
+        "nearest_days_left": None if nearest_date is None
+            else (datetime.fromisoformat(nearest_date).date() - today).days,
+        "nearest_bills": nearest,
+    }
 
 
 def record_morning_report(report: dict) -> None:
-    with connect() as con:
+    with user_scope(report["user_id"]), connect() as con:
         con.execute(
             "INSERT OR IGNORE INTO morning_reports(user_id,report_date,daily_amount,daily_limit) VALUES(?,?,?,?)",
             (report["user_id"], report["report_date"].isoformat(), report["daily_amount"], report["daily_limit"]),
