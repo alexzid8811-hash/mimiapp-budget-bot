@@ -8,6 +8,8 @@ def test_category_order_migration_preserves_existing_sequence(tmp_path, monkeypa
     database = tmp_path / "legacy.sqlite3"
     monkeypatch.setenv("DATABASE_PATH", str(database))
     with sqlite3.connect(database) as con:
+        con.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL DEFAULT '', username TEXT)")
+        con.execute("INSERT INTO users(id) VALUES(1)")
         con.execute(
             "CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
             "title TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '💳', "

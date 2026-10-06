@@ -14,7 +14,7 @@ from telegram.error import TelegramError
 
 from .auth import TelegramUser, current_user
 from .backup_validation import validate_backup
-from .db import connect, ensure_user
+from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
@@ -64,7 +64,7 @@ def _records(con: Any, table: str, columns: tuple[str, ...], user_id: int) -> li
 
 
 def export_user_data(user_id: int) -> dict:
-    with connect() as con:
+    with user_scope(user_id), connect() as con:
         con.execute("BEGIN")
         settings_row = con.execute(
             f"SELECT {','.join(SETTINGS_COLUMNS)} FROM settings WHERE user_id=?",
@@ -98,7 +98,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     settings = data["settings"]
 
     try:
-        with connect() as con:
+        with user_scope(user_id), connect() as con:
             con.execute("BEGIN IMMEDIATE")
             for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
