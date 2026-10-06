@@ -8,12 +8,12 @@
   let currentPage = "home";
   function navigation(page) {
     currentPage = page;
-    const titles={home:"Мой бюджет",operations:"Операции",analytics:"Аналитика",plan:"Резервы",buffer:"Резервы",piggy:"Резервы",settings:"Настройки"};
+    const titles={home:"Мой бюджет",operations:"Операции",analytics:"Аналитика",plan:"Резервы",buffer:"Резервы",piggy:"Резервы",reserve:"Резервы",obligations:"Резервы",settings:"Настройки"};
     $("hello").textContent=titles[page] || "Мой бюджет";
     document.body.classList.toggle("wide",page==="buffer");
     if(document.body.dataset) document.body.dataset.page=page;
     document.querySelectorAll("[data-nav]").forEach(b=>{
-      if(b.dataset.nav===(["piggy","plan"].includes(page)?"buffer":page)) b.setAttribute("aria-current","page");
+      if(b.dataset.nav===(["piggy","plan","reserve","obligations"].includes(page)?"buffer":page)) b.setAttribute("aria-current","page");
       else b.removeAttribute("aria-current");
     });
     document.querySelectorAll("[data-seg]").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.seg===page)));

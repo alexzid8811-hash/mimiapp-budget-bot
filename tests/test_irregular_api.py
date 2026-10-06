@@ -446,3 +446,16 @@ def test_morning_report_in_irregular_mode(client):
     assert "Ближайший обязательный платёж: Интернет — 1 000,00 ₽, 10.10 (отложено 1 000,00 ₽)" in text
     assert "На обязательные не хватает 1 000,00 ₽ к 10.11" in text
     assert "Дохода не было 17 дн." in text
+
+
+def test_deleting_expense_paid_from_reserve_returns_the_money(client):
+    at(date(2026, 10, 3))
+    income(client, 20000, "2026-10-03")
+    category = client.get("/api/bootstrap").json()["categories"][0]["id"]
+    client.post("/api/irregular/reserve/withdraw", json={
+        "amount": 800, "purpose": "pay_expense", "reason": "Ветеринар", "category_id": category})
+    assert client.get("/api/irregular").json()["reserve_balance"] == 1200
+    expense = next(t for t in client.get("/api/transactions").json() if t["type"] == "expense")
+    assert client.delete(f"/api/transactions/{expense['id']}").status_code == 200
+    assert client.get("/api/irregular").json()["reserve_balance"] == 2000
+    assert client.get("/api/irregular/reserve").json()["movements"][0]["kind"] == "income"

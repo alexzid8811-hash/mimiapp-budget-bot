@@ -67,19 +67,25 @@ let loadVersion = 0;
 async function loadAll() {
   const version = ++loadVersion;
   try {
-    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy] = await Promise.all([
+    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular] = await Promise.all([
       api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
-      api("/api/piggy-bank").catch(() => ({ movements: [] }))
+      api("/api/piggy-bank").catch(() => ({ movements: [] })),
+      api("/api/irregular").catch(() => null)
     ]);
     if (version !== loadVersion) return;
     window.budgetDate.configure(bootstrap.budget_timezone);
-    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy };
+    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular };
     render();
     window.applyCashflowSettings?.(cashflowSettings);
     window.applyCashflow?.(cashflow);
     await window.refreshBuffer?.(cashflow);
     window.budgetDesign?.render(state);
+    await window.irregularUi?.render(state);
   } catch (e) { toast(e.message); }
+}
+
+function isIrregular() {
+  return state.bootstrap?.settings?.budget_mode === "irregular";
 }
 
 function render() {
@@ -182,7 +188,8 @@ function renderTransactionRow(t) {
   const editPayment = t.bill_rule_id
     ? `<button class="tiny" onclick="editBillPayment(${t.id})">Изменить</button>`
     : `<button class="tiny" onclick="editTransaction(${t.id})">Изменить</button>`;
-  return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
+  const source = !isExpense && t.income_source ? ` · ${escapeHtml(t.income_source)}` : '';
+  return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}${source}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
 }
 
 // Transfers between the card and the piggy bank change the day's money, so
@@ -270,7 +277,10 @@ function renderPlan() {
     const action = p.paid
       ? `<div class="bill-payment-action"><button class="tiny" onclick="editBillPayment(${p.payment_id})">Изменить</button><div class="bill-paid-caption">${paidCaption}${remainderCaption}</div></div>`
       : `<div class="bill-payment-action"><button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button></div>`;
-    return `<div class="list-row bill-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="bill-heading"><div class="row-title">${escapeHtml(p.title)}</div><div class="amount expense">${money(p.amount)}</div></div><div class="row-sub bill-meta">${fmtDate(p.due_date)} · уже учтено в бюджете</div></div></div>${action}</div>`;
+    // In the irregular mode the money put aside for a bill is shown instead.
+    const meta = p.reserved === undefined ? "уже учтено в бюджете"
+      : p.paid ? "оплачено" : Number(p.missing) > 0 ? `отложено ${money(p.reserved)}, не хватает ${money(p.missing)}` : `отложено ${money(p.reserved)}`;
+    return `<div class="list-row bill-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="bill-heading"><div class="row-title">${escapeHtml(p.title)}</div><div class="amount expense">${money(p.amount)}</div></div><div class="row-sub bill-meta">${fmtDate(p.due_date)} · ${meta}</div></div></div>${action}</div>`;
   }).join("");
 }
 
@@ -466,9 +476,12 @@ function fillCategorySelects() {
 
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 
+const RESERVE_PAGES = ['piggy', 'plan', 'reserve', 'obligations'];
 function switchPage(page) {
+  // The buffer belongs to the payroll mode; with side jobs "Резервы" opens the reserve.
+  if (page === 'buffer' && isIrregular()) page = 'reserve';
   document.querySelectorAll('.page').forEach(x => x.classList.toggle('active', x.dataset.page === page));
-  document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x.dataset.nav === (['piggy', 'plan'].includes(page) ? 'buffer' : page)));
+  document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x.dataset.nav === (RESERVE_PAGES.includes(page) ? 'buffer' : page)));
   window.budgetDesign?.navigation(page);
   window.scrollTo({top:0, behavior:'smooth'});
 }
@@ -481,6 +494,7 @@ function openExpenseDialog() {
   $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50);
 }
 function openIncomeDialog() {
+  if (isIrregular() && window.irregularUi) { window.irregularUi.openIncome(); return; }
   editingTransactionId = null; $("incomeTxForm").reset(); $("incomeTxDate").value = todayISO();
   $("incomeTxDialog").showModal();
 }
@@ -499,6 +513,10 @@ document.querySelectorAll("[data-txf]").forEach(btn => btn.addEventListener("cli
 window.editTransaction = id => {
   const transaction = state.transactions.find(item => item.id === id && !item.bill_rule_id);
   if (!transaction) return;
+  if (transaction.type === "income" && isIrregular() && window.irregularUi) {
+    window.irregularUi.openIncome(transaction);
+    return;
+  }
   editingTransactionId = id;
   if (transaction.type === "expense") {
     $("expenseAmount").value = transaction.amount;
