@@ -18,7 +18,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from telegram import Bot, InputFile
 from telegram.error import TelegramError
 
-from . import analytics, clock
+from . import analytics, clock, irregular_engine
 from .auth import TelegramUser, current_user
 from .budget import add_months
 from .db import connect, ensure_user, user_scope
@@ -33,7 +33,10 @@ TOTAL_FONT = Font(bold=True)
 MONEY_FORMAT = "#,##0.00"
 DATE_FORMAT = "DD.MM.YYYY"
 
-INCOME_DESTINATIONS = {"daily": "Дневной бюджет", "buffer": "Буфер", "piggy": "Копилка"}
+INCOME_DESTINATIONS = {
+    "daily": "Дневной бюджет", "buffer": "Буфер", "piggy": "Копилка",
+    "split": "Разделить", "reserve": "Резерв на непредвиденное",
+}
 INCOME_KINDS = {"salary": "Зарплата", "advance": "Аванс", "other": "Другой доход"}
 
 
@@ -264,7 +267,7 @@ def build_workbook(user_id: int) -> bytes:
 def _build_workbook(user_id: int) -> bytes:
     with connect() as con:
         con.execute("BEGIN")
-        settings = con.execute("SELECT currency FROM settings WHERE user_id=?", (user_id,)).fetchone()
+        settings = con.execute("SELECT currency,budget_mode FROM settings WHERE user_id=?", (user_id,)).fetchone()
         if settings is None:
             raise ValueError("Настройки пользователя не найдены")
         transactions = _query(
@@ -295,12 +298,16 @@ def _build_workbook(user_id: int) -> bytes:
         vacations = _query(
             con, "SELECT * FROM vacations WHERE user_id=? ORDER BY start_date,id", (user_id,)
         )
+        has_reserve = con.execute(
+            "SELECT 1 FROM emergency_reserve_movements WHERE user_id=? LIMIT 1", (user_id,)
+        ).fetchone() is not None
         category_order = [
             row["title"] for row in con.execute(
                 "SELECT title FROM categories WHERE user_id=? ORDER BY sort_order,id", (user_id,)
             )
         ]
     currency = settings["currency"] or "RUB"
+    irregular = settings["budget_mode"] == "irregular"
 
     wb = Workbook()
 
@@ -391,13 +398,18 @@ def _build_workbook(user_id: int) -> bytes:
         money_columns={3}, widths=[30, 14, 16, 24, 10],
     )
 
-    ws = wb.create_sheet("Доходы")
-    _write_table(
-        ws, ["Название", "Вид", "День месяца", f"Сумма, {currency}", "Активен"],
-        [[i["title"], INCOME_KINDS.get(i["kind"], i["kind"]), i["day_of_month"], float(i["amount"]),
-          "Да" if i["active"] else "Нет"] for i in incomes],
-        money_columns={4}, widths=[30, 16, 14, 16, 10],
-    )
+    if irregular:
+        _irregular_incomes_sheet(wb, user_id, transactions, currency)
+    else:
+        ws = wb.create_sheet("Доходы")
+        _write_table(
+            ws, ["Название", "Вид", "День месяца", f"Сумма, {currency}", "Активен"],
+            [[i["title"], INCOME_KINDS.get(i["kind"], i["kind"]), i["day_of_month"], float(i["amount"]),
+              "Да" if i["active"] else "Нет"] for i in incomes],
+            money_columns={4}, widths=[30, 16, 14, 16, 10],
+        )
+    if irregular or has_reserve:
+        _emergency_reserve_sheet(wb, user_id, currency)
 
     if vacations:
         ws = wb.create_sheet("Отпуска")
@@ -411,6 +423,40 @@ def _build_workbook(user_id: int) -> bytes:
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+def _irregular_incomes_sheet(wb: Workbook, user_id: int, transactions: list[dict], currency: str) -> None:
+    """Actual incomes of the irregular mode with their split."""
+    ran = irregular_engine.run(user_id)
+    splits = ran[1].splits if ran else {}
+    rows = []
+    for t in transactions:
+        if t["type"] != "income":
+            continue
+        split = splits.get(t["id"])
+        parts = [split.reserve / 100, split.bills / 100, split.free / 100, split.piggy / 100] if split else [None] * 4
+        rows.append([
+            _date(t["tx_date"]), float(t["amount"]), t.get("income_source") or "",
+            INCOME_DESTINATIONS.get(t["income_destination"] or "split", ""),
+            t["reserve_percent"], *parts, t["note"] or "",
+        ])
+    ws = wb.create_sheet("Доходы")
+    _write_table(
+        ws, ["Дата", f"Сумма, {currency}", "Откуда", "Направление", "Процент в резерв", "В резерв",
+             "На обязательные", "Свободные", "В копилку", "Комментарий"],
+        rows, money_columns={2, 6, 7, 8, 9}, date_columns={1},
+        widths=[12, 16, 22, 26, 12, 14, 16, 14, 14, 30],
+    )
+
+
+def _emergency_reserve_sheet(wb: Workbook, user_id: int, currency: str) -> None:
+    movements = list(reversed(irregular_engine.reserve_snapshot(user_id)["movements"]))
+    ws = wb.create_sheet("Резерв на непредвиденное")
+    _write_table(
+        ws, ["Дата", "Операция", f"Сумма, {currency}", "Остаток", "Причина"],
+        [[_date(m["date"]), m["title"], m["amount"], m["balance"], m["reason"] or ""] for m in movements],
+        money_columns={3, 4}, date_columns={1}, widths=[12, 30, 16, 16, 40],
+    )
 
 
 def _filename() -> str:

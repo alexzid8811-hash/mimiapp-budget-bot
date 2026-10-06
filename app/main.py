@@ -66,7 +66,7 @@ class TransactionIn(APIModel):
     tx_date: date = Field(default_factory=lambda: clock.today())
     category_id: int | None = None
     note: str = Field(default="", max_length=200)
-    income_destination: Literal["daily", "buffer", "piggy"] = "daily"
+    income_destination: Literal["daily", "buffer", "piggy", "split", "reserve"] = "daily"
 
 
 class BillPaymentIn(APIModel):
@@ -108,6 +108,32 @@ def require_category(con, uid: int, category_id: int | None) -> None:
         raise HTTPException(422, "Категория не найдена")
 
 
+def income_fields(uid: int, payload: TransactionIn, con) -> tuple[str, float | None]:
+    """Destination and reserve percent of a generic income operation.
+
+    In the irregular-income mode every income is split and takes the current
+    percent; "split" and "reserve" exist only in that mode."""
+    from . import irregular_engine  # local import: optional mode
+
+    if payload.type != "income":
+        return "daily", None
+    settings = irregular_engine.settings_for(uid, con)
+    if settings["budget_mode"] == "irregular":
+        destination = payload.income_destination
+        if destination in ("daily", "buffer"):
+            destination = "split"
+        return destination, settings["reserve_percent"]
+    if payload.income_destination in ("split", "reserve"):
+        raise HTTPException(422, "Это направление дохода доступно только в режиме подработок")
+    return payload.income_destination, None
+
+
+def check_reserve(con, uid: int) -> None:
+    from . import irregular_engine  # local import: optional mode
+
+    irregular_engine.check_reserve(con, uid)
+
+
 def invalidate_current_auto_reserve(user_id: int) -> None:
     today = clock.today()
     period = planning.user_period(user_id, today)
@@ -125,7 +151,7 @@ def bootstrap(user: TelegramUser = Depends(current_user)) -> dict:
         "budget_timezone": clock.budget_timezone(),
         "today": clock.today().isoformat(),
         "user": {"id": user.id, "first_name": user.first_name, "username": user.username},
-        "settings": one("SELECT currency,initial_reserve,forecast_months,morning_report_time FROM settings WHERE user_id=?", (uid,)),
+        "settings": one("SELECT currency,initial_reserve,forecast_months,morning_report_time,budget_mode FROM settings WHERE user_id=?", (uid,)),
         "income_rules": rows("SELECT * FROM income_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
         "bill_rules": rows("SELECT * FROM bill_rules WHERE user_id=? AND archived=0 ORDER BY day_of_month,id", (uid,)),
         "categories": rows(
@@ -195,13 +221,15 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
         raise HTTPException(422, "Дата операции не может быть в будущем")
     with connect() as con:
         require_category(con, uid, payload.category_id)
+        destination, percent = income_fields(uid, payload, con)
         cur = con.execute(
-            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination) VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination,reserve_percent) "
+            "VALUES(?,?,?,?,?,?,?,?)",
             (uid, payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-             payload.note, payload.income_destination if payload.type == "income" else "daily"),
+             payload.note, destination, percent),
         )
         tx_id = cur.lastrowid
-        if payload.type == "income" and payload.income_destination == "piggy":
+        if payload.type == "income" and destination == "piggy":
             con.execute(
                 "INSERT INTO piggy_bank_movements"
                 "(user_id,direction,amount,movement_date,note,source,income_transaction_id) "
@@ -230,16 +258,29 @@ def update_transaction(
                 raise HTTPException(404, "Операция не найдена")
             if current["bill_rule_id"] is not None:
                 raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
+            destination, percent = income_fields(uid, payload, con)
             con.execute(
-                "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=? "
+                "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=?,"
+                "reserve_percent=CASE WHEN ?='income' THEN COALESCE(reserve_percent,?) ELSE NULL END "
                 "WHERE id=? AND user_id=?",
                 (
                     payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-                    payload.note, payload.income_destination if payload.type == "income" else "daily", tx_id, uid,
+                    payload.note, destination, payload.type, percent, tx_id, uid,
                 ),
             )
+            # An expense paid from the emergency reserve keeps its reserve
+            # withdrawal in step; turning it into an income drops the link.
+            if payload.type == "expense":
+                con.execute(
+                    "UPDATE emergency_reserve_movements SET amount=?,movement_date=? "
+                    "WHERE user_id=? AND expense_transaction_id=?",
+                    (payload.amount, payload.tx_date.isoformat(), uid, tx_id),
+                )
+            else:
+                con.execute("DELETE FROM emergency_reserve_movements WHERE user_id=? AND expense_transaction_id=?",
+                            (uid, tx_id))
             con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
-            if payload.type == "income" and payload.income_destination == "piggy":
+            if payload.type == "income" and destination == "piggy":
                 con.execute(
                     "INSERT INTO piggy_bank_movements"
                     "(user_id,direction,amount,movement_date,note,source,income_transaction_id) "
@@ -247,6 +288,7 @@ def update_transaction(
                     (uid, payload.amount, payload.tx_date.isoformat(), payload.note, tx_id),
                 )
             check_piggy_history(con, uid)
+            check_reserve(con, uid)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     invalidate_current_auto_reserve(uid)
@@ -264,6 +306,7 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
             if cur.rowcount == 0:
                 raise HTTPException(404, "Operation not found")
             check_piggy_history(con, uid)
+            check_reserve(con, uid)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     invalidate_current_auto_reserve(uid)
@@ -273,6 +316,10 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
 @app.get("/api/plan")
 def plan(user: TelegramUser = Depends(current_user)) -> list[dict]:
     uid = user_ready(user)
+    from . import irregular_engine  # local import: optional mode
+
+    if irregular_engine.is_irregular(uid):
+        return irregular_plan(uid)
     today = clock.today()
     period = planning.user_period(uid, today)
     categories = {row['id']: row for row in rows("SELECT * FROM categories WHERE user_id=?", (uid,))}
@@ -281,6 +328,28 @@ def plan(user: TelegramUser = Depends(current_user)) -> list[dict]:
         category = categories.get(event.get('category_id'), {})
         event.update(category_title=category.get('title'), category_emoji=category.get('emoji'))
     return events
+
+
+def irregular_plan(uid: int) -> list[dict]:
+    """Bills of the irregular mode: unpaid ones up to the look-ahead window and
+    the ones paid during the last month, with the money put aside for them."""
+    from . import irregular_engine
+
+    flow = irregular_engine.snapshot(uid)
+    categories = {row['id']: row for row in rows("SELECT * FROM categories WHERE user_id=?", (uid,))}
+    rules = {row['id']: row for row in rows("SELECT id,category_id FROM bill_rules WHERE user_id=?", (uid,))}
+    result = []
+    for bill in flow.get("bills", []):
+        category = categories.get((rules.get(bill["id"]) or {}).get("category_id"), {})
+        result.append({
+            **bill,
+            "amount": bill["paid_amount"] if bill["paid"] else bill["amount"],
+            "planned_amount": bill["amount"],
+            "category_id": category.get("id"),
+            "category_title": category.get("title"),
+            "category_emoji": category.get("emoji"),
+        })
+    return result
 
 
 @app.post("/api/bills/{bill_id}/pay")

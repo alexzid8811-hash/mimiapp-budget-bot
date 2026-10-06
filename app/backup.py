@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 9
+BACKUP_VERSION = 10
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -35,6 +35,14 @@ SETTINGS_COLUMNS = (
     "cashflow_start_date",
     "cashflow_start_capital",
     "morning_report_time",
+    "budget_mode",
+    "irregular_reserve_percent",
+    "irregular_reserve_target",
+    "irregular_stretch_days",
+    "irregular_bills_lookahead_days",
+    "irregular_start_date",
+    "irregular_start_total",
+    "irregular_start_reserve",
 )
 
 TABLE_COLUMNS = {
@@ -43,7 +51,8 @@ TABLE_COLUMNS = {
     "bill_rules": ("id", "title", "amount", "day_of_month", "category_id", "active", "archived", "created_at"),
     "transactions": (
         "id", "type", "amount", "tx_date", "category_id", "note",
-        "bill_rule_id", "bill_due_date", "bill_planned_amount", "income_destination", "created_at",
+        "bill_rule_id", "bill_due_date", "bill_planned_amount", "income_destination",
+        "reserve_percent", "income_source", "created_at",
     ),
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
@@ -55,6 +64,9 @@ TABLE_COLUMNS = {
     "plan_history": ("id", "effective_date", "snapshot"),
     "card_allocations": ("id", "period_start", "funded_on", "amount"),
     "payroll_changes": ("id", "effective_month", "salary_gross", "bonus_gross", "created_at"),
+    "emergency_reserve_movements": (
+        "id", "direction", "amount", "movement_date", "reason", "kind", "expense_transaction_id", "created_at",
+    ),
 }
 
 
@@ -100,7 +112,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     try:
         with user_scope(user_id), connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            for table in ("transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             # Versions before v5 stored the cash-flow start balance in
@@ -127,6 +139,15 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     else legacy_start_capital
                 ),
                 "morning_report_time": str(settings.get("morning_report_time") or "09:00"),
+                # Versions before v10 had no irregular-income mode.
+                "budget_mode": str(settings.get("budget_mode") or "payroll"),
+                "irregular_reserve_percent": float(settings.get("irregular_reserve_percent", 10)),
+                "irregular_reserve_target": settings.get("irregular_reserve_target"),
+                "irregular_stretch_days": int(settings.get("irregular_stretch_days", 14)),
+                "irregular_bills_lookahead_days": int(settings.get("irregular_bills_lookahead_days", 30)),
+                "irregular_start_date": settings.get("irregular_start_date"),
+                "irregular_start_total": float(settings.get("irregular_start_total", 0)),
+                "irregular_start_reserve": float(settings.get("irregular_start_reserve", 0)),
             }
             assignments = ",".join(f"{column}=?" for column in SETTINGS_COLUMNS)
             con.execute(
@@ -172,13 +193,15 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             transaction_ids: dict[Any, int] = {}
             for row in data["transactions"]:
                 cur = con.execute(
-                    "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,bill_planned_amount,income_destination,created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,"
+                    "bill_planned_amount,income_destination,reserve_percent,income_source,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["type"]), float(row["amount"]), str(row["tx_date"]),
                         category_ids.get(row.get("category_id")), str(row.get("note") or ""),
                         bill_ids.get(row.get("bill_rule_id")), row.get("bill_due_date"),
-                        row.get("bill_planned_amount"), row.get("income_destination", "daily"), _created_at(row),
+                        row.get("bill_planned_amount"), row.get("income_destination", "daily"),
+                        row.get("reserve_percent"), str(row.get("income_source") or ""), _created_at(row),
                     ),
                 )
                 transaction_ids[row.get("id")] = int(cur.lastrowid)
@@ -209,6 +232,16 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                         row.get('purpose'),
                         transaction_ids.get(row.get('bill_payment_id')), transaction_ids.get(row.get('income_transaction_id')),
                         _created_at(row),
+                    ),
+                )
+            for row in data["emergency_reserve_movements"]:
+                con.execute(
+                    "INSERT INTO emergency_reserve_movements"
+                    "(user_id,direction,amount,movement_date,reason,kind,expense_transaction_id,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        user_id, row["direction"], row["amount"], row["movement_date"], row.get("reason") or "",
+                        row["kind"], transaction_ids.get(row.get("expense_transaction_id")), _created_at(row),
                     ),
                 )
             for row in data["cashflow_income_overrides"]:

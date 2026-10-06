@@ -28,11 +28,23 @@ class Settings(Payroll):
     cashflow_start_date: date | None = None
     cashflow_start_capital: float | None = Field(default=None, ge=0)
     morning_report_time: str = Field(default='09:00', pattern=r'^(?:[01]\d|2[0-3]):[0-5]\d$')
+    budget_mode: Literal['payroll', 'irregular'] = 'payroll'
+    irregular_reserve_percent: float = Field(default=10, ge=0, le=100)
+    irregular_reserve_target: float | None = Field(default=None, ge=0)
+    irregular_stretch_days: int = Field(default=14, ge=3, le=60)
+    irregular_bills_lookahead_days: int = Field(default=30, ge=0, le=90)
+    irregular_start_date: date | None = None
+    irregular_start_total: float = Field(default=0, ge=0)
+    irregular_start_reserve: float = Field(default=0, ge=0)
 
     @model_validator(mode='after')
     def valid_start(self):
         if self.cashflow_start_date and self.cashflow_start_date > clock.today():
             raise ValueError('Дата старта в будущем')
+        if self.irregular_start_date and self.irregular_start_date > clock.today():
+            raise ValueError('Дата старта режима подработок в будущем')
+        if self.irregular_start_reserve > self.irregular_start_total:
+            raise ValueError('Резерв на старте больше всех денег')
         return self
 
 
@@ -75,7 +87,9 @@ class Transaction(Record):
     bill_rule_id: int | None = Field(default=None, gt=0)
     bill_due_date: date | None = None
     bill_planned_amount: float | None = Field(default=None, ge=0)
-    income_destination: Literal['daily', 'buffer', 'piggy'] = 'daily'
+    income_destination: Literal['daily', 'buffer', 'piggy', 'split', 'reserve'] = 'daily'
+    reserve_percent: float | None = Field(default=None, ge=0, le=100)
+    income_source: str = Field(default='', max_length=80)
 
     @model_validator(mode='after')
     def bill_fields(self):
@@ -124,6 +138,26 @@ class Piggy(Record):
         return self
 
 
+class EmergencyReserve(Record):
+    direction: Literal['deposit', 'withdraw']
+    amount: float = Field(gt=0)
+    movement_date: date
+    reason: str = Field(default='', max_length=160)
+    kind: Literal['deposit', 'from_free', 'pay_expense', 'to_free', 'cover_overspend']
+    expense_transaction_id: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode='after')
+    def consistent(self):
+        if self.movement_date > clock.today():
+            raise ValueError('Дата операции резерва в будущем')
+        deposit = self.kind in ('deposit', 'from_free')
+        if deposit != (self.direction == 'deposit'):
+            raise ValueError('Неверное направление операции резерва')
+        if (self.kind == 'pay_expense') != (self.expense_transaction_id is not None):
+            raise ValueError('Неверная связь операции резерва с расходом')
+        return self
+
+
 class CardAllocation(Record):
     period_start: date
     funded_on: date
@@ -164,11 +198,11 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'transactions': Transaction, 'vacations': Vacation, 'reserve_movements': Reserve,
           'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
           'plan_history': History, 'card_allocations': CardAllocation,
-          'payroll_changes': PayrollChange}
+          'payroll_changes': PayrollChange, 'emergency_reserve_movements': EmergencyReserve}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 11):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -178,6 +212,8 @@ def validate_backup(payload):
     data = {'settings': Settings.model_validate(source['settings']).model_dump(mode='json')}
     for table, model in MODELS.items():
         optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations', 'payroll_changes'}
+        if payload['backup_version'] < 10:
+            optional_legacy_tables.add('emergency_reserve_movements')
         if payload['backup_version'] == 1:
             optional_legacy_tables.update({'piggy_bank_movements', 'plan_history'})
         records = source.get(table, [] if table in optional_legacy_tables else None)
@@ -213,6 +249,17 @@ def validate_backup(payload):
         if payment_id in linked_payments:
             raise ValueError('Повторяющаяся связь остатка платежа с копилкой')
         linked_payments.add(payment_id)
+    linked_expenses = set()
+    for row in data['emergency_reserve_movements']:
+        expense_id = row.get('expense_transaction_id')
+        if expense_id is None:
+            continue
+        expense = transaction_by_id.get(expense_id)
+        if expense is None or expense['type'] != 'expense' or expense['bill_rule_id'] is not None:
+            raise ValueError('Не найден расход, оплаченный из резерва')
+        if expense_id in linked_expenses:
+            raise ValueError('Повторяющаяся связь расхода с резервом')
+        linked_expenses.add(expense_id)
     dates = set()
     for row in data['plan_history']:
         effective = row['effective_date']

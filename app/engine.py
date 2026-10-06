@@ -106,9 +106,11 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
             value = cents(row["amount"])
             if row["type"] == "expense":
                 _add(card_out, day, value)
-            elif row["destination"] == "buffer":
+            # Incomes of the irregular-income mode ("split", "reserve") stay
+            # visible after switching back to the payroll mode.
+            elif row["destination"] in ("buffer", "reserve"):
                 _add(buffer_in, day, value)
-            elif row["destination"] == "daily":
+            elif row["destination"] in ("daily", "split"):
                 _add(card_in, day, value)
         for row in con.execute(
             "SELECT t.amount,t.tx_date,t.bill_due_date,t.bill_planned_amount,"

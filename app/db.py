@@ -360,11 +360,61 @@ def _ensure_morning_report_columns(con: sqlite3.Connection) -> None:
         con.execute("ALTER TABLE morning_reports ADD COLUMN daily_limit REAL")
 
 
+def _ensure_irregular_schema(con: sqlite3.Connection) -> None:
+    """Mode for irregular income: settings, income fields and the emergency
+    reserve.  The reserve share of every income is not stored: it is derived
+    by replaying the operations (see app/irregular.py)."""
+    settings_columns = {row[1] for row in con.execute("PRAGMA table_info(settings)")}
+    additions = {
+        "budget_mode": "TEXT NOT NULL DEFAULT 'payroll'",
+        "irregular_reserve_percent": "REAL NOT NULL DEFAULT 10",
+        "irregular_reserve_target": "REAL",
+        "irregular_stretch_days": "INTEGER NOT NULL DEFAULT 14",
+        "irregular_bills_lookahead_days": "INTEGER NOT NULL DEFAULT 30",
+        "irregular_start_date": "TEXT",
+        "irregular_start_total": "REAL NOT NULL DEFAULT 0",
+        "irregular_start_reserve": "REAL NOT NULL DEFAULT 0",
+    }
+    for name, ddl in additions.items():
+        if name not in settings_columns:
+            con.execute(f"ALTER TABLE settings ADD COLUMN {name} {ddl}")
+
+    transaction_columns = {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
+    if "reserve_percent" not in transaction_columns:
+        # Percent applied to an income; changing the setting never touches it.
+        con.execute("ALTER TABLE transactions ADD COLUMN reserve_percent REAL")
+    if "income_source" not in transaction_columns:
+        con.execute("ALTER TABLE transactions ADD COLUMN income_source TEXT NOT NULL DEFAULT ''")
+
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS emergency_reserve_movements ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "direction TEXT NOT NULL CHECK(direction IN ('deposit','withdraw')), "
+        "amount REAL NOT NULL CHECK(amount > 0), "
+        "movement_date TEXT NOT NULL, "
+        "reason TEXT NOT NULL DEFAULT '', "
+        "kind TEXT NOT NULL CHECK(kind IN ('deposit','from_free','pay_expense','to_free','cover_overspend')), "
+        "expense_transaction_id INTEGER REFERENCES transactions(id) ON DELETE CASCADE, "
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS ix_emergency_reserve_user_date "
+        "ON emergency_reserve_movements(user_id, movement_date, id)"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_emergency_reserve_expense "
+        "ON emergency_reserve_movements(user_id, expense_transaction_id) "
+        "WHERE expense_transaction_id IS NOT NULL"
+    )
+
+
 def _prepare(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
     _ensure_settings_columns(con)
     _ensure_morning_report_columns(con)
     _ensure_payment_columns(con)
+    _ensure_irregular_schema(con)
     category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
     if "sort_order" not in category_columns:
         con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
