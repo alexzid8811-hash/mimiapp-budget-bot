@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException
 from pydantic import Field
 
 from . import payroll_app as base
-from . import clock, engine
+from . import clock, engine, irregular_engine
 from .validation import APIModel
 from .savings import check_piggy_history
 from .auth import TelegramUser, current_user
@@ -49,6 +49,13 @@ class PiggyToCardIn(APIModel):
 
 class CashflowIncomeOverrideIn(APIModel):
     amount: float = Field(ge=0)
+
+
+def today_numbers(user_id: int) -> dict:
+    """Today's available money and overspend of the active budget mode."""
+    if irregular_engine.is_irregular(user_id):
+        return irregular_engine.snapshot(user_id)
+    return engine.compute(user_id, force_enabled=bool(cashflow_settings(user_id)["cashflow_enabled"]))
 
 
 def cashflow_settings(user_id: int) -> dict:
@@ -222,8 +229,8 @@ def add_piggy_bank_movement(
     if direction == "deposit" and payload.source == "daily_budget":
         if payload.movement_date != clock.today():
             raise HTTPException(422, "Перенести можно только остаток сегодняшнего дня")
-        flow = engine.compute(user_id, force_enabled=bool(cashflow_settings(user_id)["cashflow_enabled"]))
-        if cents(payload.amount) > max(0, cents(flow["available_today"])):
+        flow = today_numbers(user_id)
+        if cents(payload.amount) > max(0, cents(flow.get("available_today") or 0)):
             raise HTTPException(422, "Нельзя перенести больше неизрасходованного остатка за день")
     return _insert_piggy(user_id, direction, payload.amount, payload.movement_date,
                          payload.note, payload.source)
@@ -255,8 +262,8 @@ def piggy_bank_to_card(payload: PiggyToCardIn, user: TelegramUser = Depends(curr
     if payload.movement_date != clock.today():
         raise HTTPException(422, "Перевод на карту выполняется сегодняшним днём")
     if payload.purpose == "cover_overspend":
-        flow = engine.compute(uid, force_enabled=bool(cashflow_settings(uid)["cashflow_enabled"]))
-        if cents(payload.amount) > cents(flow["overspend"]):
+        flow = today_numbers(uid)
+        if cents(payload.amount) > cents(flow.get("overspend") or 0):
             raise HTTPException(422, "Сумма больше сегодняшнего перерасхода")
     note = payload.note or {
         "cover_overspend": "Покрытие перерасхода", "today": "Перевод на сегодня",
@@ -304,3 +311,7 @@ app.include_router(excel_router)
 from .analytics import router as analytics_router
 
 app.include_router(analytics_router)
+
+from .irregular_app import router as irregular_router
+
+app.include_router(irregular_router)

@@ -200,3 +200,78 @@ def test_morning_reports_are_built_per_user(tmp_path, monkeypatch):
     assert sorted(r["user_id"] for r in reports) == [1, 2]
     record_morning_report(reports[0])
     assert [r["user_id"] for r in pending_morning_reports(datetime(2026, 9, 16, 23, 0))] == [reports[1]["user_id"]]
+
+
+SOURCE_A = "ИСТОЧНИК-ПОДРАБОТКИ-А"
+REASON_A = "ПРИЧИНА-РЕЗЕРВА-А"
+
+
+def test_irregular_mode_of_one_user_is_invisible_to_another(tmp_path, monkeypatch):
+    from datetime import date, datetime
+
+    from app.cashflow_app import app
+    from app.morning_reports import pending_morning_reports
+    from bot import morning_report_text
+
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setenv("BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 10, 3))
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda _: None)
+    init_db()
+    token = set_current_user(None)
+    try:
+        client = TestClient(app)
+        a = {"X-Telegram-Init-Data": _init_data(31)}
+        b = {"X-Telegram-Init-Data": _init_data(32)}
+        assert client.get("/api/bootstrap", headers=a).status_code == 200
+        assert client.get("/api/bootstrap", headers=b).status_code == 200
+        assert client.put("/api/budget-mode", headers=a, json={
+            "budget_mode": "irregular", "start_date": "2026-10-01", "start_total": 0}).status_code == 200
+        assert client.put("/api/irregular/settings", headers=a, json={
+            "reserve_percent": 25, "stretch_days": 9, "lookahead_days": 5}).status_code == 200
+        assert client.post("/api/irregular/incomes", headers=a, json={
+            "amount": 4000, "tx_date": "2026-10-02", "income_source": SOURCE_A}).status_code == 200
+        assert client.post("/api/irregular/reserve/withdraw", headers=a, json={
+            "amount": 100, "purpose": "to_free", "reason": REASON_A}).status_code == 200
+        assert client.post("/api/transactions", headers=b, json={
+            "type": "expense", "amount": 10, "note": f"Заметка {SECRET_B}"}).status_code == 200
+
+        flow_a = client.get("/api/irregular", headers=a).json()
+        flow_b = client.get("/api/irregular", headers=b).json()
+        assert flow_a["enabled"] and flow_a["reserve_balance"] == 900
+        assert flow_b["enabled"] is False and flow_b["configured"] is False
+        assert flow_b["settings"]["reserve_percent"] == 10 and flow_b["settings"]["stretch_days"] == 14
+        assert client.get("/api/irregular/incomes", headers=b).json() == []
+        assert client.get("/api/irregular/reserve", headers=b).json()["movements"] == []
+        assert client.get("/api/bootstrap", headers=b).json()["settings"]["budget_mode"] == "payroll"
+
+        for headers, own, foreign in ((a, SOURCE_A, SECRET_B), (b, SECRET_B, SOURCE_A)):
+            for path in ("/api/transactions", "/api/backup", "/api/export/xlsx"):
+                response = client.get(path, headers=headers)
+                assert response.status_code == 200, (path, response.text)
+                body = response.text
+                if path.endswith("xlsx"):
+                    wb = load_workbook(io.BytesIO(response.content))
+                    body = " ".join(str(c.value) for ws in wb.worksheets for r in ws.iter_rows() for c in r if c.value)
+                    assert ("Резерв на непредвиденное" in wb.sheetnames) == (headers is a)
+                if path != "/api/transactions":
+                    assert (REASON_A in body) == (headers is a), path
+                assert own in body, path
+                assert foreign not in body, path
+
+        reports = {r["user_id"]: r for r in pending_morning_reports(datetime(2026, 10, 3, 23, 0))}
+        assert reports[31]["mode"] == "irregular" and "mode" not in reports[32]
+        assert "Резерв на непредвиденное" in morning_report_text(reports[31])
+        assert "Резерв на непредвиденное" not in morning_report_text(reports[32])
+
+        before_b = user_db_path(32).read_bytes()
+        before_dump = json.dumps(export_user_data(32)["data"], ensure_ascii=False, sort_keys=True)
+        restore_user_data(31, export_user_data(31))
+        assert json.dumps(export_user_data(32)["data"], ensure_ascii=False, sort_keys=True) == before_dump
+        assert SOURCE_A.encode() not in user_db_path(32).read_bytes()
+        assert before_b == user_db_path(32).read_bytes()
+        assert client.get("/api/irregular", headers=a).json()["reserve_balance"] == 900
+    finally:
+        from app.db import reset_current_user
+        reset_current_user(token)

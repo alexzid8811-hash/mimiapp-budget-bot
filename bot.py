@@ -30,6 +30,38 @@ def money(value: float) -> str:
     return f"{value:,.2f}".replace(",", " ").replace(".", ",")
 
 
+def _ddmm(iso: str) -> str:
+    return f"{iso[8:10]}.{iso[5:7]}"
+
+
+def irregular_report_text(report: dict, spending: str, change: str) -> str:
+    lines = [
+        f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}",
+        "", spending, "",
+        f"Можно сегодня: {money(report['daily_amount'])} ₽",
+        f"Изменение дневной суммы: {change}",
+        f"Свободных денег: {money(report['free_balance'])} ₽ · растягиваем до "
+        f"{_ddmm(report['stretch_until'])} (осталось {report['days_left']} дн.)",
+        "",
+        f"Резерв на непредвиденное: {money(report['reserve_balance'])} ₽"
+        + (f" · хватит примерно на {report['reserve_days']} дн." if report.get("reserve_days") else ""),
+        f"Отложено на обязательные: {money(report['bills_reserved'])} ₽",
+        f"Копилка: {money(report['piggy_balance'])} ₽",
+    ]
+    bill = report.get("next_bill")
+    if bill:
+        lines.extend(["", f"Ближайший обязательный платёж: {bill['title']} — {money(bill['amount'])} ₽, "
+                          f"{_ddmm(bill['due_date'])} (отложено {money(bill['reserved'])} ₽)"])
+    else:
+        lines.extend(["", "Ближайших обязательных платежей нет."])
+    shortfall = report.get("bills_shortfall")
+    if shortfall:
+        lines.append(f"⚠️ На обязательные не хватает {money(shortfall['amount'])} ₽ к {_ddmm(shortfall['date'])}")
+    if report.get("no_income_warning"):
+        lines.append(f"⚠️ Дохода не было {report['days_without_income']} дн. При необходимости возьмите деньги из резерва.")
+    return "\n".join(lines)
+
+
 def morning_report_text(report: dict) -> str:
     expenses = "\n".join(f"• {item['title']} — {money(item['amount'])} ₽" for item in report["expenses"])
     spending = f"Вчера потрачено: {money(report['spent_total'])} ₽"
@@ -40,6 +72,8 @@ def morning_report_text(report: dict) -> str:
     change = "нет данных за предыдущий день" if report["daily_change"] is None else (
         ("+" if report["daily_change"] >= 0 else "−") + money(abs(report["daily_change"])) + " ₽"
     )
+    if report.get("mode") == "irregular":
+        return irregular_report_text(report, spending, change)
     lines = [
         f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}",
         "", spending, "",

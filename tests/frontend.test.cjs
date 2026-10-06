@@ -48,7 +48,7 @@ function setup() {
     },
   };
   vm.createContext(sandbox);
-  for (const name of ['budget-date.js','money-input.js','app.js','cashflow-ui.js','buffer-ui.js','design-ui.js']) {
+  for (const name of ['budget-date.js','money-input.js','app.js','cashflow-ui.js','buffer-ui.js','design-ui.js','irregular-ui.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static',name),'utf8'),sandbox);
   }
   return {sandbox, get, requests, responses};
@@ -393,4 +393,132 @@ test('operations can be searched and filtered by type', async () => {
   get('txSearch').value = 'нет такого';
   vm.runInContext('renderTransactions()', sandbox);
   assert.match(get('transactionsList').innerHTML, /Ничего не найдено/);
+});
+
+
+const IRREGULAR = {
+  enabled:true, configured:true, today:'2026-10-03', start_date:'2026-10-01',
+  settings:{budget_mode:'irregular',reserve_percent:10,reserve_target:null,stretch_days:14,lookahead_days:30,start_date:'2026-10-01',start_total:0,start_reserve:0},
+  today_target:785.71, available_today:785.71, spent_today:0, overspend:0, tomorrow_limit:846.15,
+  free_balance:11000, stretch_until:'2026-10-16', days_left:14, window_extended:false,
+  reserve_balance:2000, avg_daily_spending:500, reserve_days:4, bills_reserved:7000,
+  next_bill:{id:1,title:'Интернет',due_date:'2026-10-10',amount:1000,reserved:1000,missing:0,paid:false},
+  bills_shortfall:{amount:2500,date:'2026-10-25'}, last_income_date:'2026-10-03', days_without_income:0,
+  no_income_warning:false, piggy_bank_balance:0,
+  bills:[{id:1,title:'Интернет',due_date:'2026-10-10',amount:1000,reserved:1000,missing:0,paid:false,payment_id:null,paid_amount:null}],
+};
+
+function irregularSetup() {
+  const env = setup();
+  env.responses['/api/bootstrap'].settings.budget_mode = 'irregular';
+  env.responses['/api/bootstrap'].categories = [{id:5,title:'Здоровье',emoji:'💊'}];
+  env.responses['/api/irregular'] = JSON.parse(JSON.stringify(IRREGULAR));
+  env.responses['/api/irregular/reserve'] = {balance:2000,movements:[
+    {id:null,income_id:3,kind:'income',title:'Процент от дохода',date:'2026-10-03',amount:2000,balance:2000,reason:'ремонт',expense_id:null}]};
+  env.responses['/api/irregular/preview'] = {reserve:2000,bills:7000,free:11000,piggy:0,amount:20000,percent:10,stretch_until:'2026-10-16',
+    summary:'Пришло 20 000 ₽ → 2 000 ₽ в резерв (10%), 7 000 ₽ на обязательные, 11 000 ₽ свободных'};
+  env.responses['/api/irregular/incomes'] = {id:9,summary:'Пришло 20 000 ₽ → 2 000 ₽ в резерв (10%), 7 000 ₽ на обязательные, 11 000 ₽ свободных'};
+  return env;
+}
+
+test('irregular mode shows its own home numbers and warnings', async () => {
+  const {get} = irregularSetup();
+  await get('refreshBtn').listeners.click();
+  assert.match(get('dailyAvailable').textContent,/785,71/);
+  assert.match(get('irrFree').textContent,/11[\s ]000,00/);
+  assert.equal(get('irrStretch').textContent,'Растягиваем до 16.10 (осталось 14 дн.)');
+  assert.match(get('irrReserve').textContent,/2[\s ]000,00/);
+  assert.match(get('irrReserveDays').textContent,/4 дня/);
+  assert.match(get('irrNextBill').textContent,/Интернет/);
+  assert.match(get('irrBillsWarning').textContent,/^На обязательные не хватает 2[\s ]500,00[\s ]₽ к 25\.10$/);
+  assert.equal(get('irrBillsWarning').classList.contains('hidden'),false);
+  assert.equal(get('irrNoIncomeWarning').classList.contains('hidden'),true);
+  assert.match(get('irrReserveMovements').innerHTML,/Процент от дохода/);
+  assert.match(get('irrObligationsList').innerHTML,/отложено полностью/);
+});
+
+test('no income for a long time offers to take money from the reserve', async () => {
+  const {get,responses} = irregularSetup();
+  Object.assign(responses['/api/irregular'],{no_income_warning:true,days_without_income:17,window_extended:true});
+  await get('refreshBtn').listeners.click();
+  assert.equal(get('irrNoIncomeWarning').classList.contains('hidden'),false);
+  assert.match(get('irrNoIncomeText').textContent,/Дохода не было 17 дней/);
+  get('irrTakeReserveBtn').listeners.click();
+  assert.equal(get('irrReserveMode').value,'withdraw');
+  assert.equal(get('irrReservePurpose').value,'to_free');
+});
+
+test('income dialog fills the percent, previews the split and saves', async () => {
+  const {sandbox,get,requests} = irregularSetup();
+  await get('refreshBtn').listeners.click();
+  get('quickIncomeBtn').listeners.click();
+  assert.equal(get('irrIncomePercent').value,10);
+  assert.equal(get('irrIncomeDestination').value,'split');
+  get('irrIncomeAmount').value = '20 000';
+  get('irrIncomeSource').value = 'ремонт';
+  await sandbox.window.irregularUi.preview();
+  const previewRequest = requests.find(r => r.url === '/api/irregular/preview');
+  assert.deepEqual(JSON.parse(previewRequest.body),{amount:20000,tx_date:get('irrIncomeDate').value,reserve_percent:10,destination:'split',exclude_id:null});
+  assert.match(get('irrIncomePreview').innerHTML,/На обязательные/);
+  assert.match(get('irrIncomePreview').innerHTML,/11 000 ₽ свободных/);
+  await get('irrIncomeForm').listeners.submit({preventDefault(){}});
+  const saved = requests.find(r => r.url === '/api/irregular/incomes');
+  const body = JSON.parse(saved.body);
+  assert.equal(body.amount,20000);
+  assert.equal(body.income_source,'ремонт');
+  assert.equal(body.reserve_percent,10);
+  assert.equal(body.destination,'split');
+  assert.match(get('toast').textContent,/Пришло 20 000 ₽ → 2 000 ₽ в резерв \(10%\)/);
+});
+
+test('editing an income in irregular mode opens the income dialog with its own percent', async () => {
+  const {sandbox,get,responses} = irregularSetup();
+  responses['/api/transactions'] = [{id:4,type:'income',amount:5000,tx_date:'2026-10-02',income_source:'доставка',reserve_percent:5,income_destination:'reserve',note:''}];
+  await get('refreshBtn').listeners.click();
+  sandbox.window.editTransaction(4);
+  assert.equal(get('irrIncomeId').value,4);
+  assert.equal(get('irrIncomePercent').value,5);
+  assert.equal(get('irrIncomeDestination').value,'reserve');
+  assert.match(get('transactionsList').innerHTML,/доставка/);
+});
+
+test('paying an expense from the reserve sends the category and the reason', async () => {
+  const {sandbox,get,requests} = irregularSetup();
+  await get('refreshBtn').listeners.click();
+  sandbox.window.irregularUi.openReserve('withdraw','pay_expense');
+  get('irrReserveAmount').value = '1 500';
+  get('irrReserveCategory').value = '5';
+  get('irrReserveReason').value = '';
+  await get('irrReserveForm').listeners.submit({preventDefault(){}});
+  assert.equal(requests.filter(r => r.url === '/api/irregular/reserve/withdraw').length,0);
+  assert.match(get('toast').textContent,/Укажите причину/);
+  get('irrReserveReason').value = 'Стоматолог';
+  await get('irrReserveForm').listeners.submit({preventDefault(){}});
+  const body = JSON.parse(requests.find(r => r.url === '/api/irregular/reserve/withdraw').body);
+  assert.deepEqual({...body,movement_date:undefined},{amount:1500,movement_date:undefined,purpose:'pay_expense',reason:'Стоматолог',category_id:5});
+});
+
+test('payroll mode keeps the old income dialog and never asks for the reserve', async () => {
+  const {get,requests} = setup();
+  await get('refreshBtn').listeners.click();
+  get('quickIncomeBtn').listeners.click();
+  assert.equal(get('irrIncomeAmount').value,'');
+  assert.match(get('incomeTxDate').value,/^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(requests.filter(r => r.url === '/api/irregular/reserve').length,0);
+});
+
+test('switching to side jobs without a start asks for it first', async () => {
+  const {sandbox,get,requests,responses} = setup();
+  responses['/api/irregular'] = {enabled:false,configured:false,settings:{budget_mode:'payroll',reserve_percent:10,stretch_days:14,lookahead_days:30}};
+  await get('refreshBtn').listeners.click();
+  await sandbox.window.irregularUi.chooseMode('irregular');
+  assert.equal(requests.filter(r => r.url === '/api/budget-mode').length,0);
+  assert.equal(get('irrStretchDays').value,14);
+  get('irrStartTotal').value = '30 000';
+  get('irrStartReserve').value = '5 000';
+  await sandbox.window.irregularUi.saveSettings();
+  const mode = JSON.parse(requests.find(r => r.url === '/api/budget-mode').body);
+  assert.equal(mode.budget_mode,'irregular');
+  assert.equal(mode.start_total,30000);
+  assert.equal(mode.start_reserve,5000);
 });

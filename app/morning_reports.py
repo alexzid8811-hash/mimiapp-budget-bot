@@ -89,6 +89,11 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
             "ORDER BY report_date DESC LIMIT 1", (user_id, today.isoformat())
         ).fetchone()
 
+    from . import irregular_engine  # local import: optional mode
+
+    if irregular_engine.is_irregular(user_id):
+        return _irregular_report(user_id, today, yesterday, expenses, previous)
+
     # The same calculation as the home screen: with the start capital
     # switched off it still runs from the latest payday.
     flow = engine.compute(user_id)
@@ -115,6 +120,42 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
         "nearest_days_left": None if nearest_date is None
             else (datetime.fromisoformat(nearest_date).date() - today).days,
         "nearest_bills": nearest,
+    }
+
+
+def _irregular_report(user_id: int, today: date, yesterday: date, expenses: list[dict], previous) -> dict | None:
+    """Morning report of the irregular-income mode: the same numbers as its
+    home screen."""
+    from . import irregular_engine
+
+    flow = irregular_engine.snapshot(user_id)
+    if not flow.get("configured"):
+        return None
+    daily_amount = float(flow["available_today"])
+    daily_limit = float(flow["today_target"])
+    stretch_days = int(flow["settings"]["stretch_days"])
+    return {
+        "mode": "irregular",
+        "user_id": user_id,
+        "report_date": today,
+        "yesterday": yesterday,
+        "expenses": expenses,
+        "spent_total": round(sum(float(item["amount"]) for item in expenses), 2),
+        "daily_amount": daily_amount,
+        "daily_limit": daily_limit,
+        "daily_change": None if previous is None
+            else round(daily_limit - float(previous["daily_limit"]), 2),
+        "free_balance": float(flow["free_balance"]),
+        "stretch_until": flow["stretch_until"],
+        "days_left": flow["days_left"],
+        "reserve_balance": float(flow["reserve_balance"]),
+        "reserve_days": flow["reserve_days"],
+        "bills_reserved": float(flow["bills_reserved"]),
+        "next_bill": flow["next_bill"],
+        "bills_shortfall": flow["bills_shortfall"],
+        "days_without_income": flow["days_without_income"],
+        "no_income_warning": flow["days_without_income"] >= stretch_days,
+        "piggy_balance": float(flow["piggy_bank_balance"]),
     }
 
 

@@ -294,3 +294,161 @@ def analytics(
         return summary(user.id, mode, min(anchor or today, today), today)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+# --- Income analytics of the irregular-income mode -------------------------
+
+NO_SOURCE = "Без источника"
+
+
+def _median(values: list[int]) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
+
+
+def _incomes(con, uid: int) -> list[dict]:
+    return [dict(r) for r in con.execute(
+        "SELECT id,tx_date,amount,income_source FROM transactions "
+        "WHERE user_id=? AND type='income' ORDER BY tx_date,id",
+        (uid,),
+    )]
+
+
+def _monthly_stats(by_month: dict[str, int], first: date | None, today: date, count: int) -> dict | None:
+    """Average and median income over the last ``count`` complete months.
+
+    Months before the first income (or the start of the mode) are not
+    counted, so a new user does not get zeros averaged in."""
+    if first is None:
+        return None
+    months = []
+    month = add_months(today.replace(day=1), -1)
+    while len(months) < count and month >= first.replace(day=1):
+        months.append(by_month.get(month.isoformat()[:7], 0))
+        month = add_months(month, -1)
+    if not months:
+        return None
+    return {"months": len(months), "average": amount(sum(months) // len(months)),
+            "median": amount(_median(months))}
+
+
+def _gaps(dates: list[date], since: date, today: date) -> dict:
+    distinct = sorted(set(dates))
+    intervals = [(b - a).days for a, b in zip(distinct, distinct[1:])]
+    # Days without income also count from the start to the first income and
+    # from the latest income to today.
+    points = sorted({since, today, *distinct})
+    longest = max(zip(points, points[1:]), key=lambda pair: (pair[1] - pair[0]).days, default=None)
+    return {
+        "median_interval_days": _median(intervals),
+        "longest_gap": {
+            "days": (longest[1] - longest[0]).days, "from": longest[0].isoformat(), "to": longest[1].isoformat(),
+        } if longest else None,
+    }
+
+
+def income_summary(uid: int, mode: str, anchor: date, today: date | None = None) -> dict:
+    from . import irregular_engine
+
+    today = today or clock.today()
+    mode = "year" if mode == "year" else "month"
+    start, end, label = range_for(uid, mode, anchor)
+    with connect() as con:
+        rows = _incomes(con, uid)
+    settings = irregular_engine.settings_for(uid)
+    started = date.fromisoformat(settings["start_date"]) if settings["start_date"] else None
+
+    by_day: dict[str, int] = defaultdict(int)
+    by_month: dict[str, int] = defaultdict(int)
+    for r in rows:
+        by_day[r["tx_date"]] += cents(r["amount"])
+        by_month[r["tx_date"][:7]] += cents(r["amount"])
+    in_range = [r for r in rows if start.isoformat() <= r["tx_date"] <= end.isoformat()]
+
+    days = []
+    day = start
+    while day <= end and mode == "month":
+        days.append({"date": day.isoformat(), "amount": amount(by_day.get(day.isoformat(), 0))})
+        day += timedelta(days=1)
+    weeks = []
+    week = start - timedelta(days=start.weekday())
+    while week <= end:
+        week_end = week + timedelta(days=6)
+        total = sum(cents(r["amount"]) for r in in_range if week.isoformat() <= r["tx_date"] <= week_end.isoformat())
+        weeks.append({"start": week.isoformat(), "end": week_end.isoformat(), "amount": amount(total)})
+        week += timedelta(days=7)
+    months = []
+    first_month = add_months(end.replace(day=1), -11)
+    for index in range(12):
+        month = add_months(first_month, index)
+        key = month.isoformat()[:7]
+        months.append({"month": key, "label": MONTHS_NOMINATIVE[month.month - 1], "amount": amount(by_month.get(key, 0))})
+
+    sources: dict[str, dict] = {}
+    for r in in_range:
+        title = (r["income_source"] or "").strip() or NO_SOURCE
+        item = sources.setdefault(title.lower(), {"title": title, "cents": 0, "count": 0})
+        item["cents"] += cents(r["amount"])
+        item["count"] += 1
+    total = sum(cents(r["amount"]) for r in in_range)
+
+    dates = [date.fromisoformat(r["tx_date"]) for r in rows if not started or r["tx_date"] >= started.isoformat()]
+    first = min([d for d in (started, dates[0] if dates else None) if d], default=None)
+
+    reserve = irregular_engine.reserve_snapshot(uid)
+    put_aside: dict[str, int] = defaultdict(int)
+    taken = []
+    for m in reserve["movements"]:
+        if not start.isoformat() <= m["date"] <= end.isoformat():
+            continue
+        if m["amount"] >= 0:
+            put_aside[m["kind"]] += cents(m["amount"])
+        else:
+            taken.append({"date": m["date"], "kind": m["kind"], "title": m["title"],
+                          "amount": amount(-cents(m["amount"])), "reason": m["reason"]})
+
+    return {
+        "mode": mode,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "label": label,
+        "previous_anchor": (start - timedelta(days=1)).isoformat(),
+        "next_anchor": (end + timedelta(days=1)).isoformat() if end < today else None,
+        "total": amount(total),
+        "count": len(in_range),
+        "days": days,
+        "weeks": weeks,
+        "months": months,
+        "stats": {"3": _monthly_stats(by_month, first, today, 3), "6": _monthly_stats(by_month, first, today, 6)},
+        "sources": [
+            {"title": s["title"], "amount": amount(s["cents"]), "count": s["count"],
+             "share": round(s["cents"] / total, 4) if total else 0.0}
+            for s in sorted(sources.values(), key=lambda s: -s["cents"])
+        ],
+        **_gaps(dates, first or today, today),
+        "reserve": {
+            "put_aside": amount(sum(put_aside.values())),
+            "put_aside_by_kind": [
+                {"kind": kind, "title": irregular_engine.KIND_TITLES.get(kind, kind), "amount": amount(value)}
+                for kind, value in sorted(put_aside.items(), key=lambda kv: -kv[1])
+            ],
+            "taken": amount(sum(cents(t["amount"]) for t in taken)),
+            "taken_items": taken,
+        },
+    }
+
+
+@router.get("/analytics/income")
+def income_analytics(
+    mode: Mode = "month",
+    anchor: date | None = None,
+    user: TelegramUser = Depends(current_user),
+) -> dict:
+    ensure_user(user.id, user.first_name, user.username)
+    today = clock.today()
+    return income_summary(user.id, mode, min(anchor or today, today), today)

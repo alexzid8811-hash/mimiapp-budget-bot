@@ -760,3 +760,62 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
   .nav-fab small{display:inline;font-size:14px}
   .toast{bottom:24px;left:calc(50% + var(--sidebar-w) / 2)}
 }
+
+/* Irregular-income mode ("Подработки") */
+body:not(.mode-irregular) .irregular-only{display:none !important}
+body.mode-irregular .payroll-only{display:none !important}
+/* Home cards of the payroll mode (card period, buffer, forecast). */
+body.mode-irregular .page[data-page="home"] :is(.money-tiles,.period,.home-buffer,.home-forecast){display:none !important}
+.irr-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.irr-stat{display:flex;flex-direction:column;gap:2px;min-width:0}
+.irr-stat span{color:var(--muted);font-size:13px}
+.irr-stat strong{font-size:20px}
+.irr-stat small{color:var(--muted);font-size:12px}
+.irr-home .warning{margin-top:12px}
+.irr-no-income{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+/* Phone: a floating pill right above "Добавить расход"; it stays out of the nav grid. */
+.nav-income{position:fixed;right:16px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:21;border:0;border-radius:99px;
+  padding:10px 16px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;color:#fff;background:var(--kind-piggy);
+  box-shadow:0 6px 16px color-mix(in srgb,var(--kind-piggy) 40%,transparent);white-space:nowrap}
+body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
+.irr-preview{border-radius:12px;background:var(--surface);padding:10px 12px;font-size:13px;min-height:20px}
+.irr-preview:empty{display:none}
+.irr-preview-parts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.irr-part{display:flex;flex-direction:column;padding:6px 10px;border-radius:10px;background:var(--surface-2)}
+.irr-part span{color:var(--muted);font-size:12px}
+.irr-part.reserve b{color:var(--kind-bills)}
+.irr-part.free b{color:var(--kind-daily)}
+.irr-part.piggy b{color:var(--kind-piggy)}
+.irr-analytics h4{margin:16px 0 6px;font-size:14px}
+.irr-analytics-nav{display:flex;align-items:center;gap:6px}
+.irr-analytics-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.irr-analytics-stats div{display:flex;flex-direction:column;background:var(--surface);border-radius:12px;padding:8px 10px;min-width:0}
+.irr-analytics-stats span,.irr-analytics-stats small{color:var(--muted);font-size:12px}
+.irr-bars{display:flex;align-items:flex-end;gap:4px;height:110px}
+.irr-bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0}
+.irr-bar span{display:block;width:100%;max-width:28px;border-radius:6px 6px 2px 2px;background:var(--kind-piggy)}
+.irr-bar small{color:var(--muted);font-size:10px;margin-top:4px;white-space:nowrap;overflow:hidden;max-width:100%}
+@media (max-width:420px){.irr-stats,.irr-analytics-stats{grid-template-columns:1fr 1fr}.irr-stat strong{font-size:17px}}
+@media(min-width:900px){
+  body.mode-irregular .page[data-page="home"].active,
+  body.mode-irregular .page[data-page="home"].active:has(#overspendPanel.hidden){
+    grid-template-areas:
+      "today today irr irr irr irr"
+      "quick quick irr irr irr irr"
+      "overspend overspend overspend overspend overspend overspend"
+      "recent recent recent bills bills bills";
+  }
+  body.mode-irregular .page[data-page="home"].active:has(#overspendPanel.hidden){
+    grid-template-areas:
+      "today today irr irr irr irr"
+      "quick quick irr irr irr irr"
+      "recent recent recent bills bills bills";
+  }
+  .page[data-page="home"] .irr-home{grid-area:irr;margin:0;align-self:stretch}
+  .irr-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+@media(min-width:1024px){
+  .nav-income{position:static;order:11;width:100%;margin:6px 0 0;padding:10px;border-radius:12px;box-shadow:none}
+  body.mode-irregular .toast{bottom:24px}
+  .page[data-page="analytics"] .irr-analytics{grid-column:1 / -1}
+}
