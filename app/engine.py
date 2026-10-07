@@ -356,12 +356,16 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         v for d, v in extras["unpaid"].items() if max(current.start, start) <= d <= current.end
     )
 
-    rows = []
-    for index, row in enumerate(buffer_rows(inp, result)):
+    def row_dict(row, *, current: bool, past: bool) -> dict:
         funded = row.funded
         payday = row.payday
         card_start = funded.period.start if funded else None
-        rows.append({
+        if funded and not past:
+            daily = funded.daily
+        else:
+            # A closed period: its card money spread over its days.
+            daily = row.to_card // row.card_days if row.card_days else 0
+        return {
             "start": row.start.isoformat(),
             "end": row.end.isoformat(),
             "days": (row.end - row.start).days + 1,
@@ -373,7 +377,8 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "income_overridden": bool(payday and payday in extras["overridden"]),
             # The actual salary can be entered for the current and future
             # card periods; closed periods stay as they were.
-            "received_editable": bool(payday and payday >= start and funded and funded.period.end >= today),
+            "received_editable": bool(not past and payday and payday >= start and funded
+                                      and funded.period.end >= today),
             "override_key": card_start.isoformat() if card_start and payday else None,
             "income_confirmed": bool(payday and payday in extras["confirmed"]),
             # The payday has come, but the user has not confirmed the money
@@ -381,16 +386,25 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "income_pending": bool(payday and payday == extras["waiting"]),
             "mandatory": amount(row.mandatory),
             "to_card": amount(row.to_card),
+            # Money left on the card from the previous period (negative: its
+            # overspend).  The daily amount is (to_card + carry_in) / days.
+            "carry_in": amount(funded.opening - funded.allocation) if funded and not past else 0.0,
             "free": amount(row.received - row.mandatory),
             "card_period": _period_dict(funded.period) if funded else None,
-            "daily": amount(funded.daily) if funded else 0.0,
+            "daily": amount(daily),
             "buffer_start": amount(row.buffer_start),
             "buffer": amount(row.buffer_end),
             "put_aside": amount(max(0, row.buffer_end - row.buffer_start)),
             "take": amount(max(0, row.buffer_start - row.buffer_end)),
             "shortfall": amount(max(0, -row.lowest)),
-            "current": index == 0,
-        })
+            "current": current,
+            "past": past,
+        }
+
+    rows = [row_dict(row, current=index == 0, past=False)
+            for index, row in enumerate(buffer_rows(inp, result))]
+    past_rows = [row_dict(row, current=False, past=True)
+                 for row in buffer_rows(inp, result, past=True)]
 
     next_income = next(
         ({"date": d.isoformat(), "income": amount(v)}
@@ -451,4 +465,5 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "next_income": next_income,
         "reason": reason,
         "periods": rows,
+        "past_periods": past_rows,
     }

@@ -860,3 +860,30 @@ def test_unconfirmed_payday_does_not_create_false_shortfall_for_bills_right_afte
     monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
     assert before['buffer_balance'] == yesterday['buffer_balance']
     assert before['pending_card_allocation'] == 0
+
+
+def test_entering_amount_of_a_payday_that_came_confirms_it(client, monkeypatch):
+    with connect() as con:
+        con.execute("UPDATE income_rules SET amount=20000 WHERE user_id=1 AND kind='advance'")
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    row = advance_row(cashflow_snapshot(1))
+    assert row['income_pending'] is True
+    # «Изменить» sends no "confirmed" flag: the actual amount still confirms.
+    assert client.put(f"/api/cashflow/income-overrides/{row['override_key']}",
+                      json={'amount': 19500}).status_code == 200
+    after = cashflow_snapshot(1)
+    assert after['payday_waiting'] is None
+    assert advance_row(after)['income_confirmed'] is True
+
+
+def test_plan_lists_closed_periods_and_explains_daily_amount(client, monkeypatch):
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 25))
+    snapshot = cashflow_snapshot(1)
+    past = snapshot['past_periods']
+    assert past and all(p['past'] and not p['received_editable'] for p in past)
+    assert past[-1]['end'] < snapshot['periods'][0]['start']
+    assert past[0]['start'] == '2026-09-01'
+    for row in snapshot['periods'][1:3]:
+        # The daily amount spreads the card money plus the carry-over.
+        days = row['card_period']['days']
+        assert row['daily'] == pytest.approx((row['to_card'] + row['carry_in']) / days, abs=0.01 * days)

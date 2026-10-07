@@ -298,14 +298,20 @@ class BufferRow:
     buffer_end: int
     lowest: int
     funded: PeriodForecast | None
+    card_days: int = 0  # days of the card periods funded in this row
 
 
-def buffer_rows(inp: LedgerInput, result: LedgerResult) -> list[BufferRow]:
-    """Buffer periods by actual paydays, from the current one to the horizon."""
+def buffer_rows(inp: LedgerInput, result: LedgerResult, *, past: bool = False) -> list[BufferRow]:
+    """Buffer periods by actual paydays, from the current one to the horizon.
+    With ``past`` the closed periods from the calculation start up to (but not
+    including) the current one."""
     paydays = sorted(set(inp.paydays))
     previous = [p for p in paydays if p <= inp.today]
     first = max(inp.start, previous[-1]) if previous else inp.start
-    starts = [first] + [p for p in paydays if first < p <= inp.horizon]
+    if past:
+        starts = [inp.start] + [p for p in paydays if inp.start < p < first] if inp.start < first else []
+    else:
+        starts = [first] + [p for p in paydays if first < p <= inp.horizon]
     rows: list[BufferRow] = []
     for row_start in starts:
         next_payday = next(p for p in paydays if p > row_start)
@@ -320,6 +326,7 @@ def buffer_rows(inp: LedgerInput, result: LedgerResult) -> list[BufferRow]:
             mandatory=sum(inp.bills_out.get(d, 0) for d in days),
             to_card=sum(result.allocations[p.start] for p in result.periods
                         if row_start <= p.funded_on <= row_end),
+            card_days=sum(p.days for p in result.periods if row_start <= p.funded_on <= row_end),
             buffer_start=(inp.start_capital if row_start == inp.start
                           else result.buffer_end[row_start - ONE_DAY]),
             buffer_end=result.buffer_end[row_end],

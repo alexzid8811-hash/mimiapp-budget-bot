@@ -277,6 +277,27 @@ test('future received amount can be edited and sent for budget recalculation', a
  assert.deepEqual(JSON.parse(request.body),{amount:41000});
 });
 
+test('closed periods are hidden behind a toggle; the carry-over explains the daily amount', async () => {
+ const {get,responses}=setup();
+ responses['/api/cashflow'].periods=[
+  {start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',received:58124.16,mandatory:39900,free:18224.16,to_card:20880.45,carry_in:1124.66,daily:1467,put_aside:0,take:0,buffer:17908.09}
+ ];
+ responses['/api/cashflow'].past_periods=[
+  {start:'2026-09-23',end:'2026-10-06',kind:'Старт',days:14,payday:'2026-09-23',received:39395.86,mandatory:27700,free:11695.86,to_card:20269.95,carry_in:0,daily:1351.33,put_aside:0,take:8574.09,buffer:20564.38,past:true}
+ ];
+ await get('refreshBtn').listeners.click();
+ assert.equal(get('bufPastToggle').hidden,false);
+ assert.match(get('bufPastToggle').textContent,/Показать прошлые периоды \(1\)/);
+ assert.doesNotMatch(get('bufferPeriods').innerHTML,/23 сент/);
+ assert.match(get('bufferPeriods').innerHTML,/1.124,66.₽ остаток прошлого периода/);
+ get('bufPastToggle').listeners.click();
+ assert.match(get('bufferPeriods').innerHTML,/<tr class="past">[\s\S]*23 сент/);
+ assert.match(get('planCards').innerHTML,/<article class="pc past">/);
+ // The current period stays highlighted after the closed ones.
+ assert.match(get('bufferPeriods').innerHTML,/<tr class="cur">[\s\S]*7 окт/);
+ assert.match(get('bufPastToggle').textContent,/Скрыть прошлые периоды/);
+});
+
 test('payout due today can be confirmed with the received amount', async () => {
  const {sandbox,get,requests,responses}=setup();
  responses['/api/cashflow'].periods=[
