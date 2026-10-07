@@ -107,7 +107,10 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
     for day, item in schedule["paydays"].items():
         value = overrides.get(day, item["amount"])
         payday_amount[day] = value
-        if start <= day <= data_end and day != waiting:
+        # An unconfirmed payday still counts with its calculated amount: the
+        # plan stays as it was, and only the card money it funds is not
+        # stored until the user confirms the actual amount (see ``stored``).
+        if start <= day <= data_end:
             _add(buffer_in, day, value)
     # Non-payday scheduled income (vacation pay, "other" income rules) is a
     # forecast like salary/advance: once its date is today or in the past, it
