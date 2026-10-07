@@ -74,8 +74,15 @@ def morning_report_text(report: dict) -> str:
     )
     if report.get("mode") == "irregular":
         return irregular_report_text(report, spending, change)
-    lines = [
-        f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}",
+    if report.get("resend"):
+        title = "✅ Зарплата подтверждена — бюджет пересчитан"
+    else:
+        title = f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}"
+    lines = [title]
+    if report.get("payday_waiting"):
+        lines.extend(["", "⏳ Выплата ещё не подтверждена — суммы посчитаны без неё. "
+                          "Когда деньги придут, нажмите «Получил ✓» в приложении."])
+    lines += [
         "", spending, "",
         f"До конца периода: {report['period_days_left']} дн. · осталось {money(report['period_remaining'])} ₽",
         f"На день сегодня: {money(report['daily_amount'])} ₽",

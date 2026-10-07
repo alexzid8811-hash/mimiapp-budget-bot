@@ -65,7 +65,7 @@
     const value = `<span>${formatMoney(period.received)}</span>`;
     if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
     const badge = period.income_confirmed ? '<small class="edited-badge">получено ✓</small>'
-      : period.income_pending ? '<small class="edited-badge pending">ожидается</small>'
+      : period.income_pending ? `<small class="edited-badge pending">ждём ${formatMoney(period.payday_amount)}</small>`
         : period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
     const edit = `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
     if (!period.income_pending) return edit;

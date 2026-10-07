@@ -5,6 +5,7 @@ import sqlite3
 from contextlib import closing, contextmanager
 from contextvars import ContextVar, Token
 from pathlib import Path
+from . import clock
 
 
 SCHEMA = """
@@ -298,10 +299,20 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
         # account balance and the buffer contradict each other.
         "cashflow_start_capital": "REAL",
         "morning_report_time": "TEXT NOT NULL DEFAULT '09:00'",
+        # Paydays from this date on count only once the user confirmed the
+        # money arrived (NULL: every payday counts on its date).
+        "payday_confirm_from": "TEXT",
+        # 1 when today's morning report was sent before the payday was
+        # confirmed and has to be sent again with the new numbers.
+        "morning_report_resend": "INTEGER NOT NULL DEFAULT 0",
     }
     for name, ddl in additions.items():
         if name not in columns:
             con.execute(f"ALTER TABLE settings ADD COLUMN {name} {ddl}")
+    con.execute(
+        "UPDATE settings SET payday_confirm_from=? WHERE payday_confirm_from IS NULL",
+        (clock.today().isoformat(),),
+    )
     # One-time migration for existing databases.  The old vacation reserve
     # was money already present at the cash-flow start, so fold it into the
     # new start-capital field exactly once.  NULL marks an unmigrated row.
@@ -504,7 +515,10 @@ def ensure_user(user_id: int, first_name: str = "", username: str | None = None)
             "ON CONFLICT(id) DO UPDATE SET first_name=excluded.first_name, username=excluded.username",
             (user_id, first_name, username),
         )
-        con.execute("INSERT OR IGNORE INTO settings(user_id) VALUES(?)", (user_id,))
+        con.execute(
+            "INSERT OR IGNORE INTO settings(user_id,payday_confirm_from) VALUES(?,?)",
+            (user_id, clock.today().isoformat()),
+        )
 
         count = con.execute("SELECT COUNT(*) FROM categories WHERE user_id=?", (user_id,)).fetchone()[0]
         if count == 0:

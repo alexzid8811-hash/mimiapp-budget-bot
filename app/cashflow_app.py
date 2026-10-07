@@ -159,7 +159,8 @@ def save_cashflow_income_override(
     starting on ``period_start``.  It replaces the forecast for this and every
     later calculation; closed periods are not editable."""
     uid = legacy.user_ready(user)
-    if editable_payday_row(uid, period_start) is None:
+    row = editable_payday_row(uid, period_start)
+    if row is None:
         raise HTTPException(422, "Фактическую сумму можно ввести только для текущей или будущей выплаты")
     # Lock in the money already shown for every earlier period before this
     # edit can change the plan, so the edit only ever affects this period and
@@ -173,6 +174,15 @@ def save_cashflow_income_override(
             "updated_at=CURRENT_TIMESTAMP",
             (uid, period_start.isoformat(), payload.amount, int(payload.confirmed)),
         )
+        if payload.confirmed and row["income_pending"]:
+            # Today's morning report was built without this money: send it
+            # again with the new numbers (if it has already gone out).
+            sent = con.execute(
+                "SELECT 1 FROM morning_reports WHERE user_id=? AND report_date=?",
+                (uid, clock.today().isoformat()),
+            ).fetchone()
+            if sent:
+                con.execute("UPDATE settings SET morning_report_resend=1 WHERE user_id=?", (uid,))
     return get_buffer(user)
 
 
