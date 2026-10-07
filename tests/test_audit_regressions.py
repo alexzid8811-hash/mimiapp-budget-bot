@@ -753,3 +753,33 @@ def test_morning_report_matches_home_screen_without_start_capital(client):
     assert home['daily_available'] > 0
     assert report['daily_amount'] == home['daily_available']
     assert report['period_remaining'] == home['remaining']
+
+
+def test_confirming_received_payout_saves_amount_and_marks_it_received(client, monkeypatch):
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    before = advance_row(cashflow_snapshot(1))
+    assert before['income_pending'] is True
+    assert before['income_confirmed'] is False
+
+    response = client.put(f"/api/cashflow/income-overrides/{before['override_key']}",
+                          json={'amount': 41000, 'confirmed': True})
+    assert response.status_code == 200
+    after = advance_row(cashflow_snapshot(1))
+    assert after['payday_amount'] == 41000
+    assert after['income_confirmed'] is True
+    assert after['income_pending'] is False
+
+    # A later amount correction keeps the payout confirmed.
+    client.put(f"/api/cashflow/income-overrides/{before['override_key']}", json={'amount': 40000})
+    again = advance_row(cashflow_snapshot(1))
+    assert again['payday_amount'] == 40000
+    assert again['income_confirmed'] is True
+
+    backup = export_user_data(1)
+    assert backup['data']['cashflow_income_overrides'][0]['confirmed'] == 1
+
+
+def test_future_payout_is_not_pending_confirmation(client):
+    future = advance_row(cashflow_snapshot(1))
+    assert future['payday'] > '2026-09-15'
+    assert future['income_pending'] is False

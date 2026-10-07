@@ -49,6 +49,8 @@ class PiggyToCardIn(APIModel):
 
 class CashflowIncomeOverrideIn(APIModel):
     amount: float = Field(ge=0)
+    # True when the user confirms the payout actually arrived.
+    confirmed: bool = False
 
 
 def today_numbers(user_id: int) -> dict:
@@ -165,10 +167,11 @@ def save_cashflow_income_override(
     engine.freeze_allocations_before(uid, period_start)
     with legacy.connect() as con:
         con.execute(
-            "INSERT INTO cashflow_income_overrides(user_id,period_start,amount) VALUES(?,?,?) "
+            "INSERT INTO cashflow_income_overrides(user_id,period_start,amount,confirmed) VALUES(?,?,?,?) "
             "ON CONFLICT(user_id,period_start) DO UPDATE SET "
-            "amount=excluded.amount,updated_at=CURRENT_TIMESTAMP",
-            (uid, period_start.isoformat(), payload.amount),
+            "amount=excluded.amount,confirmed=MAX(confirmed,excluded.confirmed),"
+            "updated_at=CURRENT_TIMESTAMP",
+            (uid, period_start.isoformat(), payload.amount, int(payload.confirmed)),
         )
     return get_buffer(user)
 

@@ -48,24 +48,32 @@ def payday_schedule(uid: int, start: date, end: date) -> dict:
     return {"paydays": paydays, "other": other}
 
 
-def income_overrides(uid: int, paydays: set[date]) -> dict[date, int]:
-    """Actual payday amounts by payday.
+def income_overrides(uid: int, paydays: set[date]) -> tuple[dict[date, int], set[date]]:
+    """Actual payday amounts by payday and the paydays confirmed as received.
 
     Rows are keyed by the first day of the card period (payday + 1).  Very old
     backups stored the payday itself; both forms are accepted.
     """
     with connect() as con:
         rows = [dict(r) for r in con.execute(
-            "SELECT period_start,amount FROM cashflow_income_overrides WHERE user_id=?", (uid,)
+            "SELECT period_start,amount,confirmed FROM cashflow_income_overrides WHERE user_id=?", (uid,)
         )]
     result: dict[date, int] = {}
+    confirmed: set[date] = set()
     for row in sorted(rows, key=lambda r: r["period_start"]):
         stored = date.fromisoformat(row["period_start"])
         if stored - timedelta(days=1) in paydays:
-            result[stored - timedelta(days=1)] = cents(row["amount"])
+            day = stored - timedelta(days=1)
         elif stored in paydays and stored not in result:
-            result[stored] = cents(row["amount"])
-    return result
+            day = stored
+        else:
+            continue
+        result[day] = cents(row["amount"])
+        if row["confirmed"]:
+            confirmed.add(day)
+        else:
+            confirmed.discard(day)
+    return result, confirmed
 
 
 def build_input(uid: int, *, start: date, capital: float, months: int, today: date) -> tuple[LedgerInput, dict]:
@@ -73,7 +81,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
     data_end = add_months(horizon, months)
     schedule = payday_schedule(uid, start - MARGIN, data_end + MARGIN)
     paydays = sorted(schedule["paydays"])
-    overrides = income_overrides(uid, set(paydays))
+    overrides, confirmed = income_overrides(uid, set(paydays))
 
     buffer_in: dict[date, int] = {}
     payday_amount: dict[date, int] = {}
@@ -177,6 +185,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         "planned_payday": {day: item["amount"] for day, item in schedule["paydays"].items()},
         "payday_amount": payday_amount,
         "overridden": set(overrides),
+        "confirmed": confirmed,
         "reserved": reserved,
         "unpaid": unpaid,
     }
@@ -314,6 +323,13 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             # card periods; closed periods stay as they were.
             "received_editable": bool(payday and payday >= start and funded and funded.period.end >= today),
             "override_key": card_start.isoformat() if card_start and payday else None,
+            "income_confirmed": bool(payday and payday in extras["confirmed"]),
+            # The payday has come, but the user has not confirmed the money
+            # yet: the plan still uses the forecast amount.
+            "income_pending": bool(
+                payday and payday <= today and payday not in extras["confirmed"]
+                and payday >= start and funded and funded.period.end >= today
+            ),
             "mandatory": amount(row.mandatory),
             "to_card": amount(row.to_card),
             "free": amount(row.received - row.mandatory),

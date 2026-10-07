@@ -167,6 +167,7 @@ class CardAllocation(Record):
 class CashflowIncomeOverride(Record):
     period_start: date
     amount: float = Field(ge=0)
+    confirmed: bool = False
     updated_at: datetime | None = None
 
 

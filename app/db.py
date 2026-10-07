@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS cashflow_income_overrides (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     period_start TEXT NOT NULL,
     amount REAL NOT NULL CHECK(amount >= 0),
+    confirmed INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, period_start)
 );
@@ -337,6 +338,10 @@ def _ensure_payment_columns(con: sqlite3.Connection) -> None:
             "ALTER TABLE piggy_bank_movements ADD COLUMN income_transaction_id INTEGER "
             "REFERENCES transactions(id) ON DELETE CASCADE"
         )
+    override_columns = {row[1] for row in con.execute("PRAGMA table_info(cashflow_income_overrides)").fetchall()}
+    if "confirmed" not in override_columns:
+        # 1 once the user confirmed the payout actually arrived.
+        con.execute("ALTER TABLE cashflow_income_overrides ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0")
     con.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_piggy_income_transaction "
         "ON piggy_bank_movements(user_id, income_transaction_id) "
