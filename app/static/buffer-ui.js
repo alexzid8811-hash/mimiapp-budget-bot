@@ -64,8 +64,15 @@
   function receivedMarkup(period, compact = false) {
     const value = `<span>${formatMoney(period.received)}</span>`;
     if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
-    const badge = period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
-    return `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
+    const badge = period.income_confirmed ? '<small class="edited-badge">получено ✓</small>'
+      : period.income_pending ? `<small class="edited-badge pending">ждём ${formatMoney(period.payday_amount)}</small>`
+        : period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
+    const edit = `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
+    if (!period.income_pending) return edit;
+    // The payday has come but the money is not confirmed yet: offer to enter
+    // the amount actually received right next to "Изменить".
+    const confirm = `<button class="confirm-income" type="button" onclick="confirmCashflowIncome('${period.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`;
+    return `<span class="received-cell">${edit}${confirm}</span>`;
   }
 
   function renderBuffer() {
@@ -134,28 +141,38 @@
     }).join("");
   }
 
-  window.editCashflowIncome = overrideKey => {
+  function openIncomeDialog(overrideKey, confirm) {
     const period = bufferState.buffer?.periods?.find(item => item.override_key === overrideKey);
     if (!period?.received_editable) return;
+    document.getElementById("cashflowIncomeForm").dataset.mode = confirm ? "confirm" : "edit";
+    setText("cashflowIncomeTitle", confirm ? "Подтвердить получение" : "Фактическая сумма выплаты");
+    setText("cashflowIncomeLabel", confirm ? "Сколько пришло" : "Получено фактически");
+    setText("saveCashflowIncomeBtn", confirm ? "Получил, пересчитать" : "Сохранить и пересчитать");
     document.getElementById("cashflowIncomePeriodStart").value = period.override_key;
     document.getElementById("cashflowIncomeAmount").value = period.payday_amount;
     document.getElementById("cashflowIncomeCaption").textContent =
-      `${safe(period.kind)} ${formatDate(period.payday)} · по расчёту ${formatMoney(period.planned_payday_amount)}`;
-    document.getElementById("resetCashflowIncomeBtn").hidden = !period.income_overridden;
+      `${period.kind} ${formatDate(period.payday)} · по расчёту ${formatMoney(period.planned_payday_amount)}`;
+    document.getElementById("resetCashflowIncomeBtn").hidden = confirm || !period.income_overridden;
     document.getElementById("cashflowIncomeDialog").showModal();
-  };
+  }
+
+  window.editCashflowIncome = overrideKey => openIncomeDialog(overrideKey, false);
+  window.confirmCashflowIncome = overrideKey => openIncomeDialog(overrideKey, true);
 
   document.getElementById("cashflowIncomeForm")?.addEventListener("submit", async event => {
     event.preventDefault();
     const periodStart = document.getElementById("cashflowIncomePeriodStart").value;
     const raw = document.getElementById("cashflowIncomeAmount").value;
     const amount = window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(raw) : Number(raw);
+    const confirm = document.getElementById("cashflowIncomeForm").dataset.mode === "confirm";
     try {
       await request(`/api/cashflow/income-overrides/${periodStart}`, {
-        method: "PUT", body: JSON.stringify({ amount }),
+        method: "PUT", body: JSON.stringify(confirm ? { amount, confirmed: true } : { amount }),
       });
       document.getElementById("cashflowIncomeDialog").close();
-      if (typeof toast === "function") toast("Сумма выплаты изменена, бюджет пересчитан");
+      if (typeof toast === "function") {
+        toast(confirm ? "Получение подтверждено, бюджет пересчитан" : "Сумма выплаты изменена, бюджет пересчитан");
+      }
       await loadAll();
     } catch (error) {
       if (typeof toast === "function") toast(error.message);

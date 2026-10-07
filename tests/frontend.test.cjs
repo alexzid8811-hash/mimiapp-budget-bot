@@ -277,6 +277,24 @@ test('future received amount can be edited and sent for budget recalculation', a
  assert.deepEqual(JSON.parse(request.body),{amount:41000});
 });
 
+test('payout due today can be confirmed with the received amount', async () => {
+ const {sandbox,get,requests,responses}=setup();
+ responses['/api/cashflow'].periods=[
+  {start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',received:61199.72,planned_received:61199.72,received_editable:true,income_overridden:false,income_pending:true,income_confirmed:false,override_key:'2026-10-08',payday_amount:61199.72,planned_payday_amount:61199.72,mandatory:39900,free:21299.72,daily:1479.29,put_aside:0,take:0,buffer:20602.35,to_card:21261.75}
+ ];
+ await get('refreshBtn').listeners.click();
+ assert.match(get('planCards').innerHTML,/confirmCashflowIncome\('2026-10-08'\)/);
+ assert.match(get('planCards').innerHTML,/editCashflowIncome\('2026-10-08'\)/);
+
+ sandbox.window.confirmCashflowIncome('2026-10-08');
+ assert.equal(get('cashflowIncomeAmount').value,61199.72);
+ get('cashflowIncomeAmount').value='58000';
+ await get('cashflowIncomeForm').listeners.submit({preventDefault(){}});
+
+ const request=requests.find(row=>row.url==='/api/cashflow/income-overrides/2026-10-08');
+ assert.deepEqual(JSON.parse(request.body),{amount:58000,confirmed:true});
+});
+
 test('overspend panel appears with a positive overspend and the spread button hides it', async () => {
  const {get,responses}=setup();
  Object.assign(responses['/api/cashflow'],{overspend:1000,available_today:-1000,today_target:100});

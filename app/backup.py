@@ -60,7 +60,7 @@ TABLE_COLUMNS = {
         "id", "direction", "amount", "movement_date", "note", "source", "purpose",
         "bill_payment_id", "income_transaction_id", "created_at",
     ),
-    "cashflow_income_overrides": ("id", "period_start", "amount", "updated_at"),
+    "cashflow_income_overrides": ("id", "period_start", "amount", "confirmed", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
     "card_allocations": ("id", "period_start", "funded_on", "amount"),
     "payroll_changes": ("id", "effective_month", "salary_gross", "bonus_gross", "created_at"),
@@ -247,9 +247,9 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             for row in data["cashflow_income_overrides"]:
                 con.execute(
                     "INSERT INTO cashflow_income_overrides"
-                    "(user_id,period_start,amount,updated_at) VALUES(?,?,?,?)",
+                    "(user_id,period_start,amount,confirmed,updated_at) VALUES(?,?,?,?,?)",
                     (
-                        user_id, row["period_start"], row["amount"],
+                        user_id, row["period_start"], row["amount"], int(bool(row.get("confirmed"))),
                         row.get("updated_at") or datetime.now(timezone.utc).isoformat(),
                     ),
                 )

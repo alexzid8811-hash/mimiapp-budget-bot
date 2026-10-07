@@ -468,12 +468,12 @@
 
   <dialog id="cashflowIncomeDialog">
     <form method="dialog" id="cashflowIncomeForm" class="dialog-card">
-      <div class="section-head"><h2>Фактическая сумма выплаты</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <div class="section-head"><h2 id="cashflowIncomeTitle">Фактическая сумма выплаты</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <input id="cashflowIncomePeriodStart" type="hidden" />
       <p id="cashflowIncomeCaption" class="muted"></p>
-      <label>Получено фактически<input id="cashflowIncomeAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label><span id="cashflowIncomeLabel">Получено фактически</span><input id="cashflowIncomeAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <p class="muted">После сохранения приложение автоматически пересчитает дневной лимит, свободные деньги и остаток буфера во всех следующих периодах.</p>
-      <div class="dialog-actions"><button class="secondary" id="resetCashflowIncomeBtn" type="button">Вернуть расчёт</button><button class="primary big" value="default">Сохранить и пересчитать</button></div>
+      <div class="dialog-actions"><button class="secondary" id="resetCashflowIncomeBtn" type="button">Вернуть расчёт</button><button class="primary big" value="default" id="saveCashflowIncomeBtn">Сохранить и пересчитать</button></div>
     </form>
   </dialog>
 

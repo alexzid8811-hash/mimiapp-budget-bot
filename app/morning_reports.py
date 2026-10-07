@@ -65,13 +65,17 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
     current_time = now.strftime("%H:%M")
     with connect() as con:
         setting = con.execute(
-            "SELECT morning_report_time FROM settings WHERE user_id=?", (user_id,)
+            "SELECT morning_report_time,morning_report_resend FROM settings WHERE user_id=?", (user_id,)
         ).fetchone()
         sent = con.execute(
             "SELECT 1 FROM morning_reports WHERE user_id=? AND report_date=?",
             (user_id, today.isoformat()),
         ).fetchone()
-    if setting is None or sent or current_time < setting["morning_report_time"]:
+    if setting is None:
+        return None
+    # After the payday is confirmed, today's report goes out once more.
+    resend = bool(sent and setting["morning_report_resend"])
+    if (sent and not resend) or (not sent and current_time < setting["morning_report_time"]):
         return None
     with connect() as con:
         # Keep every operation separate. A grouped category can hide a
@@ -92,7 +96,10 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
     from . import irregular_engine  # local import: optional mode
 
     if irregular_engine.is_irregular(user_id):
-        return _irregular_report(user_id, today, yesterday, expenses, previous)
+        report = _irregular_report(user_id, today, yesterday, expenses, previous)
+        if report is None and resend:
+            _clear_resend(user_id)
+        return report
 
     # The same calculation as the home screen: with the start capital
     # switched off it still runs from the latest payday.
@@ -104,6 +111,10 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
     return {
         "user_id": user_id,
         "report_date": today,
+        "resend": resend,
+        # The payday has come, but the money is not confirmed yet: the
+        # numbers are calculated as if it has not arrived.
+        "payday_waiting": flow.get("payday_waiting"),
         "yesterday": yesterday,
         "expenses": expenses,
         "spent_total": round(sum(float(item["amount"]) for item in expenses), 2),
@@ -159,9 +170,17 @@ def _irregular_report(user_id: int, today: date, yesterday: date, expenses: list
     }
 
 
+def _clear_resend(user_id: int) -> None:
+    with connect() as con:
+        con.execute("UPDATE settings SET morning_report_resend=0 WHERE user_id=?", (user_id,))
+
+
 def record_morning_report(report: dict) -> None:
     with user_scope(report["user_id"]), connect() as con:
         con.execute(
-            "INSERT OR IGNORE INTO morning_reports(user_id,report_date,daily_amount,daily_limit) VALUES(?,?,?,?)",
+            "INSERT INTO morning_reports(user_id,report_date,daily_amount,daily_limit) VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id,report_date) DO UPDATE SET daily_amount=excluded.daily_amount,"
+            "daily_limit=excluded.daily_limit,sent_at=CURRENT_TIMESTAMP",
             (report["user_id"], report["report_date"].isoformat(), report["daily_amount"], report["daily_limit"]),
         )
+        con.execute("UPDATE settings SET morning_report_resend=0 WHERE user_id=?", (report["user_id"],))

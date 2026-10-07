@@ -15,8 +15,8 @@ MARGIN = timedelta(days=62)
 def settings_for(uid: int) -> dict:
     with connect() as con:
         row = con.execute(
-            "SELECT cashflow_enabled,cashflow_start_date,cashflow_start_capital,forecast_months "
-            "FROM settings WHERE user_id=?",
+            "SELECT cashflow_enabled,cashflow_start_date,cashflow_start_capital,forecast_months,"
+            "payday_confirm_from FROM settings WHERE user_id=?",
             (uid,),
         ).fetchone()
     data = dict(row) if row else {}
@@ -25,6 +25,7 @@ def settings_for(uid: int) -> dict:
         "start_date": data.get("cashflow_start_date") or clock.today().isoformat(),
         "start_capital": float(data.get("cashflow_start_capital") or 0),
         "forecast_months": int(data.get("forecast_months") or 4),
+        "payday_confirm_from": data.get("payday_confirm_from"),
     }
 
 
@@ -48,39 +49,65 @@ def payday_schedule(uid: int, start: date, end: date) -> dict:
     return {"paydays": paydays, "other": other}
 
 
-def income_overrides(uid: int, paydays: set[date]) -> dict[date, int]:
-    """Actual payday amounts by payday.
+def income_overrides(uid: int, paydays: set[date]) -> tuple[dict[date, int], set[date]]:
+    """Actual payday amounts by payday and the paydays confirmed as received.
 
     Rows are keyed by the first day of the card period (payday + 1).  Very old
     backups stored the payday itself; both forms are accepted.
     """
     with connect() as con:
         rows = [dict(r) for r in con.execute(
-            "SELECT period_start,amount FROM cashflow_income_overrides WHERE user_id=?", (uid,)
+            "SELECT period_start,amount,confirmed FROM cashflow_income_overrides WHERE user_id=?", (uid,)
         )]
     result: dict[date, int] = {}
+    confirmed: set[date] = set()
     for row in sorted(rows, key=lambda r: r["period_start"]):
         stored = date.fromisoformat(row["period_start"])
         if stored - timedelta(days=1) in paydays:
-            result[stored - timedelta(days=1)] = cents(row["amount"])
+            day = stored - timedelta(days=1)
         elif stored in paydays and stored not in result:
-            result[stored] = cents(row["amount"])
-    return result
+            day = stored
+        else:
+            continue
+        result[day] = cents(row["amount"])
+        if row["confirmed"]:
+            confirmed.add(day)
+        else:
+            confirmed.discard(day)
+    return result, confirmed
 
 
-def build_input(uid: int, *, start: date, capital: float, months: int, today: date) -> tuple[LedgerInput, dict]:
+def unconfirmed_payday(paydays: list[date], confirmed: set[date], *,
+                       start: date, today: date, confirm_from: str | None) -> date | None:
+    """The latest payday that has come but whose money the user has not
+    confirmed yet.  Until confirmation the budget treats it as not received.
+    Only the latest one: once the next payday comes, the old one counts."""
+    if not confirm_from:
+        return None
+    came = [d for d in paydays if d <= today]
+    if not came:
+        return None
+    latest = came[-1]
+    if latest < max(start, date.fromisoformat(confirm_from)) or latest in confirmed:
+        return None
+    return latest
+
+
+def build_input(uid: int, *, start: date, capital: float, months: int, today: date,
+                confirm_from: str | None = None) -> tuple[LedgerInput, dict]:
     horizon = add_months(today, months)
     data_end = add_months(horizon, months)
     schedule = payday_schedule(uid, start - MARGIN, data_end + MARGIN)
     paydays = sorted(schedule["paydays"])
-    overrides = income_overrides(uid, set(paydays))
+    overrides, confirmed = income_overrides(uid, set(paydays))
+    waiting = unconfirmed_payday(paydays, confirmed, start=start, today=today, confirm_from=confirm_from)
 
     buffer_in: dict[date, int] = {}
     payday_amount: dict[date, int] = {}
     for day, item in schedule["paydays"].items():
         value = overrides.get(day, item["amount"])
         payday_amount[day] = value
-        if start <= day <= data_end:
+        if start <= day <= data_end and day != waiting:
             _add(buffer_in, day, value)
     # Non-payday scheduled income (vacation pay, "other" income rules) is a
     # forecast like salary/advance: once its date is today or in the past, it
@@ -148,10 +175,14 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
                 _add(card_cover, day, value)
             else:
                 _add(card_in, day, value)
+        # The card money funded on an unconfirmed payday is recalculated
+        # until the payday is confirmed.
         stored = {
             date.fromisoformat(r["period_start"]): cents(r["amount"])
             for r in con.execute(
-                "SELECT period_start,amount FROM card_allocations WHERE user_id=?", (uid,)
+                "SELECT period_start,amount FROM card_allocations WHERE user_id=? "
+                "AND funded_on IS NOT ?",
+                (uid, waiting.isoformat() if waiting else None),
             )
         }
 
@@ -177,6 +208,8 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         "planned_payday": {day: item["amount"] for day, item in schedule["paydays"].items()},
         "payday_amount": payday_amount,
         "overridden": set(overrides),
+        "confirmed": confirmed,
+        "waiting": waiting,
         "reserved": reserved,
         "unpaid": unpaid,
     }
@@ -208,6 +241,14 @@ def forget_allocations(uid: int, from_day: date | None = None) -> None:
             )
 
 
+def forget_funded_on(uid: int, day: date) -> None:
+    """Drop stored card money funded on ``day`` (an unconfirmed payday)."""
+    with connect() as con:
+        con.execute(
+            "DELETE FROM card_allocations WHERE user_id=? AND funded_on=?", (uid, day.isoformat())
+        )
+
+
 def piggy_balance(uid: int) -> float:
     with connect() as con:
         row = con.execute(
@@ -237,7 +278,8 @@ def _run(uid: int, *, force_enabled: bool = False) -> tuple[LedgerInput, dict, d
         recent = [d for d in payday_schedule(uid, today - MARGIN, today)["paydays"] if d <= today]
         start, capital = (max(recent) if recent else today), 0.0
 
-    inp, extras = build_input(uid, start=start, capital=capital, months=months, today=today)
+    inp, extras = build_input(uid, start=start, capital=capital, months=months, today=today,
+                              confirm_from=settings["payday_confirm_from"])
     return inp, extras, today, start, settings, enabled
 
 
@@ -256,7 +298,8 @@ def freeze_allocations_before(uid: int, boundary: date) -> None:
     result = run_ledger(inp)
     frozen = {
         period.start: (period.funded_on, result.allocations[period.start])
-        for period in result.periods if period.start < boundary
+        for period in result.periods
+        if period.start < boundary and period.funded_on != _extras["waiting"]
     }
     with connect() as con:
         con.execute("DELETE FROM card_allocations WHERE user_id=?", (uid,))
@@ -269,7 +312,12 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     inp, extras, today, start, settings, enabled = _run(uid, force_enabled=force_enabled)
     result = run_ledger(inp)
     if enabled:
-        store_allocations(uid, result.to_store)
+        if extras["waiting"]:
+            forget_funded_on(uid, extras["waiting"])
+        store_allocations(uid, {
+            start_day: value for start_day, value in result.to_store.items()
+            if value[0] != extras["waiting"]
+        })
 
     current = result.current
     days_left = (current.end - today).days + 1
@@ -314,6 +362,10 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             # card periods; closed periods stay as they were.
             "received_editable": bool(payday and payday >= start and funded and funded.period.end >= today),
             "override_key": card_start.isoformat() if card_start and payday else None,
+            "income_confirmed": bool(payday and payday in extras["confirmed"]),
+            # The payday has come, but the user has not confirmed the money
+            # yet: the plan still uses the forecast amount.
+            "income_pending": bool(payday and payday == extras["waiting"]),
             "mandatory": amount(row.mandatory),
             "to_card": amount(row.to_card),
             "free": amount(row.received - row.mandatory),
@@ -349,6 +401,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "today": today.isoformat(),
         "start_date": start.isoformat(),
         "horizon_end": inp.horizon.isoformat(),
+        "payday_waiting": extras["waiting"].isoformat() if extras["waiting"] else None,
         "period": {
             **_period_dict(current),
             "days_left": days_left,
