@@ -804,7 +804,8 @@ def test_unconfirmed_payday_is_not_counted_until_confirmed(client, monkeypatch):
     confirmed = cashflow_snapshot(1)
     assert confirmed['payday_waiting'] is None
     assert advance_row(confirmed)['received'] == 21000
-    assert confirmed['available_cash'] == round(waiting['available_cash'] + 1000, 2)
+    # The balances change only after «Получил ✓», by the whole amount.
+    assert confirmed['available_cash'] == round(waiting['available_cash'] + 21000, 2)
     with connect() as con:
         assert con.execute("SELECT COUNT(*) FROM card_allocations WHERE user_id=1 AND funded_on='2026-09-22'").fetchone()[0] == 1
 
@@ -830,7 +831,7 @@ def test_morning_report_waits_for_payday_and_is_resent_after_confirmation(client
     again = pending_morning_reports(now)[0]
     assert again['resend'] is True
     assert again['payday_waiting'] is None
-    assert again['card_balance'] == round(report['card_balance'] + 1000, 2)
+    assert again['card_balance'] == round(report['card_balance'] + row['payday_amount'] + 1000, 2)
     assert 'Зарплата подтверждена' in morning_report_text(again)
     record_morning_report(again)
     assert pending_morning_reports(now) == []
@@ -852,3 +853,10 @@ def test_unconfirmed_payday_does_not_create_false_shortfall_for_bills_right_afte
     assert snapshot['capital_shortfall'] == 0
     assert row['buffer'] >= 0
     assert row['received'] == 20000
+    # The current balances do not include the unconfirmed money yet.
+    before = cashflow_snapshot(1)
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 21))
+    yesterday = cashflow_snapshot(1)
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    assert before['buffer_balance'] == yesterday['buffer_balance']
+    assert before['pending_card_allocation'] == 0
