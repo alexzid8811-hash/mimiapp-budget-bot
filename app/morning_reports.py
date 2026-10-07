@@ -113,7 +113,7 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
         "report_date": today,
         "resend": resend,
         # The payday has come, but the money is not confirmed yet: the
-        # numbers are calculated as if it has not arrived.
+        # numbers use the calculated amount and are not locked in.
         "payday_waiting": flow.get("payday_waiting"),
         "yesterday": yesterday,
         "expenses": expenses,

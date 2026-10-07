@@ -793,15 +793,20 @@ def test_unconfirmed_payday_is_not_counted_until_confirmed(client, monkeypatch):
     assert waiting['payday_waiting'] == '2026-09-22'
     row = advance_row(waiting)
     assert row['income_pending'] is True
-    assert row['received'] == 0
+    # Until confirmation the plan uses the calculated amount (no false
+    # shortfall), but the card money it funds is not locked in.
+    assert row['received'] == row['payday_amount'] == 20000
+    with connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM card_allocations WHERE user_id=1 AND funded_on='2026-09-22'").fetchone()[0] == 0
 
     client.put(f"/api/cashflow/income-overrides/{row['override_key']}",
-               json={'amount': row['payday_amount'], 'confirmed': True})
+               json={'amount': 21000, 'confirmed': True})
     confirmed = cashflow_snapshot(1)
     assert confirmed['payday_waiting'] is None
-    assert advance_row(confirmed)['received'] == row['payday_amount']
-    assert confirmed['available_cash'] == round(waiting['available_cash'] + row['payday_amount'], 2)
-    assert confirmed['daily_target'] > waiting['daily_target']
+    assert advance_row(confirmed)['received'] == 21000
+    assert confirmed['available_cash'] == round(waiting['available_cash'] + 1000, 2)
+    with connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM card_allocations WHERE user_id=1 AND funded_on='2026-09-22'").fetchone()[0] == 1
 
 
 def test_morning_report_waits_for_payday_and_is_resent_after_confirmation(client, monkeypatch):
@@ -821,11 +826,29 @@ def test_morning_report_waits_for_payday_and_is_resent_after_confirmation(client
 
     row = advance_row(cashflow_snapshot(1))
     client.put(f"/api/cashflow/income-overrides/{row['override_key']}",
-               json={'amount': row['payday_amount'], 'confirmed': True})
+               json={'amount': row['payday_amount'] + 1000, 'confirmed': True})
     again = pending_morning_reports(now)[0]
     assert again['resend'] is True
     assert again['payday_waiting'] is None
-    assert again['buffer_balance'] > report['buffer_balance']
+    assert again['card_balance'] == round(report['card_balance'] + 1000, 2)
     assert 'Зарплата подтверждена' in morning_report_text(again)
     record_morning_report(again)
     assert pending_morning_reports(now) == []
+
+
+def test_unconfirmed_payday_does_not_create_false_shortfall_for_bills_right_after(client, monkeypatch):
+    """A bill due the day after an unconfirmed payday must not show the buffer
+    as negative: the plan uses the calculated amount until confirmation."""
+    with connect() as con:
+        con.execute("UPDATE income_rules SET amount=20000 WHERE user_id=1 AND kind='advance'")
+    assert client.post('/api/bill-rules', json={
+        'title': 'Авто', 'amount': 15000, 'day_of_month': 23, 'effective_date': '2026-09-01',
+    }).status_code == 200
+    monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 22))
+    snapshot = cashflow_snapshot(1)
+    assert snapshot['payday_waiting'] == '2026-09-22'
+    row = advance_row(snapshot)
+    assert row['income_pending'] is True
+    assert snapshot['capital_shortfall'] == 0
+    assert row['buffer'] >= 0
+    assert row['received'] == 20000

@@ -80,7 +80,7 @@ def morning_report_text(report: dict) -> str:
         title = f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}"
     lines = [title]
     if report.get("payday_waiting"):
-        lines.extend(["", "⏳ Выплата ещё не подтверждена — суммы посчитаны без неё. "
+        lines.extend(["", "⏳ Выплата ещё не подтверждена — суммы посчитаны по расчётной сумме. "
                           "Когда деньги придут, нажмите «Получил ✓» в приложении."])
     lines += [
         "", spending, "",
