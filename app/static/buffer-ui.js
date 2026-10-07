@@ -1,5 +1,7 @@
 (() => {
   let bufferState = { buffer: null, piggy: { balance: 0, movements: [] } };
+  // Closed periods of the plan are hidden until the user asks for them.
+  let showPast = false;
 
   function initData() {
     if (typeof getTelegramInitData === "function") return getTelegramInitData();
@@ -125,22 +127,47 @@
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"в буфер"]
         : ["zero","—","без движения"];
+    // The daily amount spreads the card money of the period plus what is left
+    // on the card from the previous one (or minus its overspend).
+    const carryLine = p => {
+      const carry = Number(p.carry_in) || 0;
+      if (Math.abs(carry) < 0.01) return "";
+      return carry > 0
+        ? `<small class="carry-line">+ ${formatMoney(carry)} остаток прошлого периода</small>`
+        : `<small class="carry-line neg">− ${formatMoney(-carry)} перерасход прошлого периода</small>`;
+    };
+    const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>${carryLine(p)}`;
     const toCardLine = p => Number(p.to_card) > 0
-      ? `<div><span>На карту</span><b>${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small></b></div>` : "";
+      ? `<div><span>На карту</span><b>${toCardInner(p)}</b></div>` : "";
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
-    cards.innerHTML = periods.map((p,i)=>{
+    const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
+    const pastToggle = document.getElementById("bufPastToggle");
+    if (pastToggle) {
+      pastToggle.hidden = !past.length;
+      pastToggle.textContent = showPast ? "Скрыть прошлые периоды" : `Показать прошлые периоды (${past.length})`;
+    }
+    const shown = [...(showPast ? past : []), ...periods];
+    const rowClass = (p, i) => p.past ? "past" : (i === 0 ? "cur" : "");
+    cards.innerHTML = shown.map((p,j)=>{
+      const i = j - (shown.length - periods.length);
       const [c,m,label]=movement(p);
-      return `<article class="pc ${i===0?"cur":""}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div>${toCardLine(p)}</div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0&&!p.past?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div>${toCardLine(p)}</div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
-    body.innerHTML = periods.map((p,i)=>{
+    body.innerHTML = shown.map((p,j)=>{
+      const i = j - (shown.length - periods.length);
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),formatMoney(p.free)];
-      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>`;
-      return `<tr class="${i===0?"cur":""}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
+      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>${carryLine(p)}`;
+      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
   }
+
+  document.getElementById("bufPastToggle")?.addEventListener("click", () => {
+    showPast = !showPast;
+    renderBuffer();
+  });
 
   function openIncomeDialog(overrideKey, confirm) {
     const period = bufferState.buffer?.periods?.find(item => item.override_key === overrideKey);

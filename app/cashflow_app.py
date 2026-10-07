@@ -127,7 +127,7 @@ def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
 
 BUFFER_KEYS = (
     "today", "horizon_end", "daily_target", "available_today", "buffer_balance",
-    "capital_shortfall", "shortfall_date", "periods", "card_balance", "tomorrow_limit",
+    "capital_shortfall", "shortfall_date", "periods", "past_periods", "card_balance", "tomorrow_limit",
 )
 
 
@@ -166,15 +166,18 @@ def save_cashflow_income_override(
     # edit can change the plan, so the edit only ever affects this period and
     # the ones after it, no matter which order payouts are edited in.
     engine.freeze_allocations_before(uid, period_start)
+    # Entering the amount of a payday that has already come (even through
+    # «Изменить») means the money arrived: it confirms the payday.
+    confirmed = payload.confirmed or row["income_pending"]
     with legacy.connect() as con:
         con.execute(
             "INSERT INTO cashflow_income_overrides(user_id,period_start,amount,confirmed) VALUES(?,?,?,?) "
             "ON CONFLICT(user_id,period_start) DO UPDATE SET "
             "amount=excluded.amount,confirmed=MAX(confirmed,excluded.confirmed),"
             "updated_at=CURRENT_TIMESTAMP",
-            (uid, period_start.isoformat(), payload.amount, int(payload.confirmed)),
+            (uid, period_start.isoformat(), payload.amount, int(confirmed)),
         )
-        if payload.confirmed and row["income_pending"]:
+        if confirmed and row["income_pending"]:
             # Today's morning report was built without this money: send it
             # again with the new numbers (if it has already gone out).
             sent = con.execute(
