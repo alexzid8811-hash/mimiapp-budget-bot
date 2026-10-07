@@ -1,6 +1,7 @@
 """Reads a user's data, runs :mod:`app.ledger` and builds the API snapshot."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 from . import clock, planning
@@ -314,6 +315,15 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     is calculated from the latest payday with an empty account."""
     inp, extras, today, start, settings, enabled = _run(uid, force_enabled=force_enabled)
     result = run_ledger(inp)
+    # The plan (rows, shortfall, next periods) counts an unconfirmed payday
+    # with its calculated amount.  The actual balances (card, buffer, today's
+    # limit) stay as they were until the user presses «Получил ✓».
+    actual = result
+    waiting = extras["waiting"]
+    if waiting:
+        without = dict(inp.buffer_in)
+        without[waiting] = without.get(waiting, 0) - extras["payday_amount"].get(waiting, 0)
+        actual = run_ledger(replace(inp, buffer_in=without, unconfirmed_payday=waiting))
     if enabled:
         if extras["waiting"]:
             forget_funded_on(uid, extras["waiting"])
@@ -322,18 +332,18 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             if value[0] != extras["waiting"]
         })
 
-    current = result.current
+    current = actual.current
     days_left = (current.end - today).days + 1
     next_forecast = next(
         (f for s, f in sorted(result.forecasts.items()) if s > current.start), None
     )
     pending = sum(
-        result.allocations[p.start] for p in result.periods
+        actual.allocations[p.start] for p in actual.periods
         if p.funded_on <= today < p.start
     )
-    buffer_now = result.buffer_end[today]
+    buffer_now = actual.buffer_end[today]
     reserved = extras["reserved"]
-    card_now = result.card_end_today
+    card_now = actual.card_end_today
 
     with connect() as con:
         spent_period = con.execute(
@@ -418,21 +428,21 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "daily": amount(next_forecast.daily),
         } if next_forecast else None,
         "card_balance": amount(card_now),
-        "card_start_today": amount(result.card_start_today),
+        "card_start_today": amount(actual.card_start_today),
         # Money moved from the piggy bank "for today" belongs to today only.
-        "today_target": amount(result.today_limit + inp.card_cover.get(today, 0)),
-        "daily_target": amount(result.today_limit + inp.card_cover.get(today, 0)),
-        "available_today": amount(result.available_today),
-        "spent_today": amount(result.spent_today),
-        "overspend": amount(result.overspend),
-        "tomorrow_limit": amount(result.tomorrow_limit),
+        "today_target": amount(actual.today_limit + inp.card_cover.get(today, 0)),
+        "daily_target": amount(actual.today_limit + inp.card_cover.get(today, 0)),
+        "available_today": amount(actual.available_today),
+        "spent_today": amount(actual.spent_today),
+        "overspend": amount(actual.overspend),
+        "tomorrow_limit": amount(actual.tomorrow_limit),
         "buffer_balance": amount(buffer_now),
         "pending_card_allocation": amount(pending),
         "reserved_mandatory": amount(reserved),
         "current_cash": amount(card_now + buffer_now + pending + reserved),
         "available_cash": amount(card_now + buffer_now + pending),
         "piggy_bank_balance": piggy_balance(uid),
-        "period_budget": amount(result.forecasts[current.start].opening),
+        "period_budget": amount(actual.forecasts[current.start].opening),
         "remaining_period": amount(card_now),
         "spent_period": round(float(spent_period), 2),
         "mandatory_period": amount(mandatory_period),

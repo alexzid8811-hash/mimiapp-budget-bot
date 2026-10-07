@@ -145,6 +145,9 @@ class LedgerInput:
     card_out: dict[date, int] = field(default_factory=dict)      # expenses, bill overpayments
     card_to_piggy: dict[date, int] = field(default_factory=dict)
     stored_allocations: dict[date, int] = field(default_factory=dict)
+    # A payday whose money is not confirmed yet: the card period it funds
+    # gets nothing (used for the actual balances, not for the plan).
+    unconfirmed_payday: date | None = None
 
 
 @dataclass
@@ -207,7 +210,9 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 # or explicitly frozen before an edit to a later payday.
                 # Recalculating it is an explicit action (a new start, or an
                 # edit at or before this period) that clears the stored row.
-                if period.start in inp.stored_allocations:
+                if period.funded_on == inp.unconfirmed_payday:
+                    value = 0
+                elif period.start in inp.stored_allocations:
                     value = inp.stored_allocations[period.start]
                 else:
                     value = decision.daily * period.days
