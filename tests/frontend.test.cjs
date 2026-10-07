@@ -285,6 +285,9 @@ test('payout due today can be confirmed with the received amount', async () => {
  await get('refreshBtn').listeners.click();
  assert.match(get('planCards').innerHTML,/confirmCashflowIncome\('2026-10-08'\)/);
  assert.match(get('planCards').innerHTML,/editCashflowIncome\('2026-10-08'\)/);
+ // Amount, status and both actions as one compact block in the table too.
+ const table=get('bufferPeriods').innerHTML;
+ assert.match(table,/class="income-cell"><span class="income-amount">61.199,72.₽<\/span><small class="income-status pending">ждём подтверждения<\/small><span class="income-actions"><button class="income-btn"[^>]*>Изменить<\/button><button class="income-btn accent"[^>]*>Получил ✓<\/button>/);
 
  sandbox.window.confirmCashflowIncome('2026-10-08');
  assert.equal(get('cashflowIncomeAmount').value,61199.72);
