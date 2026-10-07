@@ -64,15 +64,16 @@
   function receivedMarkup(period, compact = false) {
     const value = `<span>${formatMoney(period.received)}</span>`;
     if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
-    const badge = period.income_confirmed ? '<small class="edited-badge">получено ✓</small>'
-      : period.income_pending ? '<small class="edited-badge pending">ждём подтверждения</small>'
-        : period.income_overridden ? '<small class="edited-badge">изменено</small>' : '';
-    const edit = `<button class="editable-money" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">${value}${badge}</button>`;
-    if (!period.income_pending) return edit;
+    const status = period.income_confirmed ? '<small class="income-status done">получено ✓</small>'
+      : period.income_pending ? '<small class="income-status pending">ждём подтверждения</small>'
+        : period.income_overridden ? '<small class="income-status">изменено</small>' : '';
+    const edit = `<button class="income-btn" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">Изменить</button>`;
     // The payday has come but the money is not confirmed yet: offer to enter
-    // the amount actually received right next to "Изменить".
-    const confirm = `<button class="confirm-income" type="button" onclick="confirmCashflowIncome('${period.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`;
-    return `<span class="received-cell">${edit}${confirm}</span>`;
+    // the amount actually received next to "Изменить".
+    const confirm = period.income_pending
+      ? `<button class="income-btn accent" type="button" onclick="confirmCashflowIncome('${period.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`
+      : '';
+    return `<span class="income-cell"><span class="income-amount">${formatMoney(period.received)}</span>${status}<span class="income-actions">${edit}${confirm}</span></span>`;
   }
 
   function renderBuffer() {
