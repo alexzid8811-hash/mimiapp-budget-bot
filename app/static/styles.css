@@ -289,14 +289,14 @@ h2{font-size:24px}h3{font-size:16px}.eyebrow{display:none}
 .income-status{font-size:11px;font-weight:500;color:var(--accent)}
 .income-status.pending{color:var(--muted)}
 .income-status.done{color:var(--income)}
-.income-actions{display:inline-flex;align-items:center;gap:10px}
+.income-actions{display:flex;flex-direction:column;align-items:inherit;gap:5px;margin-top:2px}
 .income-btn{border:0;border-radius:99px;padding:3px 0;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:600;line-height:1.2;cursor:pointer;white-space:nowrap}
 .income-btn.accent{padding:4px 10px;background:var(--accent);color:#fff}
 .income-btn:hover{text-decoration:underline}.income-btn.accent:hover{text-decoration:none;filter:brightness(1.08)}
 /* Plan cards (phone): the generic ".pc-flow span" label style must not apply. */
 .pc-flow .income-cell{white-space:normal;margin-top:1px}
 .pc-flow .income-amount{display:block;font-size:13.5px;font-weight:600;color:var(--text)}
-.pc-flow .income-actions{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:inherit;color:inherit;margin-top:2px}
+.pc-flow .income-actions{display:flex;flex-direction:column;align-items:flex-start;gap:5px;font-size:inherit;color:inherit;margin-top:2px}
 .dialog-actions{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:8px;align-items:stretch}
 .dialog-actions .big{margin:0}
 .movement-cell span,.movement-cell small{display:block;white-space:nowrap}.movement-cell small{font-size:10px;font-weight:500}
