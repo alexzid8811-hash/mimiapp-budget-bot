@@ -785,7 +785,7 @@ def test_future_payout_is_not_pending_confirmation(client):
     assert future['income_pending'] is False
 
 
-def test_unconfirmed_payday_is_not_counted_until_confirmed(client, monkeypatch):
+def test_unconfirmed_payday_counts_expected_amount_until_confirmed(client, monkeypatch):
     with connect() as con:
         con.execute("UPDATE income_rules SET amount=20000 WHERE user_id=1 AND kind='advance'")
     monkeypatch.setattr(clock, 'today', lambda: date(2026, 9, 23))
@@ -793,14 +793,16 @@ def test_unconfirmed_payday_is_not_counted_until_confirmed(client, monkeypatch):
     assert waiting['payday_waiting'] == '2026-09-22'
     row = advance_row(waiting)
     assert row['income_pending'] is True
-    assert row['received'] == 0
+    # Not lost, only waiting: the buffer and the new period use the forecast.
+    assert row['received'] == 20000
+    assert waiting['buffer_balance'] >= 0
 
     client.put(f"/api/cashflow/income-overrides/{row['override_key']}",
-               json={'amount': row['payday_amount'], 'confirmed': True})
+               json={'amount': 26000, 'confirmed': True})
     confirmed = cashflow_snapshot(1)
     assert confirmed['payday_waiting'] is None
-    assert advance_row(confirmed)['received'] == row['payday_amount']
-    assert confirmed['available_cash'] == round(waiting['available_cash'] + row['payday_amount'], 2)
+    assert advance_row(confirmed)['received'] == 26000
+    assert confirmed['available_cash'] == round(waiting['available_cash'] + 6000, 2)
     assert confirmed['daily_target'] > waiting['daily_target']
 
 
@@ -821,7 +823,7 @@ def test_morning_report_waits_for_payday_and_is_resent_after_confirmation(client
 
     row = advance_row(cashflow_snapshot(1))
     client.put(f"/api/cashflow/income-overrides/{row['override_key']}",
-               json={'amount': row['payday_amount'], 'confirmed': True})
+               json={'amount': row['payday_amount'] + 5000, 'confirmed': True})
     again = pending_morning_reports(now)[0]
     assert again['resend'] is True
     assert again['payday_waiting'] is None
