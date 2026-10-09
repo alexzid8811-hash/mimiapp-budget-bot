@@ -354,12 +354,12 @@ def test_existing_user_file_is_migrated(tmp_path, monkeypatch):
         transactions = {r[1] for r in con.execute("PRAGMA table_info(transactions)")}
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         row = con.execute("SELECT salary_gross,budget_mode,irregular_reserve_percent,irregular_stretch_days,"
-                          "irregular_bills_lookahead_days FROM settings WHERE user_id=7").fetchone()
+                          "irregular_bills_lookahead_days,irregular_bills_scope FROM settings WHERE user_id=7").fetchone()
         tx = con.execute("SELECT amount,note,income_source,reserve_percent FROM transactions WHERE user_id=7").fetchone()
     assert {"budget_mode", "irregular_reserve_percent", "irregular_start_date"} <= settings
     assert {"reserve_percent", "income_source"} <= transactions
     assert "emergency_reserve_movements" in tables
-    assert tuple(row) == (99000, "payroll", 10, 14, 30)
+    assert tuple(row) == (99000, "payroll", 10, 14, 30, "month")
     assert tuple(tx) == (123, "старый", "", None)
 
 
@@ -407,7 +407,8 @@ def _rich_history(client):
     spend(client, 1200, "2026-10-06")
     client.post("/api/irregular/reserve/deposit", json={"amount": 100, "kind": "from_free"})
     assert client.put("/api/irregular/settings", json={
-        "reserve_percent": 15, "reserve_target": 50000, "stretch_days": 10, "lookahead_days": 20}).status_code == 200
+        "reserve_percent": 15, "reserve_target": 50000, "stretch_days": 10, "lookahead_days": 20,
+        "bills_scope": "days"}).status_code == 200
 
 
 def test_backup_round_trip_keeps_numbers(client):
@@ -421,10 +422,12 @@ def test_backup_round_trip_keeps_numbers(client):
     with connect() as con:
         con.execute("DELETE FROM emergency_reserve_movements WHERE user_id=1")
         con.execute("DELETE FROM transactions WHERE user_id=1")
-        con.execute("UPDATE settings SET budget_mode='payroll',irregular_start_date=NULL WHERE user_id=1")
+        con.execute("UPDATE settings SET budget_mode='payroll',irregular_start_date=NULL,"
+                    "irregular_bills_scope='month' WHERE user_id=1")
     restore_user_data(1, backup)
     assert _numbers() == before
     assert snapshot(1)["settings"]["reserve_target"] == 50000
+    assert snapshot(1)["settings"]["bills_scope"] == "days"
     # The expense paid from the reserve is still linked to it.
     assert client.get("/api/irregular/reserve").json()["movements"][-2]["expense_id"] is not None
 
@@ -484,6 +487,8 @@ def test_morning_report_in_irregular_mode(client):
     from app.morning_reports import pending_morning_reports
     from bot import morning_report_text
 
+    assert client.put("/api/irregular/settings", json={
+        "reserve_percent": 10, "stretch_days": 14, "lookahead_days": 30, "bills_scope": "days"}).status_code == 200
     at(date(2026, 10, 3))
     income(client, 20000, "2026-10-03")
     at(date(2026, 10, 20))
@@ -510,3 +515,25 @@ def test_deleting_expense_paid_from_reserve_returns_the_money(client):
     assert client.delete(f"/api/transactions/{expense['id']}").status_code == 200
     assert client.get("/api/irregular").json()["reserve_balance"] == 2000
     assert client.get("/api/irregular/reserve").json()["movements"][0]["kind"] == "income"
+
+
+def test_income_goes_only_to_bills_of_its_month(client):
+    """Money of October pays October's bills, even on 31 October; money of
+    November pays November's.  Internet 1 000 ₽ on the 10th, utilities
+    6 000 ₽ on the 25th (see the fixture)."""
+    settings = client.get("/api/irregular/settings").json()
+    assert settings["bills_scope"] == "month"
+    at(date(2026, 10, 3))
+    assert income(client, 20000, "2026-10-03")["split"] == {"reserve": 2000, "bills": 7000, "free": 11000, "piggy": 0}
+    at(date(2026, 10, 31))
+    # October is covered: nothing goes to the November bills.
+    assert income(client, 10000, "2026-10-31")["split"] == {"reserve": 1000, "bills": 0, "free": 9000, "piggy": 0}
+    flow = client.get("/api/irregular").json()
+    assert flow["bills_shortfall"] is None
+    assert all(b["due_date"] < "2026-11-01" for b in flow["bills"])
+    at(date(2026, 11, 2))
+    assert income(client, 10000, "2026-11-02")["split"] == {"reserve": 1000, "bills": 7000, "free": 2000, "piggy": 0}
+    # With the "N days ahead" scope the same October income goes to November.
+    assert client.put("/api/irregular/settings", json={**settings, "bills_scope": "days"}).status_code == 200
+    october_31 = next(i for i in client.get("/api/irregular/incomes").json() if i["tx_date"] == "2026-10-31")
+    assert october_31["split"]["bills"] == 7000

@@ -33,6 +33,7 @@ class Settings(Payroll):
     irregular_reserve_target: float | None = Field(default=None, ge=0)
     irregular_stretch_days: int = Field(default=14, ge=3, le=60)
     irregular_bills_lookahead_days: int = Field(default=30, ge=0, le=90)
+    irregular_bills_scope: Literal['month', 'days'] = 'month'
     irregular_start_date: date | None = None
     irregular_start_total: float = Field(default=0, ge=0)
     irregular_start_reserve: float = Field(default=0, ge=0)

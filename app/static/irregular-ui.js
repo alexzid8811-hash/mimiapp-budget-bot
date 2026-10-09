@@ -113,9 +113,18 @@
     set("irrTarget", settings.reserve_target ?? "");
     set("irrStretchDays", settings.stretch_days ?? 14);
     set("irrLookahead", settings.lookahead_days ?? 30);
+    set("irrBillsScope", settings.bills_scope || "month");
+    showLookahead();
     set("irrStartDate", settings.start_date || today());
     set("irrStartTotal", settings.start_total ?? 0);
     set("irrStartReserve", settings.start_reserve ?? 0);
+  }
+
+  // The number of days matters only for the "N days ahead" scope.
+  function showLookahead() {
+    const byMonth = ($("irrBillsScope")?.value || "month") === "month";
+    show("irrLookaheadField", !byMonth);
+    show("irrBillsScopeHint", byMonth);
   }
 
   function settingsPayload() {
@@ -125,6 +134,7 @@
       reserve_target: target ? parseMoney(target) || null : null,
       stretch_days: Number($("irrStretchDays").value || 14),
       lookahead_days: Number($("irrLookahead").value === "" ? 30 : $("irrLookahead").value),
+      bills_scope: $("irrBillsScope")?.value || "month",
       start_date: $("irrStartDate").value || today(),
       start_total: parseMoney($("irrStartTotal").value),
       start_reserve: parseMoney($("irrStartReserve").value),
@@ -368,6 +378,7 @@
 
   document.querySelectorAll("[data-budget-mode]").forEach(b => b.addEventListener("click", () => chooseMode(b.dataset.budgetMode)));
   $("saveIrregularBtn")?.addEventListener("click", saveSettings);
+  $("irrBillsScope")?.addEventListener("change", showLookahead);
   $("irrIncomeForm")?.addEventListener("submit", submitIncome);
   ["irrIncomeAmount", "irrIncomeDate", "irrIncomePercent", "irrIncomeDestination"].forEach(id => {
     $(id)?.addEventListener("input", schedulePreview);

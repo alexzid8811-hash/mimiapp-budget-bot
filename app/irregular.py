@@ -8,7 +8,8 @@ Wallets
 * Emergency reserve: receives a percent of every income.  It never takes part
   in "можно сегодня"; money leaves it only by an explicit operation.
 * Bills fund ("На обязательные"): money put aside for unpaid obligatory
-  payments due within ``lookahead_days`` after an income.
+  payments of the income's month (``bills_scope="month"``) or due within
+  ``lookahead_days`` after it (``bills_scope="days"``).
 * Free money: everything else; the daily limit is calculated from it.
 * The piggy bank is kept outside and changes only by explicit operations.
 
@@ -18,7 +19,10 @@ Rules
   income.  Only received money is split and spent.
 * Every income is split in this order: reserve (``amount * percent / 100``,
   ROUND_HALF_UP to a kopeck, capped by the reserve target), the missing part of
-  the bills due by ``income date + lookahead_days`` (by due date), free money.
+  the unpaid bills due by the bills horizon (by due date), free money.  The
+  horizon is the last day of the income's month, or ``income date +
+  lookahead_days``.  Money of October therefore never goes to bills of
+  November; unpaid bills of earlier months come first.
 * Stretch date D: an income that adds free money sets
   ``D = income date + stretch_days - 1``.  When D has passed without such an
   income, the window is extended: ``D = today + stretch_days - 1``.
@@ -48,6 +52,7 @@ class IrregularSettings:
     reserve_target: int | None = None   # kopecks, None = always put aside
     stretch_days: int = 14
     lookahead_days: int = 30
+    bills_scope: str = "month"          # month | days
 
 
 @dataclass(frozen=True)
@@ -186,6 +191,18 @@ def split_income(
     return Split(reserve=share, bills=bills, free=rest - bills)
 
 
+def month_end(day: date) -> date:
+    following = (day.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return following - ONE_DAY
+
+
+def bills_horizon(day: date, settings: IrregularSettings) -> date:
+    """Last due date that money arriving on ``day`` is put aside for."""
+    if settings.bills_scope == "days":
+        return day + timedelta(days=max(0, int(settings.lookahead_days)))
+    return month_end(day)
+
+
 def stretch_end(day: date, stretch_days: int) -> date:
     return day + timedelta(days=stretch_days - 1)
 
@@ -195,7 +212,6 @@ def replay(inp: IrregularInput) -> IrregularResult:
         raise ValueError("Дата старта позже сегодняшнего дня")
     cfg = inp.settings
     n = max(1, int(cfg.stretch_days))
-    k = max(0, int(cfg.lookahead_days))
 
     incomes: dict[date, list[Income]] = {}
     for income in sorted(inp.incomes, key=lambda i: (i.day, i.id)):
@@ -218,14 +234,14 @@ def replay(inp: IrregularInput) -> IrregularResult:
     fund: dict[tuple[int, date], int] = {}
 
     def bills_need(day: date) -> int:
-        horizon = day + timedelta(days=k)
+        horizon = bills_horizon(day, cfg)
         return sum(
             max(0, b.amount - fund.get(b.key, 0))
             for b in needs if b.due <= horizon and b.key not in paid
         )
 
     def fill_bills(day: date, money: int) -> int:
-        horizon = day + timedelta(days=k)
+        horizon = bills_horizon(day, cfg)
         used = 0
         for b in needs:
             if b.due > horizon or money - used <= 0:
@@ -339,7 +355,7 @@ def replay(inp: IrregularInput) -> IrregularResult:
     tomorrow_end = stretch if stretch >= tomorrow else stretch_end(tomorrow, n)
     tomorrow_limit = max(0, free // ((tomorrow_end - tomorrow).days + 1))
 
-    horizon = today + timedelta(days=k)
+    horizon = bills_horizon(today, cfg)
     missing = [
         (b.due, b.amount - fund.get(b.key, 0)) for b in needs
         if b.key not in paid and b.due <= horizon and fund.get(b.key, 0) < b.amount

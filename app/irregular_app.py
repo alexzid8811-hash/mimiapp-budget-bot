@@ -35,6 +35,7 @@ class IrregularSettingsIn(APIModel):
     reserve_target: float | None = Field(default=None, ge=0)
     stretch_days: int = Field(default=14, ge=3, le=60)
     lookahead_days: int = Field(default=30, ge=0, le=90)
+    bills_scope: Literal["month", "days"] = "month"
     start_date: date | None = None
     start_total: float | None = Field(default=None, ge=0)
     start_reserve: float | None = Field(default=None, ge=0)
@@ -121,10 +122,11 @@ def save_settings(payload: IrregularSettingsIn, user: TelegramUser = Depends(cur
             con.execute("BEGIN IMMEDIATE")
             con.execute(
                 "UPDATE settings SET irregular_reserve_percent=?,irregular_reserve_target=?,"
-                "irregular_stretch_days=?,irregular_bills_lookahead_days=?,irregular_start_date=?,"
-                "irregular_start_total=?,irregular_start_reserve=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                "irregular_stretch_days=?,irregular_bills_lookahead_days=?,irregular_bills_scope=?,"
+                "irregular_start_date=?,irregular_start_total=?,irregular_start_reserve=?,"
+                "updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
                 (payload.reserve_percent, target, payload.stretch_days, payload.lookahead_days,
-                 start, total, reserve, uid),
+                 payload.bills_scope, start, total, reserve, uid),
             )
             # A new target or start can change how much the reserve received.
             engine.check_reserve(con, uid)
