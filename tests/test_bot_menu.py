@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from telegram import Chat, Message, MenuButtonCommands, MenuButtonWebApp, Update, User
+from telegram import Chat, Message, MenuButtonCommands, MenuButtonWebApp, Update, User, WebAppInfo
 
 import bot
 from app import clock
 from app.cashflow_app import app
-from app.db import connect, ensure_user, init_db, user_db_path, user_scope
+from app.db import connect, ensure_user, init_db, reset_current_user, set_current_user, user_db_path, user_scope
 from app.quick_stats import quick_numbers
 
 
@@ -51,7 +51,12 @@ def press(button, user_id=1, handler=None, chat_type="private"):
     message = SimpleNamespace(text=button, reply_text=reply_text)
     update = SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=user_id),
                              effective_chat=SimpleNamespace(type=chat_type))
-    asyncio.run((handler or bot.menu_button)(update, None))
+    # Like production: no ambient user, the handler must pick the sender.
+    token = set_current_user(None)
+    try:
+        asyncio.run((handler or bot.menu_button)(update, None))
+    finally:
+        reset_current_user(token)
     return replies
 
 
@@ -109,8 +114,39 @@ def test_overspend_and_overpaid_bill_are_shown(client):
     assert numbers["overspend"] > 0
     assert "⚠️ Перерасход" in bot.today_text(numbers)
     text = bot.spent_text(numbers)
-    assert "• Ноутбук — 50 000,00 ₽\n• Сверх плана по обязательным платежам — 100,00 ₽" in text
-    assert "• Интернет — 700,00 ₽" in text
+    assert "• Ноутбук — 50 000,00 ₽\n• Обязательные платежи сверх отложенного — 100,00 ₽" in text
+    assert "Оплачены обязательные платежи:\n• Интернет — 700,00 ₽" in text
+
+
+def test_cashflow_off_answers_like_the_home_screen(client):
+    """Without the start capital the home screen shows «Можно потратить» as
+    left + spent and hides the overspend panel (design-ui.js)."""
+    with connect() as con:
+        con.execute("UPDATE income_rules SET amount=30000 WHERE user_id=1")
+        con.execute("UPDATE settings SET cashflow_enabled=0 WHERE user_id=1")
+    expense(client, 100, "Кофе")
+    post(client, "/api/piggy-bank/deposit", {"amount": 200, "movement_date": "2026-09-15", "source": "daily_budget"})
+    dashboard = client.get("/api/dashboard").json()
+    with user_scope(1):
+        numbers = quick_numbers(1)
+    assert numbers["available_today"] == dashboard["daily_available"]
+    assert numbers["spent_today"] == dashboard["spent_today"] == 100
+    assert numbers["today_target"] == round(dashboard["daily_available"] + dashboard["spent_today"], 2)
+    assert numbers["card_balance"] == dashboard["remaining"]
+
+    expense(client, 50000, "Ноутбук")
+    with user_scope(1):
+        numbers = quick_numbers(1)
+    assert numbers["available_today"] < 0 and numbers["overspend"] == 0
+    assert "Перерасход" not in bot.today_text(numbers)
+
+
+def test_long_spending_list_is_shortened():
+    numbers = {"today": "2026-09-15", "spent_today": 40.0, "bills_paid": [], "reserve_paid": [],
+               "expenses": [{"title": "Х" * 300, "amount": 1.0} for _ in range(40)]}
+    text = bot.spent_text(numbers)
+    assert text.count("• ") == bot.MAX_ITEMS and "… и ещё 15 на 15,00 ₽" in text
+    assert len(text) < 4096
 
 
 def test_no_spending_today(client):
@@ -251,7 +287,30 @@ def test_irregular_no_income_warning(irregular):
     assert "⚠️ Дохода не было 19 дн. При необходимости возьмите деньги из резерва." in bot.today_text(numbers)
 
 
-def test_irregular_mode_without_start(irregular):
+def test_irregular_bill_without_enough_money_put_aside(irregular):
+    """Rent of 30 000 paid exactly as planned while only 9 000 was put aside:
+    no overpayment, the rest came out of the free money."""
+    client = irregular
+    post(client, "/api/bill-rules", {"title": "Аренда", "amount": 30000, "day_of_month": 5,
+                                     "effective_date": "2026-10-01"})
+    assert client.put("/api/budget-mode", json={
+        "budget_mode": "irregular", "start_date": "2026-10-01", "start_total": 0, "start_reserve": 0,
+    }).status_code == 200
+    post(client, "/api/irregular/incomes", {"amount": 10000, "tx_date": "2026-10-01"})
+    client.now["today"] = date(2026, 10, 5)
+    rule = client.get("/api/bootstrap").json()["bill_rules"][0]
+    post(client, f"/api/bills/{rule['id']}/pay", {"due_date": "2026-10-05"})
+    with user_scope(1):
+        numbers = quick_numbers(1)
+    assert numbers["spent_today"] == client.get("/api/irregular").json()["spent_today"] == 21000
+    text = bot.spent_text(numbers)
+    assert "Сверх плана" not in text and "не из суммы на день" not in text
+    assert "• Обязательные платежи сверх отложенного — 21 000,00 ₽" in text
+    assert "Оплачены обязательные платежи:\n• Аренда — 30 000,00 ₽" in text
+
+
+def test_irregular_mode_without_start(irregular, monkeypatch):
+    monkeypatch.setattr(bot, "MINI_APP_URL", "https://budget.example")
     with connect() as con:
         con.execute("UPDATE settings SET budget_mode='irregular' WHERE user_id=1")
     with user_scope(1):
@@ -260,6 +319,29 @@ def test_irregular_mode_without_start(irregular):
     assert "Подработки» ещё не настроен" in bot.menu_reply_text(bot.BTN_TODAY, numbers)
     [(text, markup)] = press(bot.BTN_FREE)
     assert "Подработки» ещё не настроен" in text
+    assert markup.inline_keyboard[0][0].web_app.url == "https://budget.example"
+
+
+def test_start_keeps_its_message_and_adds_the_menu(client, monkeypatch):
+    monkeypatch.setattr(bot, "MINI_APP_URL", "https://budget.example")
+    replies = []
+
+    async def reply_text(text, reply_markup=None):
+        replies.append((text, reply_markup))
+
+    message = SimpleNamespace(text="/start", reply_text=reply_text)
+    update = SimpleNamespace(message=message, effective_message=message, effective_user=SimpleNamespace(id=1),
+                             effective_chat=SimpleNamespace(type="private"))
+    asyncio.run(bot.start(update, None))
+    [(text, markup), (menu_text, keyboard)] = replies
+    assert text == "Ваш личный бюджет:" and markup.inline_keyboard[0][0].web_app.url == "https://budget.example"
+    assert menu_text == "Быстрое меню — под полем ввода сообщения." and keyboard is bot.MENU_KEYBOARD
+
+    monkeypatch.setattr(bot, "MINI_APP_URL", "")
+    replies.clear()
+    asyncio.run(bot.start(update, None))
+    assert replies == [("MINI_APP_URL не настроен на сервере.", None)]
+    assert press(bot.BTN_OPEN) == [("MINI_APP_URL не настроен на сервере.", None)]
 
 
 def test_menu_keyboards_have_no_web_app_buttons():
@@ -315,9 +397,18 @@ def test_menu_button_opens_the_app_and_keeps_a_configured_one(monkeypatch):
     [button] = fresh.set_calls
     assert isinstance(button, MenuButtonWebApp) and button.web_app.url == "https://budget.example"
 
-    configured = FakeBot(MenuButtonWebApp(text="Мой бюджет", web_app={"url": "https://other.example"}))
+    configured = FakeBot(MenuButtonWebApp(text="Мой бюджет", web_app=WebAppInfo("https://other.example")))
     asyncio.run(bot.setup_menu_button(configured))
     assert configured.set_calls == []
+
+    # The bot's own button: kept while the URL is the same, moved with MINI_APP_URL.
+    same = FakeBot(MenuButtonWebApp(text=bot.MENU_BUTTON_TEXT, web_app=WebAppInfo("https://budget.example")))
+    asyncio.run(bot.setup_menu_button(same))
+    assert same.set_calls == []
+    moved = FakeBot(MenuButtonWebApp(text=bot.MENU_BUTTON_TEXT, web_app=WebAppInfo("https://old.example")))
+    asyncio.run(bot.setup_menu_button(moved))
+    [button] = moved.set_calls
+    assert button.web_app.url == "https://budget.example"
 
     # A Telegram error must not stop the bot from starting.
     failing = FakeBot(RuntimeError("network"))

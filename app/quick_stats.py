@@ -89,4 +89,13 @@ def quick_numbers(user_id: int) -> dict | None:
         "bills_paid": bills,
         "reserve_paid": from_reserve,
     })
+    if numbers["mode"] == "payroll" and not flow["enabled"]:
+        # Without the start capital the home screen (design-ui.js) shows
+        # «Можно потратить» as left + spent and has neither the overspend
+        # panel nor the payday confirmation: answer the same way.
+        numbers.update({
+            "today_target": round(numbers["available_today"] + numbers["spent_today"], 2),
+            "overspend": 0.0,
+            "payday_waiting": None,
+        })
     return numbers

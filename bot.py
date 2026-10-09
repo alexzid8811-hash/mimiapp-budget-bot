@@ -105,21 +105,31 @@ def today_text(numbers: dict) -> str:
     return "\n".join(lines)
 
 
+# Keeps a reply far below Telegram's limit of 4096 characters.
+MAX_ITEMS = 25
+
+
 def _items(items: list[dict]) -> list[str]:
-    return [f"• {item['title']} — {money(item['amount'])} ₽" for item in items]
+    lines = [f"• {item['title'][:60]} — {money(item['amount'])} ₽" for item in items[:MAX_ITEMS]]
+    if len(items) > MAX_ITEMS:
+        lines.append(f"… и ещё {len(items) - MAX_ITEMS} на {money(sum(i['amount'] for i in items[MAX_ITEMS:]))} ₽")
+    return lines
 
 
 def spent_text(numbers: dict) -> str:
     lines = [f"🧾 Траты за {_ddmm(numbers['today'])}", "", f"Потрачено: {money(numbers['spent_today'])} ₽"]
     lines.extend(_items(numbers["expenses"]))
-    # An overpaid mandatory payment is paid from the card and counts as spending.
+    # The part of mandatory payments beyond the money put aside for them is
+    # paid from today's money: an overpayment, or (irregular mode) a bill
+    # whose money was not fully put aside.
     rest = round(numbers["spent_today"] - sum(item["amount"] for item in numbers["expenses"]), 2)
     if rest > 0:
-        lines.append(f"• Сверх плана по обязательным платежам — {money(rest)} ₽")
+        lines.append(f"• Обязательные платежи сверх отложенного — {money(rest)} ₽")
     if not (numbers["spent_today"] or numbers["expenses"] or numbers["bills_paid"] or numbers["reserve_paid"]):
         lines.append("Сегодня трат ещё не было.")
     if numbers["bills_paid"]:
-        lines.extend(["", "Оплачены обязательные платежи (не из суммы на день):", *_items(numbers["bills_paid"])])
+        title = "Оплачены обязательные платежи" + (":" if rest > 0 else " (не из суммы на день):")
+        lines.extend(["", title, *_items(numbers["bills_paid"])])
     if numbers["reserve_paid"]:
         lines.extend(["", "Оплачено из резерва на непредвиденное:", *_items(numbers["reserve_paid"])])
     return "\n".join(lines)
@@ -282,16 +292,23 @@ async def post_init(application) -> None:
     await setup_menu_button(application.bot)
 
 
+MENU_BUTTON_TEXT = "Бюджет"
+
+
 async def setup_menu_button(bot) -> None:
     """The button left of the message field opens the mini app.  A web app
-    button set before (for example in @BotFather) is kept as it is."""
+    button set by somebody else (for example in @BotFather) is kept as it is;
+    the bot's own button follows a changed MINI_APP_URL."""
     if not MINI_APP_URL:
         return
     try:
-        if isinstance(await bot.get_chat_menu_button(), MenuButtonWebApp):
+        current = await bot.get_chat_menu_button()
+        if isinstance(current, MenuButtonWebApp) and (
+            current.text != MENU_BUTTON_TEXT or current.web_app.url == MINI_APP_URL
+        ):
             return
         await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="Бюджет", web_app=WebAppInfo(url=MINI_APP_URL))
+            menu_button=MenuButtonWebApp(text=MENU_BUTTON_TEXT, web_app=WebAppInfo(url=MINI_APP_URL))
         )
     except Exception:
         logger.exception("Не удалось настроить кнопку меню")
