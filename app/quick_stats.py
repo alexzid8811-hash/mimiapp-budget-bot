@@ -15,6 +15,11 @@ def _registered(user_id: int) -> bool:
         return con.execute("SELECT 1 FROM settings WHERE user_id=?", (user_id,)).fetchone() is not None
 
 
+def is_irregular_user(user_id: int) -> bool:
+    """The budget is in the irregular-income mode; False for an unknown user."""
+    return _registered(user_id) and irregular_engine.is_irregular(user_id)
+
+
 def _today_expenses(user_id: int, day: str, irregular: bool) -> tuple[list[dict], list[dict], list[dict]]:
     """Today's expenses split the way the budget counts them: everyday
     spending (in «Потрачено» of the home screen), mandatory payments and, in
@@ -58,6 +63,9 @@ def quick_numbers(user_id: int) -> dict | None:
             "free_balance": float(flow["free_balance"]),
             "stretch_until": flow["stretch_until"],
             "days_left": int(flow["days_left"]),
+            # The same warning as on the home screen of this mode.
+            "no_income_warning": bool(flow["no_income_warning"]),
+            "days_without_income": int(flow["days_without_income"]),
         }
     else:
         # The same calculation as the home screen and the morning report.

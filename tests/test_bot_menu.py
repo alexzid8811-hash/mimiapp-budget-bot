@@ -41,16 +41,17 @@ def expense(client, amount, note, day="2026-09-15"):
     return post(client, "/api/transactions", {"type": "expense", "amount": amount, "tx_date": day, "note": note})
 
 
-def press(button, user_id=1):
-    """Run the button handler with a fake update; return its replies."""
+def press(button, user_id=1, handler=None, chat_type="private"):
+    """Run a handler (the menu buttons by default) with a fake update; return its replies."""
     replies = []
 
     async def reply_text(text, reply_markup=None):
         replies.append((text, reply_markup))
 
     message = SimpleNamespace(text=button, reply_text=reply_text)
-    update = SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=user_id))
-    asyncio.run(bot.menu_button(update, None))
+    update = SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=user_id),
+                             effective_chat=SimpleNamespace(type=chat_type))
+    asyncio.run((handler or bot.menu_button)(update, None))
     return replies
 
 
@@ -148,6 +149,24 @@ def test_buttons_answer_with_the_numbers_of_the_sender(client, monkeypatch):
     assert text == "Ваш личный бюджет:"
     assert markup.inline_keyboard[0][0].web_app.url == "https://budget.example"
 
+    # The irregular mode's button of an old keyboard: the answer of the
+    # current mode, and the keyboard of the current mode with it.
+    [(text, markup)] = press(bot.BTN_FREE)
+    assert text.startswith("💳 На карте:") and markup is bot.MENU_KEYBOARD
+
+
+def test_menu_command_sends_the_keyboard_of_the_budget_mode(client):
+    [(text, markup)] = press("/menu", handler=bot.show_menu)
+    assert text == "Быстрое меню — под полем ввода сообщения." and markup is bot.MENU_KEYBOARD
+    [(_, markup)] = press("/menu", user_id=77, handler=bot.show_menu)
+    assert markup is bot.MENU_KEYBOARD and not user_db_path(77).exists()
+    with connect() as con:
+        con.execute("UPDATE settings SET budget_mode='irregular' WHERE user_id=1")
+    [(_, markup)] = press("/menu", handler=bot.show_menu)
+    assert markup is bot.IRREGULAR_MENU_KEYBOARD
+    # No keyboard in a group: its buttons would not work there.
+    assert press("/menu", handler=bot.show_menu, chat_type="group") == []
+
 
 def test_calculation_error_is_reported_not_raised(client, monkeypatch):
     def broken(user_id):
@@ -201,8 +220,35 @@ def test_irregular_numbers_match_the_home_screen(irregular):
     assert "Оплачено из резерва на непредвиденное:\n• " in text and "500,00 ₽" in text
     assert "Сверх плана" not in text
     text = bot.card_text(numbers)
-    assert text.startswith(f"💳 Свободных денег: {bot.money(flow['free_balance'])} ₽")
+    assert text.startswith(f"💰 Свободных денег: {bot.money(flow['free_balance'])} ₽")
     assert f"осталось {flow['days_left']} дн." in text
+    assert numbers["no_income_warning"] is False and "Дохода не было" not in bot.today_text(numbers)
+
+    # The buttons answer with the numbers of this mode.
+    [(text, markup)] = press(bot.BTN_FREE)
+    assert text == bot.card_text(numbers) and markup is None
+    [(text, markup)] = press(bot.BTN_TODAY)
+    assert text == bot.today_text(numbers) and markup is None
+    [(text, markup)] = press(bot.BTN_SPENT)
+    assert text == bot.spent_text(numbers) and markup is None
+    # «На карте» of a keyboard sent before the switch to this mode.
+    [(text, markup)] = press(bot.BTN_CARD)
+    assert text == bot.card_text(numbers) and markup is bot.IRREGULAR_MENU_KEYBOARD
+
+
+def test_irregular_no_income_warning(irregular):
+    client = irregular
+    assert client.put("/api/budget-mode", json={
+        "budget_mode": "irregular", "start_date": "2026-10-01", "start_total": 0, "start_reserve": 0,
+    }).status_code == 200
+    post(client, "/api/irregular/incomes", {"amount": 20000, "tx_date": "2026-10-01"})
+    client.now["today"] = date(2026, 10, 20)
+    with user_scope(1):
+        numbers = quick_numbers(1)
+    flow = client.get("/api/irregular").json()
+    assert numbers["no_income_warning"] is flow["no_income_warning"] is True
+    assert numbers["days_without_income"] == flow["days_without_income"] == 19
+    assert "⚠️ Дохода не было 19 дн. При необходимости возьмите деньги из резерва." in bot.today_text(numbers)
 
 
 def test_irregular_mode_without_start(irregular):
@@ -212,14 +258,21 @@ def test_irregular_mode_without_start(irregular):
         numbers = quick_numbers(1)
     assert numbers == {"mode": "irregular", "configured": False}
     assert "Подработки» ещё не настроен" in bot.menu_reply_text(bot.BTN_TODAY, numbers)
+    [(text, markup)] = press(bot.BTN_FREE)
+    assert "Подработки» ещё не настроен" in text
 
 
-def test_menu_keyboard_has_no_web_app_buttons():
-    data = bot.MENU_KEYBOARD.to_dict()
-    assert data["is_persistent"] is True and data["resize_keyboard"] is True
-    assert [b["text"] for row in data["keyboard"] for b in row] == bot.MENU_BUTTONS
-    # A web_app button here would open the app without initData (HTTP 401).
-    assert all("web_app" not in b for row in data["keyboard"] for b in row)
+def test_menu_keyboards_have_no_web_app_buttons():
+    labels = {}
+    for keyboard in (bot.MENU_KEYBOARD, bot.IRREGULAR_MENU_KEYBOARD):
+        data = keyboard.to_dict()
+        assert data["is_persistent"] is True and data["resize_keyboard"] is True
+        labels[keyboard] = [b["text"] for row in data["keyboard"] for b in row]
+        # A web_app button here would open the app without initData (HTTP 401).
+        assert all("web_app" not in b for row in data["keyboard"] for b in row)
+    assert labels[bot.MENU_KEYBOARD] == [bot.BTN_TODAY, bot.BTN_SPENT, bot.BTN_CARD, bot.BTN_OPEN]
+    assert labels[bot.IRREGULAR_MENU_KEYBOARD] == [bot.BTN_TODAY, bot.BTN_SPENT, bot.BTN_FREE, bot.BTN_OPEN]
+    assert set(bot.MENU_BUTTONS) == set(labels[bot.MENU_KEYBOARD]) | set(labels[bot.IRREGULAR_MENU_KEYBOARD])
 
 
 def test_morning_report_brings_the_menu(monkeypatch):
@@ -228,13 +281,17 @@ def test_morning_report_brings_the_menu(monkeypatch):
     async def send_message(**kwargs):
         sent.append(kwargs)
 
-    monkeypatch.setattr(bot, "pending_morning_reports", lambda now: [{"user_id": 5}])
+    reports = [{"user_id": 5}, {"user_id": 6, "mode": "irregular"}]
+    monkeypatch.setattr(bot, "pending_morning_reports", lambda now: reports)
     monkeypatch.setattr(bot, "morning_report_text", lambda report: "Отчёт")
     monkeypatch.setattr(bot, "record_morning_report", recorded.append)
     application = SimpleNamespace(bot=SimpleNamespace(send_message=send_message))
     asyncio.run(bot.send_morning_reports(application))
-    assert sent == [{"chat_id": 5, "text": "Отчёт", "reply_markup": bot.MENU_KEYBOARD}]
-    assert recorded == [{"user_id": 5}]
+    assert sent == [
+        {"chat_id": 5, "text": "Отчёт", "reply_markup": bot.MENU_KEYBOARD},
+        {"chat_id": 6, "text": "Отчёт", "reply_markup": bot.IRREGULAR_MENU_KEYBOARD},
+    ]
+    assert recorded == reports
 
 
 class FakeBot:
