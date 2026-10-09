@@ -398,6 +398,18 @@ test('localized money is parsed before expense submission', async () => {
   assert.equal(JSON.parse(request.body).amount,2070);
 });
 
+test('irregular payments tab shows only payments up to the current month', () => {
+  const {sandbox,get} = setup();
+  vm.runInContext(`state.plan=[
+    {id:1,title:'Подорожник',amount:2500,due_date:'2000-01-01',paid:false,reserved:2500,missing:0},
+    {id:2,title:'Комуналка',amount:12000,due_date:'2999-01-06',paid:false,reserved:0,missing:12000},
+  ]; renderPlan();`, sandbox);
+  assert.match(get('planList').innerHTML, /Подорожник[\s\S]*Комуналка/);
+  vm.runInContext(`state.bootstrap={settings:{budget_mode:'irregular'}}; renderPlan();`, sandbox);
+  assert.match(get('planList').innerHTML, /Подорожник/);
+  assert.doesNotMatch(get('planList').innerHTML, /Комуналка/);
+});
+
 test('home screen lists upcoming unpaid bills and the latest operations', async () => {
   const {get,responses} = setup();
   responses['/api/plan'] = [
@@ -509,15 +521,6 @@ test('irregular mode shows its own home numbers and warnings', async () => {
   assert.equal(get('irrNoIncomeWarning').classList.contains('hidden'),true);
   assert.match(get('irrReserveMovements').innerHTML,/Процент от дохода/);
   assert.match(get('irrObligationsList').innerHTML,/отложено полностью/);
-});
-
-test('reserves list shows only payments of the current month', async () => {
-  const {get,responses} = irregularSetup();
-  responses['/api/irregular'].bills.push(
-    {id:2,title:'Транспорт',due_date:'2026-11-01',amount:2500,reserved:0,missing:2500,paid:false,payment_id:null,paid_amount:null});
-  await get('refreshBtn').listeners.click();
-  assert.match(get('irrObligationsList').innerHTML,/Интернет/);
-  assert.doesNotMatch(get('irrObligationsList').innerHTML,/Транспорт/);
 });
 
 test('no income for a long time offers to take money from the reserve', async () => {

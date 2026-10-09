@@ -78,15 +78,13 @@
     show("irrObligationsWarning", Boolean(shortfall));
     const list = $("irrObligationsList");
     if (!list) return;
-    // Payments of later months appear once their month comes.
-    const month = String(flow.today || today()).slice(0, 7);
-    const rows = (flow.bills || []).filter(b => b.due_date.slice(0, 7) <= month);
+    const rows = flow.bills || [];
     list.innerHTML = rows.length ? rows.map(b => {
       const status = b.paid ? `оплачено ${money(b.paid_amount)}`
         : Number(b.missing) > 0 ? `отложено ${money(b.reserved)} · не хватает ${money(b.missing)}`
         : `отложено полностью`;
       return `<div class="list-row"><div class="row-text"><div class="row-title">${esc(b.title)}</div><div class="row-sub">${day(b.due_date)} · ${status}</div></div><div class="amount ${b.paid ? "" : "expense"}">${money(b.amount)}</div></div>`;
-    }).join("") : `<div class="empty">Обязательных платежей в этом месяце нет.</div>`;
+    }).join("") : `<div class="empty">Обязательных платежей в окне нет.</div>`;
   }
 
   function renderReserve(reserve, flow) {
