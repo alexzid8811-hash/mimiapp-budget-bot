@@ -29,14 +29,20 @@ const sample = {
 
 function setup(response = sample) {
   const elements = new Map(), requests = [];
-  const element = () => ({
-    innerHTML: '', textContent: '', disabled: false, className: '', style: {}, dataset: {}, listeners: {},
-    classList: {toggle() {}, add() {}, remove() {}, contains: () => false},
-    addEventListener(type, fn) { this.listeners[type] = fn; },
-    setAttribute() {},
-    querySelector() { return element(); },
-    getBoundingClientRect: () => ({width: 380}),
-  });
+  const element = () => {
+    const classes = new Set();
+    return {
+      innerHTML: '', textContent: '', disabled: false, className: '', style: {}, dataset: {}, listeners: {},
+      classList: {
+        toggle: (c, on = !classes.has(c)) => { if (on) classes.add(c); else classes.delete(c); return on; },
+        add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c),
+      },
+      addEventListener(type, fn) { this.listeners[type] = fn; },
+      setAttribute() {},
+      querySelector() { return element(); },
+      getBoundingClientRect: () => ({width: 380}),
+    };
+  };
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   const modes = ['period', 'month', 'year'].map(mode => ({...element(), dataset: {amode: mode}}));
   const sandbox = {
@@ -85,7 +91,10 @@ test('analytics page renders totals, categories and bills', async () => {
   assert.match(bills, /Интернет<small>первый платёж 3 окт\. — 800[\s\u00a0]₽<\/small><\/span><span class="num muted">—/);
   assert.equal(get('analyticsDaysNote').textContent, '');
   assert.equal(get('analyticsDaysLegend').innerHTML.match(/в среднем/gi).length, 1);
-  assert.match(get('analyticsMonthsNote').innerHTML, /В среднем 900[\s\u00a0]₽ в месяц/);
+  // The months card belongs to the year tab only.
+  assert.equal(get('analyticsDaysCard').classList.contains('hidden'), false);
+  assert.equal(get('analyticsMonthsCard').classList.contains('hidden'), true);
+  assert.equal(get('analyticsMonths').innerHTML, '');
 });
 
 test('every tab shows the average spend, the card period too', async () => {
@@ -103,7 +112,19 @@ test('every tab shows the average spend, the card period too', async () => {
   // The dashed line is the average, not the limit.
   assert.match(get('analyticsDays').innerHTML, /stroke="var\(--muted\)" stroke-width="1\.5" stroke-dasharray/);
   assert.doesNotMatch(get('analyticsDays').innerHTML, /stroke="var\(--expense\)"/);
-  assert.match(get('analyticsMonthsNote').innerHTML, /В среднем 900[\s\u00a0]₽ в месяц/);
+  assert.equal(get('analyticsMonthsCard').classList.contains('hidden'), true);
+});
+
+test('the year tab shows months with their average instead of days', async () => {
+  const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+    .map((label, i) => ({month: `2026-${String(i + 1).padStart(2, '0')}`, label, daily: {8: 26990, 9: 12160}[i] || 0, bills: 0, piggy: 0}));
+  const year = {...sample, mode: 'year', label: '2026 год', start: '2026-01-01', end: '2026-12-31', days: [], months};
+  const {sandbox, get} = setup(year);
+  await sandbox.window.budgetAnalytics.load();
+  assert.equal(get('analyticsDaysCard').classList.contains('hidden'), true);
+  assert.equal(get('analyticsMonthsCard').classList.contains('hidden'), false);
+  assert.match(get('analyticsMonthsNote').innerHTML, /В среднем 19[\s\u00a0]575[\s\u00a0]₽ в месяц \(месяцев с тратами: 2\)/);
+  assert.match(get('analyticsMonths').innerHTML, /stroke="var\(--muted\)" stroke-width="1\.5" stroke-dasharray/);
 });
 
 test('switching mode and expanding a category', async () => {

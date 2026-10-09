@@ -743,14 +743,14 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
 @media(min-width:1024px){
   .page[data-page="analytics"].active{
     display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:8px;align-items:start;
-    grid-template-areas:"modes modes" "nav nav" "hero cats" "days cats" "months cats" "bills cats";
+    grid-template-areas:"modes modes" "nav nav" "hero cats" "chart cats" "bills cats";
   }
   .page[data-page="analytics"] .analytics-modes{grid-area:modes;margin:0}
   .page[data-page="analytics"] .analytics-nav{grid-area:nav;margin:0}
   .page[data-page="analytics"] .analytics-hero{grid-area:hero}
   .page[data-page="analytics"] .analytics-cats-card{grid-area:cats}
-  .page[data-page="analytics"] #analyticsDaysCard{grid-area:days}
-  .page[data-page="analytics"] .analytics-months-card{grid-area:months}
+  /* Days and months never show together: the year tab has months only. */
+  .page[data-page="analytics"] #analyticsDaysCard,.page[data-page="analytics"] .analytics-months-card{grid-area:chart}
   .page[data-page="analytics"] .analytics-bills-card{grid-area:bills}
   .page[data-page="analytics"] .card{margin:0}
 }
