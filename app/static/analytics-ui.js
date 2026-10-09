@@ -166,23 +166,25 @@
     $("analyticsDaysLegend").innerHTML = (limit
       ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход (лимит ${rub(limit)}/день)</span>`
       : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span>`)
-      + `<span><i class="avg"></i>В среднем ${rub(average)}/день</span>`;
+      + `<span>В среднем ${rub(average)}/день</span>`;
   }
 
+  // Months belong to the year tab only: a month or card period has its days.
   function renderMonths() {
+    $("analyticsMonthsCard").classList.toggle("hidden", data.mode !== "year");
+    if (data.mode !== "year") return;
     const months = data.months, values = months.map(m => m.daily);
-    const from = data.start.slice(0, 7), to = data.end.slice(0, 7);
     const filled = values.filter(v => v > 0);
     const average = filled.length ? filled.reduce((a, b) => a + b, 0) / filled.length : 0;
     barChart($("analyticsMonths"), values, months.map(m => m.label.slice(0, 3)), {
       aria: "Траты по месяцам",
       line: average,
       lineColor: "var(--muted)",
-      color: (v, i) => data.mode === "year" || (months[i].month >= from && months[i].month <= to) ? "var(--kind-daily)" : "color-mix(in srgb, var(--kind-daily) 40%, var(--surface-2))",
+      color: () => "var(--kind-daily)",
       tip: (v, i) => `<b>${esc(months[i].label)}</b> · ${rub(v)}`,
     });
     $("analyticsMonthsNote").innerHTML = filled.length
-      ? `<span><i class="avg"></i>В среднем ${rub(average)} в месяц${filled.length < values.length ? ` (месяцев с тратами: ${filled.length})` : ""}</span>`
+      ? `<span>В среднем ${rub(average)} в месяц${filled.length < values.length ? ` (месяцев с тратами: ${filled.length})` : ""}</span>`
       : "Трат за эти месяцы нет.";
   }
 
@@ -233,7 +235,8 @@
   window.addEventListener?.("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      const width = $("analyticsMonths")?.clientWidth || 0;
+      // Only one of the two charts is visible; a hidden one measures 0.
+      const width = Math.max($("analyticsDays")?.clientWidth || 0, $("analyticsMonths")?.clientWidth || 0);
       if (data && width && width !== lastWidth) { lastWidth = width; renderDays(); renderMonths(); }
     }, 150);
   });

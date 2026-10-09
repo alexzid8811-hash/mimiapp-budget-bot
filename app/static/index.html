@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261007-past-periods" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261009-average-text" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -82,13 +82,16 @@
 
       <section class="page" data-page="operations">
         <div class="section-head"><div><h2>Операции</h2></div><button class="secondary" id="addIncomeTxBtn">＋ Доход</button></div>
+        <div class="segmented" role="tablist" aria-label="Вид операций">
+          <button role="tab" type="button" data-txview="daily" aria-selected="true">Повседневные</button>
+          <button role="tab" type="button" data-txview="bills" aria-selected="false">Обязательные</button>
+        </div>
         <div class="ops-tools">
           <input id="txSearch" type="search" placeholder="Поиск по операциям" autocomplete="off" aria-label="Поиск по операциям" />
-          <div class="chips" role="group" aria-label="Тип операций">
+          <div class="chips" id="txChips" role="group" aria-label="Тип операций">
             <button class="chip" type="button" data-txf="all" aria-pressed="true">Все</button>
             <button class="chip" type="button" data-txf="expense" aria-pressed="false">Расходы</button>
             <button class="chip" type="button" data-txf="income" aria-pressed="false">Доходы</button>
-            <button class="chip" type="button" data-txf="bills" aria-pressed="false">Платежи</button>
             <button class="chip" type="button" data-txf="piggy" aria-pressed="false">Копилка</button>
           </div>
         </div>
@@ -134,7 +137,7 @@
           <div class="analytics-chart" id="analyticsDays"></div>
           <div class="analytics-legend" id="analyticsDaysLegend"></div>
         </div>
-        <div class="card analytics-months-card">
+        <div class="card analytics-months-card" id="analyticsMonthsCard">
           <div class="section-head"><h3>По месяцам</h3><span class="muted">обычные траты</span></div>
           <div class="analytics-chart" id="analyticsMonths"></div>
           <div class="analytics-legend" id="analyticsMonthsNote"></div>
@@ -498,12 +501,12 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261006-irregular"></script>
+  <script src="/static/app.js?v=20261009-bills-tab"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20261007-past-periods"></script>
   <script src="/static/design-ui.js?v=20261006-irregular"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
-  <script src="/static/analytics-ui.js?v=20261005-upcoming-bills"></script>
-  <script src="/static/irregular-ui.js?v=20261006-irregular"></script>
+  <script src="/static/analytics-ui.js?v=20261009-average-text"></script>
+  <script src="/static/irregular-ui.js?v=20261009-reserve-date"></script>
 </body>
 </html>

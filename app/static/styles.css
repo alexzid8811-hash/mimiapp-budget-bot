@@ -559,7 +559,6 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .analytics-tip.on{opacity:1}
 .analytics-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:8px 0 6px}
 .analytics-legend span{display:inline-flex;align-items:center;gap:5px}
-.analytics-legend i.avg{height:0;width:14px;border-radius:0;border-top:2px dashed var(--muted)}
 .analytics-bills{display:grid;gap:8px;padding-bottom:6px}
 .analytics-bill{display:flex;justify-content:space-between;gap:8px;font-size:14px}
 .analytics-bill > span:last-child{white-space:nowrap}
@@ -743,14 +742,14 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
 @media(min-width:1024px){
   .page[data-page="analytics"].active{
     display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:8px;align-items:start;
-    grid-template-areas:"modes modes" "nav nav" "hero cats" "days cats" "months cats" "bills cats";
+    grid-template-areas:"modes modes" "nav nav" "hero cats" "chart cats" "bills cats";
   }
   .page[data-page="analytics"] .analytics-modes{grid-area:modes;margin:0}
   .page[data-page="analytics"] .analytics-nav{grid-area:nav;margin:0}
   .page[data-page="analytics"] .analytics-hero{grid-area:hero}
   .page[data-page="analytics"] .analytics-cats-card{grid-area:cats}
-  .page[data-page="analytics"] #analyticsDaysCard{grid-area:days}
-  .page[data-page="analytics"] .analytics-months-card{grid-area:months}
+  /* Days and months never show together: the year tab has months only. */
+  .page[data-page="analytics"] #analyticsDaysCard,.page[data-page="analytics"] .analytics-months-card{grid-area:chart}
   .page[data-page="analytics"] .analytics-bills-card{grid-area:bills}
   .page[data-page="analytics"] .card{margin:0}
 }

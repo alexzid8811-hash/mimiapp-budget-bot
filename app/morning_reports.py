@@ -144,7 +144,6 @@ def _irregular_report(user_id: int, today: date, yesterday: date, expenses: list
         return None
     daily_amount = float(flow["available_today"])
     daily_limit = float(flow["today_target"])
-    stretch_days = int(flow["settings"]["stretch_days"])
     return {
         "mode": "irregular",
         "user_id": user_id,
@@ -165,7 +164,7 @@ def _irregular_report(user_id: int, today: date, yesterday: date, expenses: list
         "next_bill": flow["next_bill"],
         "bills_shortfall": flow["bills_shortfall"],
         "days_without_income": flow["days_without_income"],
-        "no_income_warning": flow["days_without_income"] >= stretch_days,
+        "no_income_warning": flow["no_income_warning"],
         "piggy_balance": float(flow["piggy_bank_balance"]),
     }
 

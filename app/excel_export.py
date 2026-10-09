@@ -97,7 +97,33 @@ OTHER_COLOR = "9AA1AD"
 KIND_COLORS = {"daily": "2481CC", "bills": "8A6FD6", "piggy": "1F8F57"}
 KIND_TITLES = {"daily": "Повседневные траты", "bills": "Обязательные платежи", "piggy": "Отложено в копилку"}
 SECTION_FONT = Font(bold=True, size=13)
-CHART_ROWS = 18
+CHART_COLUMN = "F"  # right after the widest table (A–D) and a narrow gap column
+ROW_HEIGHT_CM = 0.53  # default Excel row, 15 pt
+
+
+def _chart_rows(chart) -> int:
+    """How many rows a chart covers, so the next section starts right below it."""
+    return int(chart.height / ROW_HEIGHT_CM) + 2
+
+
+def _tidy(chart) -> None:
+    """Keep the title and the legend outside the plot area.
+
+    Without an explicit overlay=0 Excel draws both on top of the bars.
+    """
+    if chart.title is not None:
+        chart.title.overlay = False
+    if chart.legend is not None:
+        chart.legend.overlay = False
+
+
+def _value_labels() -> DataLabelList:
+    # Every flag is written explicitly: an omitted one is shown by Excel.
+    labels = DataLabelList()
+    labels.showVal = True
+    labels.showPercent = labels.showCatName = labels.showSerName = labels.showLegendKey = False
+    labels.numFmt = "#,##0"
+    return labels
 
 
 def _category_color(order: dict, category_id) -> str:
@@ -157,8 +183,9 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
         }
     ws = wb.create_sheet("Графики", 1)
     ws.column_dimensions["A"].width = 26
-    for letter in "BCDE":
+    for letter in "BCD":
         ws.column_dimensions[letter].width = 16
+    ws.column_dimensions["E"].width = 3
     ws["A1"] = f"Аналитика расходов · {data['label']}"
     ws["A1"].font = Font(bold=True, size=15)
     row = 3
@@ -181,7 +208,7 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
     if total:
         pie = PieChart()
         pie.title = "Куда ушли деньги"
-        pie.height, pie.width = 8.5, 12
+        pie.height, pie.width = 8.5, 17
         pie.add_data(Reference(ws, min_col=2, min_row=start, max_row=end - 1), titles_from_data=True)
         pie.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
         series = pie.series[0]
@@ -192,8 +219,14 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
             series.dPt.append(point)
         pie.dataLabels = DataLabelList()
         pie.dataLabels.showPercent = True
-        ws.add_chart(pie, f"G{row}")
-    row = max(end + 2, row + CHART_ROWS)
+        pie.dataLabels.showVal = pie.dataLabels.showCatName = False
+        pie.dataLabels.showSerName = pie.dataLabels.showLegendKey = False
+        pie.legend.position = "r"
+        _tidy(pie)
+        ws.add_chart(pie, f"{CHART_COLUMN}{row}")
+        row = max(end + 2, row + _chart_rows(pie))
+    else:
+        row = end + 2
 
     # 2. What it was spent on.
     ws.cell(row=row, column=1, value="На что потрачено (обычные траты)").font = SECTION_FONT
@@ -211,16 +244,23 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
         chart.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
         chart.x_axis.scaling.orientation = "maxMin"  # largest on top, as in the app
         chart.legend = None
+        # Amounts are printed on the bars; a value axis would be redundant and,
+        # with the reversed category axis, Excel puts it under the title.
+        chart.y_axis.delete = True
+        chart.y_axis.majorGridlines = None
+        chart.dataLabels = _value_labels()
         series = chart.series[0]
         for index, c in enumerate(cats):
             point = DataPoint(idx=index)
             point.graphicalProperties.solidFill = _category_color(order, c["id"])
             point.graphicalProperties.line.solidFill = _category_color(order, c["id"])
             series.dPt.append(point)
-        ws.add_chart(chart, f"G{row}")
+        _tidy(chart)
+        ws.add_chart(chart, f"{CHART_COLUMN}{row}")
+        row = max(end + 2, row + _chart_rows(chart))
     else:
         ws.cell(row=start + 1, column=1, value="Расходов за месяц нет")
-    row = max(end + 2, row + max(CHART_ROWS, int(1 + 0.8 * len(cats) * 2)))
+        row = end + 3
 
     # 3. By day.
     ws.cell(row=row, column=1, value="Траты по дням").font = SECTION_FONT
@@ -235,8 +275,9 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
     chart.x_axis.number_format = "DD"
     chart.legend = None
     _fill(chart.series[0], KIND_COLORS["daily"])
-    ws.add_chart(chart, f"G{row}")
-    row = max(end + 2, row + CHART_ROWS)
+    _tidy(chart)
+    ws.add_chart(chart, f"{CHART_COLUMN}{row}")
+    row = max(end + 2, row + _chart_rows(chart))
 
     # 4. Last twelve months.
     ws.cell(row=row, column=1, value="По месяцам").font = SECTION_FONT
@@ -244,15 +285,18 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
     _header(ws, start, ["Месяц", *(KIND_TITLES[key] for key in kinds)])
     months = analytics.monthly(user_id, add_months(today.replace(day=1), -11), 12)
     end = _rows(ws, start + 1, [
-        [f"{m['label']} {m['month'][:4]}", *(m[key] for key in kinds)] for m in months
+        # Short "окт 26" labels fit under the columns without being rotated.
+        [f"{m['label'][:3].lower()} {m['month'][2:4]}", *(m[key] for key in kinds)] for m in months
     ], {2, 3, 4})
     chart = _bar_chart("Куда ушли деньги по месяцам", stacked=True)
+    chart.width = 22  # twelve month labels fit on one line
     chart.add_data(Reference(ws, min_col=2, max_col=4, min_row=start, max_row=end - 1), titles_from_data=True)
     chart.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
     for series, key in zip(chart.series, kinds):
         _fill(series, KIND_COLORS[key])
     chart.legend.position = "b"
-    ws.add_chart(chart, f"G{row}")
+    _tidy(chart)
+    ws.add_chart(chart, f"{CHART_COLUMN}{row}")
 
 
 def _query(con: Any, sql: str, params: tuple) -> list[dict]:
@@ -374,6 +418,7 @@ def _build_workbook(user_id: int) -> bytes:
                 color = CATEGORY_COLORS[index] if index is not None and index < len(CATEGORY_COLORS) else OTHER_COLOR
             _fill(series, color)
         chart.legend.position = "b"
+        _tidy(chart)
         ws.add_chart(chart, f"A{ws.max_row + 3}")
 
     build_charts_sheet(wb, user_id, currency, clock.today())

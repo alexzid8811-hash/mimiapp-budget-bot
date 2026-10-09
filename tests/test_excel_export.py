@@ -57,7 +57,7 @@ def test_excel_export_contains_operations_pivot_and_piggy(tmp_path, monkeypatch)
     kinds = {r[0]: r[1] for r in values}
     assert (kinds["Повседневные траты"], kinds["Обязательные платежи"], kinds["Отложено в копилку"]) == (700, 0, 1000)
     assert any(r[0] == "☕ Тестовая кофейня" and r[1] == 700 and r[3] == 300 for r in values)
-    assert any(r[0] == "Сентябрь 2026" and r[1] == 700 and r[3] == 1000 for r in values)
+    assert any(r[0] == "сен 26" and r[1] == 700 and r[3] == 1000 for r in values)
 
 
 def test_excel_charts_are_embedded(tmp_path, monkeypatch):
@@ -77,3 +77,14 @@ def test_excel_charts_are_embedded(tmp_path, monkeypatch):
     names = zipfile.ZipFile(io.BytesIO(content)).namelist()
     # Pie, categories, days and months on "Графики" plus the pivot chart.
     assert len([n for n in names if n.startswith("xl/charts/chart")]) == 5
+    # Titles and legends stay outside the plot area and the pie shows only
+    # percentages: Excel draws every omitted flag, which made labels overlap.
+    archive = zipfile.ZipFile(io.BytesIO(content))
+    for name in [n for n in names if n.startswith("xl/charts/chart")]:
+        xml = archive.read(name).decode()
+        assert xml.count('<overlay val="1"') == 0, name
+        if "<title>" in xml:
+            assert '<overlay val="0"' in xml, name
+    pie = next(archive.read(n).decode() for n in names if n.startswith("xl/charts/") and b"pieChart" in archive.read(n))
+    for flag in ("showVal", "showCatName", "showSerName", "showLegendKey"):
+        assert f'<{flag} val="0"' in pie, flag
