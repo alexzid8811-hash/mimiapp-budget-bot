@@ -511,6 +511,15 @@ test('irregular mode shows its own home numbers and warnings', async () => {
   assert.match(get('irrObligationsList').innerHTML,/отложено полностью/);
 });
 
+test('reserves list shows only payments of the current month', async () => {
+  const {get,responses} = irregularSetup();
+  responses['/api/irregular'].bills.push(
+    {id:2,title:'Транспорт',due_date:'2026-11-01',amount:2500,reserved:0,missing:2500,paid:false,payment_id:null,paid_amount:null});
+  await get('refreshBtn').listeners.click();
+  assert.match(get('irrObligationsList').innerHTML,/Интернет/);
+  assert.doesNotMatch(get('irrObligationsList').innerHTML,/Транспорт/);
+});
+
 test('no income for a long time offers to take money from the reserve', async () => {
   const {get,responses} = irregularSetup();
   Object.assign(responses['/api/irregular'],{no_income_warning:true,days_without_income:17,window_extended:true});
