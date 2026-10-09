@@ -154,29 +154,35 @@
     const labels = days.map((d, i) => i % every === 0 ? String(Number(d.date.slice(8))) : "");
     // The line's value lives in the legend only, so the caption isn't repeated.
     $("analyticsDaysNote").textContent = "";
+    // The dashed line is the average in every mode; the card-period limit
+    // only colours the days that went over it.
     barChart($("analyticsDays"), values, labels, {
       aria: "Траты по дням",
-      line: limit || average,
-      lineColor: limit ? "var(--expense)" : "var(--muted)",
+      line: average,
+      lineColor: "var(--muted)",
       color: v => limit && v > limit ? "var(--expense)" : "var(--kind-daily)",
       tip: (v, i) => `<b>${day(days[i].date)}</b> · ${rub(v)}${limit && v > limit ? ` · +${rub(v - limit)}` : ""}`,
     });
-    $("analyticsDaysLegend").innerHTML = limit
-      ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход</span><span><i class="line"></i>Лимит ${rub(limit)}/день</span>`
-      : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span><span><i class="avg"></i>В среднем ${rub(average)}/день</span>`;
+    $("analyticsDaysLegend").innerHTML = (limit
+      ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход (лимит ${rub(limit)}/день)</span>`
+      : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span>`)
+      + `<span><i class="avg"></i>В среднем ${rub(average)}/день</span>`;
   }
 
   function renderMonths() {
     const months = data.months, values = months.map(m => m.daily);
     const from = data.start.slice(0, 7), to = data.end.slice(0, 7);
+    const filled = values.filter(v => v > 0);
+    const average = filled.length ? filled.reduce((a, b) => a + b, 0) / filled.length : 0;
     barChart($("analyticsMonths"), values, months.map(m => m.label.slice(0, 3)), {
       aria: "Траты по месяцам",
+      line: average,
+      lineColor: "var(--muted)",
       color: (v, i) => data.mode === "year" || (months[i].month >= from && months[i].month <= to) ? "var(--kind-daily)" : "color-mix(in srgb, var(--kind-daily) 40%, var(--surface-2))",
       tip: (v, i) => `<b>${esc(months[i].label)}</b> · ${rub(v)}`,
     });
-    const filled = values.filter(v => v > 0);
-    $("analyticsMonthsNote").textContent = filled.length
-      ? `В среднем ${rub(filled.reduce((a, b) => a + b, 0) / filled.length)} в месяц${filled.length < values.length ? ` (месяцев с тратами: ${filled.length})` : ""}.`
+    $("analyticsMonthsNote").innerHTML = filled.length
+      ? `<span><i class="avg"></i>В среднем ${rub(average)} в месяц${filled.length < values.length ? ` (месяцев с тратами: ${filled.length})` : ""}</span>`
       : "Трат за эти месяцы нет.";
   }
 

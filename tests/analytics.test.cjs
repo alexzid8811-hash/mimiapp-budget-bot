@@ -27,7 +27,7 @@ const sample = {
   ],
 };
 
-function setup() {
+function setup(response = sample) {
   const elements = new Map(), requests = [];
   const element = () => ({
     innerHTML: '', textContent: '', disabled: false, className: '', style: {}, dataset: {}, listeners: {},
@@ -43,7 +43,7 @@ function setup() {
     console, URLSearchParams, Intl, Date, Math, Number, String,
     window: {},
     state: {bootstrap: {categories: [{id: 1}, {id: 2}]}},
-    api: async url => { requests.push(url); return sample; },
+    api: async url => { requests.push(url); return response; },
     document: {
       getElementById: get,
       querySelectorAll: sel => sel === '[data-amode]' ? modes : [],
@@ -85,6 +85,25 @@ test('analytics page renders totals, categories and bills', async () => {
   assert.match(bills, /Интернет<small>первый платёж 3 окт\. — 800[\s\u00a0]₽<\/small><\/span><span class="num muted">—/);
   assert.equal(get('analyticsDaysNote').textContent, '');
   assert.equal(get('analyticsDaysLegend').innerHTML.match(/в среднем/gi).length, 1);
+  assert.match(get('analyticsMonthsNote').innerHTML, /В среднем 900[\s\u00a0]₽ в месяц/);
+});
+
+test('every tab shows the average spend, the card period too', async () => {
+  const period = {
+    ...sample, mode: 'period', label: '8 октября — 22 октября', start: '2026-10-08', end: '2026-10-22', today: '2026-10-09',
+    days: [{date: '2026-10-08', amount: 1580}, {date: '2026-10-09', amount: 0}, {date: '2026-10-10', amount: 0}],
+    daily_limit: 1420,
+  };
+  const {sandbox, get} = setup(period);
+  await sandbox.window.budgetAnalytics.load();
+  const legend = get('analyticsDaysLegend').innerHTML;
+  // Only days up to today count: (1580 + 0) / 2.
+  assert.match(legend, /В среднем 790[\s\u00a0]₽\/день/);
+  assert.match(legend, /Перерасход \(лимит 1[\s\u00a0]420[\s\u00a0]₽\/день\)/);
+  // The dashed line is the average, not the limit.
+  assert.match(get('analyticsDays').innerHTML, /stroke="var\(--muted\)" stroke-width="1\.5" stroke-dasharray/);
+  assert.doesNotMatch(get('analyticsDays').innerHTML, /stroke="var\(--expense\)"/);
+  assert.match(get('analyticsMonthsNote').innerHTML, /В среднем 900[\s\u00a0]₽ в месяц/);
 });
 
 test('switching mode and expanding a category', async () => {
