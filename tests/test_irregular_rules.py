@@ -7,7 +7,8 @@ from app.irregular import (
 
 RUB = 100
 D = date
-SETTINGS = IrregularSettings(reserve_percent=10, stretch_days=14, lookahead_days=30)
+SETTINGS = IrregularSettings(reserve_percent=10, stretch_days=14, lookahead_days=30, bills_scope="days")
+MONTHLY = IrregularSettings(reserve_percent=10, stretch_days=14, bills_scope="month")
 
 
 def bills(until=D(2026, 12, 31)):
@@ -179,3 +180,27 @@ def test_start_money_goes_to_bills_then_free_without_percent():
     assert r.bills_total == 7000 * RUB
     assert r.free_end_today == 18000 * RUB
     assert r.stretch_until == D(2026, 10, 14)
+
+
+def test_month_scope_keeps_money_in_its_month():
+    # 31 October: October is covered, November's bills get nothing.
+    r = run(D(2026, 10, 31), [income(1, D(2026, 10, 3), 20000), income(2, D(2026, 10, 31), 10000)],
+            settings=MONTHLY)
+    assert (r.splits[1].bills, r.splits[2].bills) == (7000 * RUB, 0)
+    assert r.splits[2].free == 9000 * RUB
+    assert r.shortfall is None
+    # The lookahead scope would have taken the money for 10 and 25 November.
+    r = run(D(2026, 10, 31), [income(1, D(2026, 10, 3), 20000), income(2, D(2026, 10, 31), 10000)])
+    assert r.splits[2].bills == 7000 * RUB
+
+
+def test_month_scope_start_money_and_unpaid_bills_of_earlier_months():
+    # Start money covers only the start month.
+    r = run(D(2026, 10, 1), start_total=30000 * RUB, settings=MONTHLY)
+    assert r.bills_total == 7000 * RUB and r.free_end_today == 23000 * RUB
+    # October unpaid: November's money closes it first, then November's bills.
+    r = run(D(2026, 11, 2), [income(1, D(2026, 11, 2), 10000, percent=0)], settings=MONTHLY)
+    assert r.splits[1].bills == 10000 * RUB
+    assert r.bills_fund == {(1, D(2026, 10, 10)): 1000 * RUB, (2, D(2026, 10, 25)): 6000 * RUB,
+                            (1, D(2026, 11, 10)): 1000 * RUB, (2, D(2026, 11, 25)): 2000 * RUB}
+    assert r.shortfall.amount == 4000 * RUB and r.shortfall.due == D(2026, 11, 25)

@@ -7,13 +7,14 @@ from datetime import date, timedelta
 from . import clock, planning
 from .db import connect
 from .irregular import (
-    Bill, Income, IrregularInput, IrregularResult, IrregularSettings, ReserveMove, Split, replay,
+    Bill, Income, IrregularInput, IrregularResult, IrregularSettings, ReserveMove, Split, bills_horizon,
+    replay,
 )
 from .money import amount, cents
 
 SETTINGS_COLUMNS = (
     "budget_mode", "irregular_reserve_percent", "irregular_reserve_target", "irregular_stretch_days",
-    "irregular_bills_lookahead_days", "irregular_start_date", "irregular_start_total",
+    "irregular_bills_lookahead_days", "irregular_bills_scope", "irregular_start_date", "irregular_start_total",
     "irregular_start_reserve",
 )
 PREVIEW_ID = 10 ** 12  # processed after every stored income of the same day
@@ -46,6 +47,7 @@ def settings_for(uid: int, con=None) -> dict:
         "reserve_target": None if target is None else float(target),
         "stretch_days": int(data.get("irregular_stretch_days") or 14),
         "lookahead_days": int(data["irregular_bills_lookahead_days"]) if data.get("irregular_bills_lookahead_days") is not None else 30,
+        "bills_scope": "days" if data.get("irregular_bills_scope") == "days" else "month",
         "start_date": data.get("irregular_start_date"),
         "start_total": float(data.get("irregular_start_total") or 0),
         "start_reserve": float(data.get("irregular_start_reserve") or 0),
@@ -63,6 +65,7 @@ def _rules(settings: dict) -> IrregularSettings:
         reserve_target=None if target is None else cents(target),
         stretch_days=settings["stretch_days"],
         lookahead_days=settings["lookahead_days"],
+        bills_scope=settings["bills_scope"],
     )
 
 
@@ -136,8 +139,8 @@ def check_reserve(con, uid: int) -> None:
         )
 
 
-def _bills(con, uid: int, start: date, today: date, lookahead: int) -> list[Bill]:
-    horizon = today + timedelta(days=lookahead)
+def _bills(con, uid: int, start: date, today: date, rules: IrregularSettings) -> list[Bill]:
+    horizon = bills_horizon(today, rules)
     occurrences: dict[tuple[int, date], Bill] = {}
     for event in planning.bill_events(uid, start, horizon):
         due = date.fromisoformat(event["due_date"])
@@ -205,7 +208,7 @@ def build_input(uid: int, today: date | None = None) -> tuple[IrregularInput, di
                 _add(free_cover, day, value)
             else:
                 _add(free_in, day, value)
-        bills = _bills(con, uid, start, today, settings["lookahead_days"])
+        bills = _bills(con, uid, start, today, _rules(settings))
     inp = IrregularInput(
         start=start, today=today, start_total=cents(settings["start_total"]),
         start_reserve=cents(settings["start_reserve"]), settings=_rules(settings),
@@ -261,7 +264,7 @@ def split_dict(split: Split) -> dict:
 
 
 def _bill_rows(inp: IrregularInput, result: IrregularResult) -> list[dict]:
-    horizon = result.today + timedelta(days=inp.settings.lookahead_days)
+    horizon = bills_horizon(result.today, inp.settings)
     rows = []
     for bill in result.bills:
         reserved = result.bills_fund.get(bill.key, 0)

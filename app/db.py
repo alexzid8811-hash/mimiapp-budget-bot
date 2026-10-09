@@ -387,6 +387,8 @@ def _ensure_irregular_schema(con: sqlite3.Connection) -> None:
         "irregular_reserve_target": "REAL",
         "irregular_stretch_days": "INTEGER NOT NULL DEFAULT 14",
         "irregular_bills_lookahead_days": "INTEGER NOT NULL DEFAULT 30",
+        # month: money of a month goes to that month's bills; days: lookahead.
+        "irregular_bills_scope": "TEXT NOT NULL DEFAULT 'month'",
         "irregular_start_date": "TEXT",
         "irregular_start_total": "REAL NOT NULL DEFAULT 0",
         "irregular_start_reserve": "REAL NOT NULL DEFAULT 0",

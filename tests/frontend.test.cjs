@@ -523,6 +523,23 @@ test('irregular mode shows its own home numbers and warnings', async () => {
   assert.match(get('irrObligationsList').innerHTML,/отложено полностью/);
 });
 
+test('irregular settings choose bills of the current month or N days ahead', async () => {
+  const {get,responses,requests} = irregularSetup();
+  responses['/api/irregular'].settings.bills_scope = 'month';
+  responses['/api/irregular/settings'] = responses['/api/irregular'].settings;
+  await get('refreshBtn').listeners.click();
+  assert.equal(get('irrBillsScope').value,'month');
+  assert.equal(get('irrLookaheadField').classList.contains('hidden'),true);
+  assert.equal(get('irrBillsScopeHint').classList.contains('hidden'),false);
+  get('irrBillsScope').value = 'days';
+  get('irrBillsScope').listeners.change();
+  assert.equal(get('irrLookaheadField').classList.contains('hidden'),false);
+  assert.equal(get('irrBillsScopeHint').classList.contains('hidden'),true);
+  await get('saveIrregularBtn').listeners.click();
+  const saved = requests.find(r => r.url === '/api/irregular/settings' && r.body);
+  assert.equal(JSON.parse(saved.body).bills_scope,'days');
+});
+
 test('no income for a long time offers to take money from the reserve', async () => {
   const {get,responses} = irregularSetup();
   Object.assign(responses['/api/irregular'],{no_income_warning:true,days_without_income:17,window_extended:true});
