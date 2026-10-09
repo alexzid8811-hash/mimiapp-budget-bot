@@ -181,9 +181,12 @@ def test_buttons_answer_with_the_numbers_of_the_sender(client, monkeypatch):
     assert markup.inline_keyboard[0][0].web_app.url == "https://budget.example"
     assert not user_db_path(77).exists()
 
-    [(text, markup)] = press(bot.BTN_OPEN)
+    # «Открыть бюджет» of an old keyboard: the budget opens from here once,
+    # and the new keyboard (without this button) replaces the old one.
+    [(text, markup), (note, keyboard)] = press(bot.BTN_OPEN)
     assert text == "Ваш личный бюджет:"
     assert markup.inline_keyboard[0][0].web_app.url == "https://budget.example"
+    assert "кнопкой «Бюджет» слева от поля ввода" in note and keyboard is bot.MENU_KEYBOARD
 
     # The irregular mode's button of an old keyboard: the answer of the
     # current mode, and the keyboard of the current mode with it.
@@ -341,7 +344,8 @@ def test_start_keeps_its_message_and_adds_the_menu(client, monkeypatch):
     replies.clear()
     asyncio.run(bot.start(update, None))
     assert replies == [("MINI_APP_URL не настроен на сервере.", None)]
-    assert press(bot.BTN_OPEN) == [("MINI_APP_URL не настроен на сервере.", None)]
+    [(note, keyboard)] = press(bot.BTN_OPEN)
+    assert keyboard is bot.MENU_KEYBOARD
 
 
 def test_menu_keyboards_have_no_web_app_buttons():
@@ -352,9 +356,11 @@ def test_menu_keyboards_have_no_web_app_buttons():
         labels[keyboard] = [b["text"] for row in data["keyboard"] for b in row]
         # A web_app button here would open the app without initData (HTTP 401).
         assert all("web_app" not in b for row in data["keyboard"] for b in row)
-    assert labels[bot.MENU_KEYBOARD] == [bot.BTN_TODAY, bot.BTN_SPENT, bot.BTN_CARD, bot.BTN_OPEN]
-    assert labels[bot.IRREGULAR_MENU_KEYBOARD] == [bot.BTN_TODAY, bot.BTN_SPENT, bot.BTN_FREE, bot.BTN_OPEN]
-    assert set(bot.MENU_BUTTONS) == set(labels[bot.MENU_KEYBOARD]) | set(labels[bot.IRREGULAR_MENU_KEYBOARD])
+    assert labels[bot.MENU_KEYBOARD] == [bot.BTN_TODAY, bot.BTN_SPENT, bot.BTN_CARD]
+    assert labels[bot.IRREGULAR_MENU_KEYBOARD] == [bot.BTN_TODAY, bot.BTN_SPENT, bot.BTN_FREE]
+    # The app opens from the menu button; «Открыть бюджет» is only answered
+    # for keyboards sent before.
+    assert set(bot.MENU_BUTTONS) == set(labels[bot.MENU_KEYBOARD]) | set(labels[bot.IRREGULAR_MENU_KEYBOARD]) | {bot.BTN_OPEN}
 
 
 def test_morning_report_brings_the_menu(monkeypatch):
