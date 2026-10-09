@@ -265,7 +265,11 @@
     show("irrCategoryField", withdraw && purpose === "pay_expense");
     const todayOnly = (withdraw && purpose !== "pay_expense") || mode === "return";
     const date = $("irrReserveDate");
-    if (date) date.disabled = todayOnly;
+    if (date) {
+      date.disabled = todayOnly;
+      // A date picked for «Оплатить расход» must not stay behind the lock.
+      if (todayOnly) date.value = today();
+    }
     const reason = $("irrReserveReason");
     if (reason) reason.required = withdraw;
     const flow = current.flow || {};

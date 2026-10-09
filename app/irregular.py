@@ -23,8 +23,9 @@ Rules
   ``D = income date + stretch_days - 1``.  When D has passed without such an
   income, the window is extended: ``D = today + stretch_days - 1``.
 * Limit for a day = (free money at the start of the day + money added to free
-  money that day) // days through D.  An overspend therefore reduces the
-  remaining days, an underspend carries over.
+  money that day - free money returned to the reserve that day) // days
+  through D.  An overspend therefore reduces the remaining days, an
+  underspend carries over.
 * The calculation is a replay of every operation since the start date, day by
   day.  Within one day: incomes (by id), reserve deposits, bill payments,
   everyday spending and transfers, reserve withdrawals.  Backdated income, an
@@ -212,7 +213,8 @@ def replay(inp: IrregularInput) -> IrregularResult:
             payments.setdefault(bill.paid_on, []).append(bill)
     # Occurrences that money can be put aside for.
     needs = sorted((b for b in inp.bills if b.due >= inp.start), key=lambda b: (b.due, b.rule_id))
-    paid: set[tuple[int, date]] = set()
+    # A bill paid before the start left with money that is not in start_total.
+    paid = {b.key for b in inp.bills if b.paid_on is not None and b.paid_on < inp.start}
     fund: dict[tuple[int, date], int] = {}
 
     def bills_need(day: date) -> int:
@@ -285,8 +287,10 @@ def replay(inp: IrregularInput) -> IrregularResult:
         for move in deposits.get(day, []):
             reserve_move(day, move.kind, move.amount, move.reason, move.id)
             if move.kind == "from_free":
+                # Taken from the money spread over the days through D (today
+                # included), not from today's limit alone.
                 free -= move.amount
-                out += move.amount
+                added -= move.amount
 
         for bill in sorted(payments.get(day, []), key=lambda b: (b.payment_id or 0, b.rule_id)):
             put_aside = fund.pop(bill.key, 0)

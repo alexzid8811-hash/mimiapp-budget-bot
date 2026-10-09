@@ -145,13 +145,15 @@ def _bills(con, uid: int, start: date, today: date, lookahead: int) -> list[Bill
             rule_id=int(event["id"]), due=due, title=event.get("title") or "Платёж",
             amount=cents(event.get("planned_amount") if event.get("paid") else event["amount"]),
         )
+    # Payments since the start, and earlier ones of bills due since the start
+    # (paid in advance: the occurrence must not be put aside for again).
     for r in con.execute(
         "SELECT t.id,t.bill_rule_id,t.bill_due_date,t.tx_date,t.amount,t.bill_planned_amount,t.note,"
         "COALESCE(p.amount,0) AS to_piggy FROM transactions t "
         "LEFT JOIN piggy_bank_movements p ON p.user_id=t.user_id AND p.bill_payment_id=t.id "
         "WHERE t.user_id=? AND t.type='expense' AND t.bill_rule_id IS NOT NULL "
-        "AND t.tx_date BETWEEN ? AND ?",
-        (uid, start.isoformat(), today.isoformat()),
+        "AND t.tx_date<=? AND (t.tx_date>=? OR t.bill_due_date>=?)",
+        (uid, today.isoformat(), start.isoformat(), start.isoformat()),
     ):
         paid_on = date.fromisoformat(r["tx_date"])
         due = date.fromisoformat(r["bill_due_date"]) if r["bill_due_date"] else paid_on
@@ -318,7 +320,10 @@ def snapshot(uid: int) -> dict:
         } if shortfall else None,
         "last_income_date": result.last_income.isoformat() if result.last_income else None,
         "days_without_income": result.days_without_income,
-        "no_income_warning": result.window_extended,
+        # Not window_extended: an income that added no free money (all of it
+        # to the bills, the reserve or the piggy bank) leaves the window
+        # extended, but it is still an income.
+        "no_income_warning": result.days_without_income >= inp.settings.stretch_days,
         "piggy_bank_balance": piggy_balance(uid),
         "bills": rows,
     }
@@ -375,9 +380,10 @@ def preview(uid: int, *, value: float, day: date, percent: float, destination: s
     if day > inp.today:
         raise ValueError("Дата дохода не может быть в будущем")
     others = [i for i in inp.incomes if i.id != exclude_id]
-    probe = Income(PREVIEW_ID, day, cents(value), percent, _destination(destination))
+    # An edited income keeps its id and so its place among the incomes of its day.
+    probe = Income(exclude_id or PREVIEW_ID, day, cents(value), percent, _destination(destination))
     result = replay(replace(inp, incomes=others + [probe]))
-    split = result.splits[PREVIEW_ID]
+    split = result.splits[probe.id]
     return {
         **split_dict(split),
         "amount": amount(cents(value)),

@@ -572,6 +572,17 @@ test('paying an expense from the reserve sends the category and the reason', asy
   assert.deepEqual({...body,movement_date:undefined},{amount:1500,movement_date:undefined,purpose:'pay_expense',reason:'Стоматолог',category_id:5});
 });
 
+test('reserve operations allowed only today reset a date picked for an expense', async () => {
+  const {sandbox,get} = irregularSetup();
+  await get('refreshBtn').listeners.click();
+  sandbox.window.irregularUi.openReserve('withdraw','pay_expense');
+  get('irrReserveDate').value = '2026-10-01';
+  get('irrReservePurpose').value = 'to_free';
+  get('irrReservePurpose').listeners.change();
+  assert.equal(get('irrReserveDate').disabled,true);
+  assert.equal(get('irrReserveDate').value,sandbox.window.budgetDate.today());
+});
+
 test('payroll mode keeps the old income dialog and never asks for the reserve', async () => {
   const {get,requests} = setup();
   await get('refreshBtn').listeners.click();
