@@ -5,12 +5,13 @@ import os
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, ReplyKeyboardMarkup, Update, WebAppInfo,
 )
+from telegram.constants import ChatType
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app import clock
 from app.db import init_db, user_scope
 from app.morning_reports import pending_morning_reports, record_morning_report
-from app.quick_stats import quick_numbers
+from app.quick_stats import is_irregular_user, quick_numbers
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
@@ -21,14 +22,24 @@ logger = logging.getLogger(__name__)
 BTN_TODAY = "📅 На сегодня"
 BTN_SPENT = "🧾 Траты сегодня"
 BTN_CARD = "💳 На карте"
+BTN_FREE = "💰 Свободные деньги"
 BTN_OPEN = "📊 Открыть бюджет"
-MENU_BUTTONS = [BTN_TODAY, BTN_SPENT, BTN_CARD, BTN_OPEN]
-# The menu under the message field.  Text buttons only: a web_app button of
-# this keyboard opens the mini app without initData, and the server rejects
-# such a start (app/auth.py).  «Открыть бюджет» answers with an inline button.
+MENU_BUTTONS = [BTN_TODAY, BTN_SPENT, BTN_CARD, BTN_FREE, BTN_OPEN]
+# The menu under the message field, one per budget mode: the irregular-income
+# mode has no card, its spending money is the free money.  Text buttons only:
+# a web_app button of this keyboard opens the mini app without initData, and
+# the server rejects such a start (app/auth.py).  «Открыть бюджет» answers
+# with an inline button.
 MENU_KEYBOARD = ReplyKeyboardMarkup(
     [[BTN_TODAY, BTN_SPENT], [BTN_CARD, BTN_OPEN]], resize_keyboard=True, is_persistent=True,
 )
+IRREGULAR_MENU_KEYBOARD = ReplyKeyboardMarkup(
+    [[BTN_TODAY, BTN_SPENT], [BTN_FREE, BTN_OPEN]], resize_keyboard=True, is_persistent=True,
+)
+
+
+def menu_keyboard(irregular: bool) -> ReplyKeyboardMarkup:
+    return IRREGULAR_MENU_KEYBOARD if irregular else MENU_KEYBOARD
 
 
 def open_budget_markup() -> InlineKeyboardMarkup:
@@ -45,9 +56,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await show_menu(update, context)
 
 
+def _irregular_for(user_id: int) -> bool:
+    with user_scope(user_id):
+        return is_irregular_user(user_id)
+
+
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # The buttons work in the private chat only (see build_application).
+    if update.effective_chat.type != ChatType.PRIVATE:
+        return
+    user_id = update.effective_user.id
+    try:
+        irregular = await asyncio.to_thread(_irregular_for, user_id)
+    except Exception:
+        logger.exception("Не удалось узнать режим бюджета пользователя %s", user_id)
+        irregular = False
     await update.effective_message.reply_text(
-        "Быстрое меню — под полем ввода сообщения.", reply_markup=MENU_KEYBOARD
+        "Быстрое меню — под полем ввода сообщения.", reply_markup=menu_keyboard(irregular)
     )
 
 
@@ -74,6 +99,9 @@ def today_text(numbers: dict) -> str:
                           "Как его покрыть, можно выбрать в приложении."])
     if numbers.get("payday_waiting"):
         lines.extend(["", PAYDAY_WAITING])
+    if numbers.get("no_income_warning"):
+        lines.extend(["", f"⚠️ Дохода не было {numbers['days_without_income']} дн. "
+                          "При необходимости возьмите деньги из резерва."])
     return "\n".join(lines)
 
 
@@ -101,7 +129,7 @@ def card_text(numbers: dict) -> str:
     if numbers["mode"] == "irregular":
         # This mode has no card: its spending money is the free money.
         return "\n".join([
-            f"💳 Свободных денег: {money(numbers['free_balance'])} ₽",
+            f"💰 Свободных денег: {money(numbers['free_balance'])} ₽",
             f"Растягиваем до {_ddmm(numbers['stretch_until'])} (осталось {numbers['days_left']} дн.)",
         ])
     lines = [
@@ -148,8 +176,13 @@ async def menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.exception("Не удалось посчитать бюджет пользователя %s", user_id)
         await message.reply_text("Не получилось посчитать бюджет. Попробуйте чуть позже.")
         return
-    configured = numbers is not None and numbers["configured"]
-    markup = open_budget_markup() if not configured and MINI_APP_URL else None
+    if numbers is None or not numbers["configured"]:
+        markup = open_budget_markup() if MINI_APP_URL else None
+    else:
+        # After a switch of the budget mode the keyboard still shows the
+        # other mode's button: answer it and bring the right keyboard.
+        irregular = numbers["mode"] == "irregular"
+        markup = menu_keyboard(irregular) if message.text == (BTN_CARD if irregular else BTN_FREE) else None
     await message.reply_text(menu_reply_text(message.text, numbers), reply_markup=markup)
 
 
@@ -225,7 +258,8 @@ async def send_morning_reports(application) -> None:
             # The report also brings the quick menu to users who have not
             # pressed /start since it appeared.
             await application.bot.send_message(
-                chat_id=report["user_id"], text=morning_report_text(report), reply_markup=MENU_KEYBOARD,
+                chat_id=report["user_id"], text=morning_report_text(report),
+                reply_markup=menu_keyboard(report.get("mode") == "irregular"),
             )
         except Exception:
             logger.exception(
