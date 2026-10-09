@@ -209,17 +209,23 @@ function renderPiggyTransferRow(m) {
   return `<div class="list-row"><div class="row-main"><div class="emoji">🐷</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${fmtDate(m.movement_date)}${how}${note}</div></div></div><div><div class="amount ${toCard ? "income" : "expense"}">${toCard ? "+" : "-"}${money(m.amount)}</div><div class="actions"><button class="tiny danger" onclick="deletePiggyMovement(${m.id})">Удалить</button></div></div></div>`;
 }
 
+// Mandatory bill payments have their own tab, so the everyday list (and its
+// weekly totals) only holds day-to-day spending, income and piggy transfers.
+let transactionView = "daily";
 let transactionFilter = "all";
 const TRANSACTION_FILTERS = {
   all: () => true,
-  expense: t => !t.piggy && t.type === "expense" && !t.bill_rule_id,
+  expense: t => !t.piggy && t.type === "expense",
   income: t => !t.piggy && t.type === "income",
-  bills: t => Boolean(t.bill_rule_id),
   piggy: t => Boolean(t.piggy),
 };
 
+function inTransactionView(t) {
+  return transactionView === "bills" ? Boolean(t.bill_rule_id) : !t.bill_rule_id;
+}
+
 function transactionMatches(t, query) {
-  if (!(TRANSACTION_FILTERS[transactionFilter] || TRANSACTION_FILTERS.all)(t)) return false;
+  if (transactionView !== "bills" && !(TRANSACTION_FILTERS[transactionFilter] || TRANSACTION_FILTERS.all)(t)) return false;
   if (!query) return true;
   const text = [t.note, t.category_title, t.bill_title, t.piggy ? "копилка" : ""].join(" ").toLowerCase();
   return text.includes(query);
@@ -228,11 +234,13 @@ function transactionMatches(t, query) {
 function renderTransactions() {
   const el = $("transactionsList");
   const query = String($("txSearch")?.value || "").trim().toLowerCase();
-  const all = [...state.transactions, ...cardPiggyTransfers()];
+  const all = [...state.transactions, ...cardPiggyTransfers()].filter(inTransactionView);
   const items = all.filter(t => transactionMatches(t, query))
     .sort((a, b) => b.tx_date.localeCompare(a.tx_date) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
   if (!items.length) {
-    el.innerHTML = `<div class="empty">${all.length ? "Ничего не найдено." : "Пока нет операций."}</div>`;
+    const message = all.length ? "Ничего не найдено."
+      : transactionView === "bills" ? "Оплаченных обязательных платежей пока нет." : "Пока нет операций.";
+    el.innerHTML = `<div class="empty">${message}</div>`;
     return;
   }
 
@@ -507,6 +515,14 @@ $("txSearch")?.addEventListener("input", () => renderTransactions());
 document.querySelectorAll("[data-txf]").forEach(btn => btn.addEventListener("click", () => {
   transactionFilter = btn.dataset.txf;
   document.querySelectorAll("[data-txf]").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+  renderTransactions();
+}));
+document.querySelectorAll("[data-txview]").forEach(btn => btn.addEventListener("click", () => {
+  transactionView = btn.dataset.txview;
+  document.querySelectorAll("[data-txview]").forEach(b => b.setAttribute("aria-selected", String(b === btn)));
+  $("txChips")?.classList.toggle("hidden", transactionView === "bills");
+  const search = $("txSearch");
+  if (search) search.placeholder = transactionView === "bills" ? "Поиск по платежам" : "Поиск по операциям";
   renderTransactions();
 }));
 

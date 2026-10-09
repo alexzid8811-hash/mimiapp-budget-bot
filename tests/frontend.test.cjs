@@ -135,6 +135,8 @@ test('paid bill can be edited from transaction history and its remainder sent to
     remainder_destination: 'budget', remainder_amount: 0,
   }];
   await get('refreshBtn').listeners.click();
+  assert.match(get('transactionsList').innerHTML,/Пока нет операций/);
+  vm.runInContext('transactionView="bills"; renderTransactions()', sandbox);
   assert.match(get('transactionsList').innerHTML,/Изменить/);
 
   sandbox.window.editBillPayment(17);
@@ -429,12 +431,42 @@ test('operations can be searched and filtered by type', async () => {
   assert.match(get('transactionsList').innerHTML, /Кофе/);
   assert.doesNotMatch(get('transactionsList').innerHTML, /Возврат|Интернет/);
   get('txSearch').value = '';
-  vm.runInContext('transactionFilter="bills"; renderTransactions()', sandbox);
-  assert.match(get('transactionsList').innerHTML, /Интернет/);
-  assert.doesNotMatch(get('transactionsList').innerHTML, /Кофе|Возврат/);
+  vm.runInContext('transactionFilter="income"; renderTransactions()', sandbox);
+  assert.match(get('transactionsList').innerHTML, /Возврат/);
+  assert.doesNotMatch(get('transactionsList').innerHTML, /Кофе|Интернет/);
   get('txSearch').value = 'нет такого';
   vm.runInContext('renderTransactions()', sandbox);
   assert.match(get('transactionsList').innerHTML, /Ничего не найдено/);
+});
+
+test('mandatory bill payments are kept in their own operations tab', async () => {
+  const {sandbox,get,responses} = setup();
+  responses['/api/transactions'] = [
+    {id:1,type:'expense',amount:100,tx_date:'2026-09-15',note:'Кофе',category_title:'Кафе'},
+    {id:2,type:'income',amount:500,tx_date:'2026-09-14',note:'Возврат'},
+    {id:3,type:'expense',amount:900,tx_date:'2026-09-15',bill_rule_id:4,bill_title:'Интернет'},
+  ];
+  responses['/api/piggy-bank'] = {balance:300,movements:[
+    {id:7,direction:'deposit',amount:300,movement_date:'2026-09-15',source:'daily_budget'},
+  ]};
+  await get('refreshBtn').listeners.click();
+  const daily = get('transactionsList').innerHTML;
+  assert.match(daily, /Кофе[\s\S]*Карта → копилка|Карта → копилка[\s\S]*Кофе/);
+  assert.match(daily, /Возврат/);
+  assert.doesNotMatch(daily, /Интернет/);
+  // The weekly total counts only everyday spending, not the bill.
+  assert.match(daily, /−100,00/);
+  assert.doesNotMatch(daily, /1[\s ]000,00/);
+
+  vm.runInContext('transactionView="bills"; transactionFilter="expense"; renderTransactions()', sandbox);
+  const bills = get('transactionsList').innerHTML;
+  assert.match(bills, /Интернет/);
+  assert.match(bills, /editBillPayment\(3\)/);
+  assert.doesNotMatch(bills, /Кофе|Возврат|копилка/);
+
+  responses['/api/transactions'] = responses['/api/transactions'].filter(t => !t.bill_rule_id);
+  await get('refreshBtn').listeners.click();
+  assert.match(get('transactionsList').innerHTML, /Оплаченных обязательных платежей пока нет/);
 });
 
 
