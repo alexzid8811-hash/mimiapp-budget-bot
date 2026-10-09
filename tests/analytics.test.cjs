@@ -108,6 +108,8 @@ test('every tab shows the average spend, the card period too', async () => {
   const legend = get('analyticsDaysLegend').innerHTML;
   // Only days up to today count: (1580 + 0) / 2.
   assert.match(legend, /В среднем 790[\s\u00a0]₽\/день/);
+  // The average is plain text, without a dashed marker in front.
+  assert.match(legend, /<span>В среднем/);
   assert.match(legend, /Перерасход \(лимит 1[\s\u00a0]420[\s\u00a0]₽\/день\)/);
   // The dashed line is the average, not the limit.
   assert.match(get('analyticsDays').innerHTML, /stroke="var\(--muted\)" stroke-width="1\.5" stroke-dasharray/);
@@ -123,7 +125,7 @@ test('the year tab shows months with their average instead of days', async () =>
   await sandbox.window.budgetAnalytics.load();
   assert.equal(get('analyticsDaysCard').classList.contains('hidden'), true);
   assert.equal(get('analyticsMonthsCard').classList.contains('hidden'), false);
-  assert.match(get('analyticsMonthsNote').innerHTML, /В среднем 19[\s\u00a0]575[\s\u00a0]₽ в месяц \(месяцев с тратами: 2\)/);
+  assert.match(get('analyticsMonthsNote').innerHTML, /^<span>В среднем 19[\s\u00a0]575[\s\u00a0]₽ в месяц \(месяцев с тратами: 2\)/);
   assert.match(get('analyticsMonths').innerHTML, /stroke="var\(--muted\)" stroke-width="1\.5" stroke-dasharray/);
 });
 

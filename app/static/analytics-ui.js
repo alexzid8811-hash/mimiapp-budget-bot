@@ -166,7 +166,7 @@
     $("analyticsDaysLegend").innerHTML = (limit
       ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход (лимит ${rub(limit)}/день)</span>`
       : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span>`)
-      + `<span><i class="avg"></i>В среднем ${rub(average)}/день</span>`;
+      + `<span>В среднем ${rub(average)}/день</span>`;
   }
 
   // Months belong to the year tab only: a month or card period has its days.
@@ -184,7 +184,7 @@
       tip: (v, i) => `<b>${esc(months[i].label)}</b> · ${rub(v)}`,
     });
     $("analyticsMonthsNote").innerHTML = filled.length
-      ? `<span><i class="avg"></i>В среднем ${rub(average)} в месяц${filled.length < values.length ? ` (месяцев с тратами: ${filled.length})` : ""}</span>`
+      ? `<span>В среднем ${rub(average)} в месяц${filled.length < values.length ? ` (месяцев с тратами: ${filled.length})` : ""}</span>`
       : "Трат за эти месяцы нет.";
   }
 
