@@ -2,12 +2,15 @@ import asyncio
 import logging
 import os
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram import (
+    InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, ReplyKeyboardMarkup, Update, WebAppInfo,
+)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app import clock
-from app.db import init_db
+from app.db import init_db, user_scope
 from app.morning_reports import pending_morning_reports, record_morning_report
+from app.quick_stats import quick_numbers
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
@@ -15,15 +18,37 @@ MINI_APP_URL = os.getenv("MINI_APP_URL", "")
 REMINDER_CHECK_SECONDS = max(60, int(os.getenv("REMINDER_CHECK_SECONDS", "60")))
 logger = logging.getLogger(__name__)
 
+BTN_TODAY = "📅 На сегодня"
+BTN_SPENT = "🧾 Траты сегодня"
+BTN_CARD = "💳 На карте"
+BTN_OPEN = "📊 Открыть бюджет"
+MENU_BUTTONS = [BTN_TODAY, BTN_SPENT, BTN_CARD, BTN_OPEN]
+# The menu under the message field.  Text buttons only: a web_app button of
+# this keyboard opens the mini app without initData, and the server rejects
+# such a start (app/auth.py).  «Открыть бюджет» answers with an inline button.
+MENU_KEYBOARD = ReplyKeyboardMarkup(
+    [[BTN_TODAY, BTN_SPENT], [BTN_CARD, BTN_OPEN]], resize_keyboard=True, is_persistent=True,
+)
+
+
+def open_budget_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 Открыть бюджет", web_app=WebAppInfo(url=MINI_APP_URL))]
+    ])
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not MINI_APP_URL:
         await update.message.reply_text("MINI_APP_URL не настроен на сервере.")
         return
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Открыть бюджет", web_app=WebAppInfo(url=MINI_APP_URL))]
-    ])
-    await update.message.reply_text("Ваш личный бюджет:", reply_markup=keyboard)
+    await update.message.reply_text("Ваш личный бюджет:", reply_markup=open_budget_markup())
+    await show_menu(update, context)
+
+
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.effective_message.reply_text(
+        "Быстрое меню — под полем ввода сообщения.", reply_markup=MENU_KEYBOARD
+    )
 
 
 def money(value: float) -> str:
@@ -32,6 +57,100 @@ def money(value: float) -> str:
 
 def _ddmm(iso: str) -> str:
     return f"{iso[8:10]}.{iso[5:7]}"
+
+
+PAYDAY_WAITING = "⏳ Выплата ещё не подтверждена. Когда деньги придут, нажмите «Получил ✓» в приложении."
+
+
+def today_text(numbers: dict) -> str:
+    lines = [
+        f"📅 Сегодня, {_ddmm(numbers['today'])}", "",
+        f"Можно потратить: {money(numbers['today_target'])} ₽",
+        f"Потрачено: {money(numbers['spent_today'])} ₽",
+        f"Осталось на сегодня: {money(numbers['available_today'])} ₽",
+    ]
+    if numbers["overspend"] > 0:
+        lines.extend(["", f"⚠️ Перерасход {money(numbers['overspend'])} ₽. "
+                          "Как его покрыть, можно выбрать в приложении."])
+    if numbers.get("payday_waiting"):
+        lines.extend(["", PAYDAY_WAITING])
+    return "\n".join(lines)
+
+
+def _items(items: list[dict]) -> list[str]:
+    return [f"• {item['title']} — {money(item['amount'])} ₽" for item in items]
+
+
+def spent_text(numbers: dict) -> str:
+    lines = [f"🧾 Траты за {_ddmm(numbers['today'])}", "", f"Потрачено: {money(numbers['spent_today'])} ₽"]
+    lines.extend(_items(numbers["expenses"]))
+    # An overpaid mandatory payment is paid from the card and counts as spending.
+    rest = round(numbers["spent_today"] - sum(item["amount"] for item in numbers["expenses"]), 2)
+    if rest > 0:
+        lines.append(f"• Сверх плана по обязательным платежам — {money(rest)} ₽")
+    if not (numbers["spent_today"] or numbers["expenses"] or numbers["bills_paid"] or numbers["reserve_paid"]):
+        lines.append("Сегодня трат ещё не было.")
+    if numbers["bills_paid"]:
+        lines.extend(["", "Оплачены обязательные платежи (не из суммы на день):", *_items(numbers["bills_paid"])])
+    if numbers["reserve_paid"]:
+        lines.extend(["", "Оплачено из резерва на непредвиденное:", *_items(numbers["reserve_paid"])])
+    return "\n".join(lines)
+
+
+def card_text(numbers: dict) -> str:
+    if numbers["mode"] == "irregular":
+        # This mode has no card: its spending money is the free money.
+        return "\n".join([
+            f"💳 Свободных денег: {money(numbers['free_balance'])} ₽",
+            f"Растягиваем до {_ddmm(numbers['stretch_until'])} (осталось {numbers['days_left']} дн.)",
+        ])
+    lines = [
+        f"💳 На карте: {money(numbers['card_balance'])} ₽",
+        f"На траты до {_ddmm(numbers['period_end'])} включительно (осталось {numbers['period_days_left']} дн.)",
+    ]
+    if numbers.get("payday_waiting"):
+        lines.extend(["", PAYDAY_WAITING])
+    return "\n".join(lines)
+
+
+def menu_reply_text(button: str, numbers: dict | None) -> str:
+    """Answer to one of the number buttons; None: the user has no budget yet."""
+    if numbers is None:
+        return "Бюджет ещё не настроен. Откройте его, и здесь появятся цифры."
+    if not numbers["configured"]:
+        return "Режим «Подработки» ещё не настроен. Откройте бюджет и укажите, с чего начать."
+    if button == BTN_TODAY:
+        return today_text(numbers)
+    if button == BTN_SPENT:
+        return spent_text(numbers)
+    return card_text(numbers)
+
+
+def _numbers_for(user_id: int) -> dict | None:
+    with user_scope(user_id):
+        return quick_numbers(user_id)
+
+
+async def menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message.text == BTN_OPEN:
+        if not MINI_APP_URL:
+            await message.reply_text("MINI_APP_URL не настроен на сервере.")
+            return
+        await message.reply_text("Ваш личный бюджет:", reply_markup=open_budget_markup())
+        return
+    user_id = update.effective_user.id
+    try:
+        # The calculation is synchronous: keep the event loop (and the
+        # morning reports) free while it runs.
+        numbers = await asyncio.to_thread(_numbers_for, user_id)
+    except Exception:
+        logger.exception("Не удалось посчитать бюджет пользователя %s", user_id)
+        await message.reply_text("Не получилось посчитать бюджет. Попробуйте чуть позже.")
+        return
+    configured = numbers is not None and numbers["configured"]
+    markup = open_budget_markup() if not configured and MINI_APP_URL else None
+    await message.reply_text(menu_reply_text(message.text, numbers), reply_markup=markup)
 
 
 def irregular_report_text(report: dict, spending: str, change: str) -> str:
@@ -103,7 +222,11 @@ def morning_report_text(report: dict) -> str:
 async def send_morning_reports(application) -> None:
     for report in pending_morning_reports(clock.now()):
         try:
-            await application.bot.send_message(chat_id=report["user_id"], text=morning_report_text(report))
+            # The report also brings the quick menu to users who have not
+            # pressed /start since it appeared.
+            await application.bot.send_message(
+                chat_id=report["user_id"], text=morning_report_text(report), reply_markup=MENU_KEYBOARD,
+            )
         except Exception:
             logger.exception(
                 "Не удалось отправить утренний отчёт пользователю %s",
@@ -122,6 +245,22 @@ async def reminder_loop(application) -> None:
 async def post_init(application) -> None:
     init_db()
     application.bot_data["reminder_task"] = asyncio.create_task(reminder_loop(application))
+    await setup_menu_button(application.bot)
+
+
+async def setup_menu_button(bot) -> None:
+    """The button left of the message field opens the mini app.  A web app
+    button set before (for example in @BotFather) is kept as it is."""
+    if not MINI_APP_URL:
+        return
+    try:
+        if isinstance(await bot.get_chat_menu_button(), MenuButtonWebApp):
+            return
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Бюджет", web_app=WebAppInfo(url=MINI_APP_URL))
+        )
+    except Exception:
+        logger.exception("Не удалось настроить кнопку меню")
 
 
 async def post_shutdown(application) -> None:
@@ -134,12 +273,20 @@ async def post_shutdown(application) -> None:
             pass
 
 
+def build_application():
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", show_menu))
+    app.add_handler(MessageHandler(
+        filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.Text(MENU_BUTTONS), menu_button
+    ))
+    return app
+
+
 def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is required")
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
-    app.add_handler(CommandHandler("start", start))
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    build_application().run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
