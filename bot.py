@@ -23,18 +23,19 @@ BTN_TODAY = "📅 На сегодня"
 BTN_SPENT = "🧾 Траты сегодня"
 BTN_CARD = "💳 На карте"
 BTN_FREE = "💰 Свободные деньги"
+# Only on keyboards sent before the menu button «Бюджет» took its place.
 BTN_OPEN = "📊 Открыть бюджет"
 MENU_BUTTONS = [BTN_TODAY, BTN_SPENT, BTN_CARD, BTN_FREE, BTN_OPEN]
 # The menu under the message field, one per budget mode: the irregular-income
 # mode has no card, its spending money is the free money.  Text buttons only:
 # a web_app button of this keyboard opens the mini app without initData, and
-# the server rejects such a start (app/auth.py).  «Открыть бюджет» answers
-# with an inline button.
+# the server rejects such a start (app/auth.py).  The app opens straight from
+# the menu button «Бюджет» left of the message field (setup_menu_button).
 MENU_KEYBOARD = ReplyKeyboardMarkup(
-    [[BTN_TODAY, BTN_SPENT], [BTN_CARD, BTN_OPEN]], resize_keyboard=True, is_persistent=True,
+    [[BTN_TODAY, BTN_SPENT], [BTN_CARD]], resize_keyboard=True, is_persistent=True,
 )
 IRREGULAR_MENU_KEYBOARD = ReplyKeyboardMarkup(
-    [[BTN_TODAY, BTN_SPENT], [BTN_FREE, BTN_OPEN]], resize_keyboard=True, is_persistent=True,
+    [[BTN_TODAY, BTN_SPENT], [BTN_FREE]], resize_keyboard=True, is_persistent=True,
 )
 
 
@@ -171,13 +172,22 @@ def _numbers_for(user_id: int) -> dict | None:
 
 async def menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
-    if message.text == BTN_OPEN:
-        if not MINI_APP_URL:
-            await message.reply_text("MINI_APP_URL не настроен на сервере.")
-            return
-        await message.reply_text("Ваш личный бюджет:", reply_markup=open_budget_markup())
-        return
     user_id = update.effective_user.id
+    if message.text == BTN_OPEN:
+        # An old keyboard: open the budget from here once and replace the
+        # keyboard with the new one, without this button.
+        if MINI_APP_URL:
+            await message.reply_text("Ваш личный бюджет:", reply_markup=open_budget_markup())
+        try:
+            irregular = await asyncio.to_thread(_irregular_for, user_id)
+        except Exception:
+            logger.exception("Не удалось узнать режим бюджета пользователя %s", user_id)
+            irregular = False
+        await message.reply_text(
+            "Теперь бюджет открывается сразу кнопкой «Бюджет» слева от поля ввода.",
+            reply_markup=menu_keyboard(irregular),
+        )
+        return
     try:
         # The calculation is synchronous: keep the event loop (and the
         # morning reports) free while it runs.
