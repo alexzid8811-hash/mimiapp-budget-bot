@@ -201,6 +201,17 @@ def test_reserve_deposits(client):
     assert flow["reserve_balance"] == 4000 and flow["free_balance"] == 10000
 
 
+def test_return_from_free_money_is_spread_not_an_overspend(client):
+    at(date(2026, 10, 3))
+    income(client, 20000, "2026-10-03")
+    assert client.post("/api/irregular/reserve/deposit", json={"amount": 5000, "kind": "from_free"}).status_code == 200
+    flow = client.get("/api/irregular").json()
+    # 6 000 ₽ of free money left for the 14 days through 16 October.
+    assert flow["free_balance"] == 6000
+    assert flow["today_target"] == flow["available_today"] == 428.57
+    assert flow["overspend"] == 0
+
+
 def test_reserve_target_through_settings(client):
     at(date(2026, 10, 3))
     assert client.put("/api/irregular/settings", json={
@@ -249,6 +260,46 @@ def test_window_extends_without_income(client):
     assert flow["no_income_warning"] is True
     assert flow["days_without_income"] == 17
     assert flow["stretch_until"] == "2026-10-30"
+
+
+def test_income_without_free_money_still_ends_the_no_income_warning(client):
+    at(date(2026, 10, 20))
+    flow = client.get("/api/irregular").json()
+    assert flow["no_income_warning"] is True and flow["days_without_income"] == 19
+    # 300 ₽ to the reserve, the rest to the bills: no free money at all.
+    assert income(client, 3000, "2026-10-20")["split"]["free"] == 0
+    flow = client.get("/api/irregular").json()
+    assert flow["no_income_warning"] is False and flow["days_without_income"] == 0
+    at(date(2026, 11, 3))
+    assert client.get("/api/irregular").json()["no_income_warning"] is True
+
+
+def test_bill_paid_before_the_start_is_not_put_aside_again(client):
+    # Utilities of 25 October paid in advance in the payroll mode, then the
+    # side-jobs mode restarted from 1 October.
+    at(date(2026, 9, 30))
+    assert client.put("/api/budget-mode", json={"budget_mode": "payroll"}).status_code == 200
+    assert client.post("/api/bills/2/pay", json={"due_date": "2026-10-25"}).status_code == 200
+    at(date(2026, 10, 3))
+    assert client.put("/api/budget-mode", json={
+        "budget_mode": "irregular", "start_date": "2026-10-01", "start_total": 0, "start_reserve": 0}).status_code == 200
+    assert income(client, 20000, "2026-10-03")["split"] == {"reserve": 2000, "bills": 1000, "free": 17000, "piggy": 0}
+    flow = client.get("/api/irregular").json()
+    assert flow["bills_reserved"] == 1000 and flow["bills_shortfall"] is None
+    utilities = next(b for b in flow["bills"] if b["title"] == "Коммуналка")
+    assert utilities["paid"] is True and utilities["reserved"] == 0
+
+
+def test_preview_of_an_edited_income_matches_the_saved_split(client):
+    at(date(2026, 10, 3))
+    first = income(client, 5000, "2026-10-03")
+    income(client, 5000, "2026-10-03")
+    # The first income of the day fills the bills first; editing keeps its place.
+    assert first["split"]["free"] == 0
+    preview = client.post("/api/irregular/preview", json={
+        "amount": 5000, "tx_date": "2026-10-03", "exclude_id": first["id"]}).json()
+    saved = client.put(f"/api/irregular/incomes/{first['id']}", json={"amount": 5000, "tx_date": "2026-10-03"}).json()
+    assert {k: preview[k] for k in ("reserve", "bills", "free", "piggy")} == saved["split"] == first["split"]
 
 
 def test_reserve_days_need_spending_history(client):
