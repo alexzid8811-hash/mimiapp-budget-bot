@@ -150,7 +150,7 @@
 
       <section class="page" data-page="plan"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="false" class="payroll-only">Буфер</button><button role="tab" data-seg="obligations" aria-selected="false" class="irregular-only">На обязательные</button><button role="tab" data-seg="reserve" aria-selected="false" class="irregular-only">Резерв</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button><button role="tab" data-seg="plan" aria-selected="false">Платежи</button></div>
         <p class="muted payroll-only">Обязательные платежи текущего периода. Эти суммы уже зарезервированы в буфере и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными.</p>
-        <p class="muted irregular-only">Обязательные платежи до конца окна «на обязательные». При оплате деньги берутся из отложенного под платёж; если отложено меньше, недостающее спишется из свободных денег.</p>
+        <p class="muted irregular-only">Обязательные платежи текущего месяца. При оплате деньги берутся из отложенного под платёж; если отложено меньше, недостающее спишется из свободных денег.</p>
         <div id="planList" class="list cards-list"></div>
       </section>
 
@@ -501,12 +501,12 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261009-bills-tab"></script>
+  <script src="/static/app.js?v=20261009-month-payments"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20261007-past-periods"></script>
   <script src="/static/design-ui.js?v=20261006-irregular"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261009-average-text"></script>
-  <script src="/static/irregular-ui.js?v=20261009-current-month-bills"></script>
+  <script src="/static/irregular-ui.js?v=20261009-month-payments"></script>
 </body>
 </html>

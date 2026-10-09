@@ -273,8 +273,11 @@ function renderTransactions() {
 
 function renderPlan() {
   const el = $("planList");
-  if (!state.plan.length) { el.innerHTML = `<div class="empty">В этом периоде обязательных платежей нет.</div>`; return; }
-  el.innerHTML = state.plan.map(p => {
+  // In the irregular mode payments of later months appear once their month comes.
+  const month = todayISO().slice(0, 7);
+  const plan = isIrregular() ? state.plan.filter(p => p.due_date.slice(0, 7) <= month) : state.plan;
+  if (!plan.length) { el.innerHTML = `<div class="empty">${isIrregular() ? "В этом месяце" : "В этом периоде"} обязательных платежей нет.</div>`; return; }
+  el.innerHTML = plan.map(p => {
     const planned = Number(p.planned_amount ?? p.amount);
     const paidCaption = Number(p.amount) === planned
       ? 'Оплачено'
