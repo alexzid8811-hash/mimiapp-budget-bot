@@ -150,11 +150,37 @@
     }
     const shown = [...(showPast ? past : []), ...periods];
     const rowClass = (p, i) => p.past ? "past" : (i === 0 ? "cur" : "");
+    // Cards follow the design: period and movement on top, the payout as its
+    // own block (amount, status, "Изменить" / "Получил ✓"), then where the
+    // money goes, then what stays in the buffer.
+    const payoutBlock = p => {
+      const head = `${safe(p.kind)}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
+      if (!p.received_editable) {
+        const done = p.past ? '<span class="pc-status done">получено ✓</span>' : "";
+        return `<div class="pc-pay"><div class="pc-pay-top"><div><span>${head}</span><b class="num">${formatMoney(p.received)}</b></div>${done}</div></div>`;
+      }
+      const status = p.income_confirmed ? '<span class="pc-status done">получено ✓</span>'
+        : p.income_pending ? '<span class="pc-status pending">ждём подтверждения</span>'
+          : p.income_overridden ? '<span class="pc-status">изменено</span>' : "";
+      const edit = `<button class="income-btn" type="button" onclick="editCashflowIncome('${p.override_key}')" aria-label="Изменить полученную сумму">Изменить</button>`;
+      const confirm = p.income_pending
+        ? `<button class="income-btn accent" type="button" onclick="confirmCashflowIncome('${p.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`
+        : "";
+      return `<div class="pc-pay"><div class="pc-pay-top"><div><span>${head}</span><b class="num">${formatMoney(p.received)}</b></div>${status}</div><div class="pc-pay-actions${confirm ? " two" : ""}">${edit}${confirm}</div></div>`;
+    };
+    const groupTitle = (p, i, j) => {
+      if (p.past) return j === 0 ? '<h4 class="pc-group">Прошедшие</h4>' : "";
+      if (i === 0) return '<h4 class="pc-group">Сейчас</h4>';
+      return i === 1 ? '<h4 class="pc-group">Следующие</h4>' : "";
+    };
     cards.innerHTML = shown.map((p,j)=>{
       const i = j - (shown.length - periods.length);
       const [c,m,shortLabel]=movement(p);
       const label = c==="pos" ? "положить в буфер" : c==="neg" ? "взять из буфера" : shortLabel;
-      return `<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0&&!p.past?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div>${toCardLine(p)}</div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : i===0 ? '<span class="pc-chip">сейчас</span>' : "";
+      const flow = `<div class="pc-flow pc-flow3 num">${toCardLine(p)}<div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>`;
+      const footLabel = p.past ? "Остаток буфера" : "Останется в буфере";
+      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p)}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = shown.map((p,j)=>{
