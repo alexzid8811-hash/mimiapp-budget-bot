@@ -960,3 +960,14 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 
 /* Аналитика: средняя сумма — отдельной строкой под графиком */
 .analytics-legend span:last-child{flex-basis:100%;padding-top:8px;border-top:1px solid var(--line);font-size:13px;color:var(--text);font-weight:600}
+
+/* Карточки периодов буфера: ровная сетка 2 × 2 и выплата по центру */
+.pc-flow{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px}
+.pc-flow > div{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
+.pc-flow .income-cell{align-items:center}
+.pc-flow .income-actions{flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin-top:4px}
+.pc-flow .income-btn{padding:5px 12px;border-radius:10px;background:var(--surface-2);color:var(--text)}
+.pc-flow .income-btn.accent{background:var(--accent);color:#fff}
+.pc-flow .income-btn:hover{text-decoration:none;filter:brightness(.97)}
+.pc-flow .carry-line{text-align:center}
+@media(min-width:520px){.pc-flow{grid-template-columns:repeat(4,minmax(0,1fr))}}
