@@ -833,3 +833,130 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
   body.mode-irregular .toast{bottom:24px}
   .page[data-page="analytics"] .irr-analytics{grid-column:1 / -1}
 }
+
+/* =====================================================================
+   Дизайн «Мой бюджет» (холст): светлая карточка дня с деньгами внутри,
+   спокойная палитра, сетка категорий, легенда буфера.
+   Только внешний вид: id, классы и логика JS не меняются.
+   ===================================================================== */
+:root{
+  --page-bg:#F3F4F7;
+  --bg:#FFFFFF;
+  --surface:#F5F6F8;
+  --surface-2:#ECEEF2;
+  --text:#12151B;
+  --muted:#5F6672;
+  --accent:#1A6AB8;
+  --line:rgba(18,21,27,.08);
+  --income:#1C7F4E;
+  --expense:#C23A3F;
+  --kind-daily:#1A6AB8; --kind-bills:#6B52C8; --kind-buffer:#6B52C8; --kind-piggy:#1C7F4E;
+  --tile-shadow:0 1px 2px rgba(18,21,27,.06);
+  --bar-ok:#2E9E66; --bar-low:#D2484E; --bill-dot:#C2410C;
+}
+:root[data-theme="dark"]{--bar-ok:#3FB37A;--bar-low:#E86A6F;--bill-dot:#F08A4B}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){--bar-ok:#3FB37A;--bar-low:#E86A6F;--bill-dot:#F08A4B}
+}
+
+.card{border-radius:20px;padding:12px 16px}
+.topbar h1{font-size:22px;letter-spacing:-.02em}
+.topbar .sub{font-size:13px}
+.icon-btn{width:40px;height:40px;border-radius:13px}
+
+/* Карточка «Осталось на сегодня» — белая, деньги внутри (вариант A) */
+.page[data-page="home"] .today.hero-card{
+  background:var(--bg);color:var(--text);border-radius:24px;padding:18px 18px 14px;box-shadow:var(--tile-shadow);
+}
+.page[data-page="home"] .today.hero-card.over{background:var(--bg)}
+.today.hero-card .hero-label{font-size:13px;color:var(--muted);opacity:1}
+.today.hero-card .hero-big{font-size:46px;letter-spacing:-.035em;margin:2px 0 10px}
+.today.hero-card.over .hero-big{color:var(--expense)}
+.today.hero-card .spend-bar{height:8px;background:var(--surface-2)}
+.today.hero-card .spend-bar span{background:var(--accent)}
+.today.hero-card.over .spend-bar span{background:var(--expense)}
+.today.hero-card .hero-row{font-size:13px;color:var(--muted);opacity:1;margin-top:8px}
+.today.hero-card .hero-row b{color:var(--text)}
+.today.hero-card.over .hero-row b#spentToday{color:var(--expense)}
+.hero-card .money-tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:14px 0 0}
+.hero-card .mtile{background:var(--surface);box-shadow:none;border-radius:14px;padding:10px 12px;text-align:center}
+.hero-card .mtile strong{font-size:17px;font-weight:700;color:var(--text)}
+.hero-card .mtile-sum{background:var(--accent-soft)}
+.hero-card .mtile-sum strong{color:var(--accent)}
+
+/* Быстрые действия: «Расход» — главная кнопка */
+.quick-actions{gap:8px;margin:0 0 8px}
+.qa{min-height:48px;border-radius:16px;font-size:14px}
+.qa-out{background:var(--accent);color:#fff;box-shadow:none}
+.qa-out i{background:rgba(255,255,255,.2);color:#fff}
+
+/* Полоска дней: номер дня в ячейке, точка платежа под ним */
+.strip{gap:3px;margin:10px 0 6px}
+.day{height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:600;color:var(--muted);background:var(--surface-2);overflow:hidden}
+.day.past{background:color-mix(in srgb,var(--accent) 20%,var(--surface-2));color:var(--text)}
+.day.today{background:var(--accent);color:#fff;font-weight:700}
+.day.payday{background:color-mix(in srgb,var(--income) 10%,transparent);border:1.5px dashed var(--income);color:var(--income);font-weight:700}
+.day.bill::after{bottom:4px;width:4px;height:4px;margin-left:-2px;background:var(--bill-dot)}
+/* Длинный период: ячейки слишком узкие для чисел — остаются только цвета. */
+.strip:has(.day:nth-child(22)) .day{font-size:0}
+.strip-legend{font-size:12px}
+
+/* Переключатели: выбранная вкладка белая на сером */
+.segmented{background:var(--surface-2);box-shadow:none;border-radius:14px;padding:4px}
+.segmented button{min-height:40px;border-radius:11px}
+.segmented button[aria-selected="true"],.segmented button[aria-pressed="true"]{background:var(--bg);color:var(--text);box-shadow:0 1px 3px rgba(18,21,27,.1)}
+
+/* Нижнее меню */
+.nav-fab{width:56px;height:56px;border-radius:18px}
+
+/* Главная на компьютере: деньги теперь внутри карточки дня */
+@media(min-width:900px){
+  .page[data-page="home"].active,
+  .page[data-page="home"].active:has(#overspendPanel.hidden){
+    grid-template-areas:
+      "today today today period period period"
+      "quick quick quick period period period"
+      "overspend overspend overspend overspend overspend overspend"
+      "recent recent recent bills bills bills"
+      "buffer buffer buffer forecast forecast forecast";
+  }
+  .page[data-page="home"].active:has(#overspendPanel.hidden){
+    grid-template-areas:
+      "today today today period period period"
+      "quick quick quick period period period"
+      "recent recent recent bills bills bills"
+      "buffer buffer buffer forecast forecast forecast";
+  }
+  .page[data-page="home"] .quick-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .hero-card .money-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+
+/* Новый расход: категории плитками 4 в ряд. Выбор пишется в <select>. */
+.cat-field{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+.cat-field-label{font-size:13px;color:var(--muted)}
+.cat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.cat-grid:empty{display:none}
+.cat-tile{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0;min-height:72px;padding:9px 2px 8px;
+  border:1.5px solid transparent;border-radius:16px;background:var(--surface);color:var(--text);font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.cat-tile[aria-pressed="true"]{border-color:var(--accent);background:var(--bg)}
+.cat-ico{width:32px;height:32px;border-radius:10px;background:var(--bg);display:grid;place-items:center;font-size:18px;line-height:1}
+.cat-tile[aria-pressed="true"] .cat-ico{background:var(--accent-soft)}
+.cat-more .cat-ico{color:var(--muted);font-weight:700}
+.cat-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat-field:has(.cat-tile) .cat-select{display:none}
+
+/* Буфер: синий — сейчас, зелёный — остаток, красный — 3 самых маленьких */
+.buf-chart .bar{background:var(--bar-ok)}
+.buf-chart .bar.cur{background:var(--accent)}
+.buf-chart .bar.low{background:var(--bar-low)}
+.buf-chart-keys{display:flex;justify-content:center;flex-wrap:nowrap;gap:12px;margin:8px 0 4px;font-size:12px;color:var(--muted);white-space:nowrap}
+.buf-chart-keys span{display:inline-flex;align-items:center;gap:5px}
+.buf-chart-keys i{width:8px;height:8px;border-radius:2px;display:block}
+.buf-chart-keys .k-cur{background:var(--accent)} .buf-chart-keys .k-ok{background:var(--bar-ok)} .buf-chart-keys .k-low{background:var(--bar-low)}
+.pc{border-radius:16px}
+.pc-flow > div{text-align:center}
+.page[data-page="buffer"] .buffer-summary .card{text-align:center}
+
+/* Аналитика: средняя сумма — отдельной строкой под графиком */
+.analytics-legend span:last-child{flex-basis:100%;padding-top:8px;border-top:1px solid var(--line);font-size:13px;color:var(--text);font-weight:600}

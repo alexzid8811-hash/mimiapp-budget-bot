@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261009-average-text" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261011-canvas-design" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -22,9 +22,15 @@
           <strong class="hero-big num" id="leftToday">—</strong>
           <div class="spend-bar" id="spendBar" role="progressbar" aria-label="Потрачено сегодня" aria-valuemin="0" aria-valuemax="100"><span id="spendFill"></span></div>
           <div class="hero-row">
-            <span>Можно потратить <b class="num" id="dailyAvailable">—</b></span>
+            <span>Лимит на день <b class="num" id="dailyAvailable">—</b></span>
             <span>Потрачено <b class="num" id="spentToday">—</b></span>
           </div>
+          <div class="money-tiles" aria-label="Деньги на карте и резервы">
+          <div class="mtile"><span><i class="dot dot-card"></i>На карте</span><strong class="num" id="cardCash">—</strong><small id="cardCashNote">на дни периода</small></div>
+          <div class="mtile"><span><i class="dot dot-buffer"></i>Буфер</span><strong class="num" id="cardBuffer">—</strong><small>под обязательные платежи</small></div>
+          <div class="mtile"><span><i class="dot dot-piggy"></i>Копилка</span><strong class="num" id="cardPiggy">—</strong><small>отдельные накопления</small></div>
+          <div class="mtile mtile-sum"><span><i class="dot dot-split"></i>Буфер + копилка</span><strong class="num" id="cardReservesTotal">—</strong><small>все резервы</small></div>
+        </div>
         </div>
         <div id="overspendPanel" class="card overspend-panel hidden">
           <div class="section-head"><h3>Перерасход сегодня</h3><strong class="num" id="overspendAmount">—</strong></div>
@@ -49,12 +55,6 @@
           </div>
           <div id="irrBillsWarning" class="warning hidden"></div>
           <div id="irrNoIncomeWarning" class="warning irr-no-income hidden"><span id="irrNoIncomeText"></span><button class="secondary" id="irrTakeReserveBtn" type="button">Взять из резерва</button></div>
-        </div>
-        <div class="money-tiles" aria-label="Деньги на карте и резервы">
-          <div class="mtile"><span><i class="dot dot-card"></i>На карте</span><strong class="num" id="cardCash">—</strong><small id="cardCashNote">на дни периода</small></div>
-          <div class="mtile"><span><i class="dot dot-buffer"></i>Буфер</span><strong class="num" id="cardBuffer">—</strong><small>под обязательные платежи</small></div>
-          <div class="mtile"><span><i class="dot dot-piggy"></i>Копилка</span><strong class="num" id="cardPiggy">—</strong><small>отдельные накопления</small></div>
-          <div class="mtile mtile-sum"><span><i class="dot dot-split"></i>Буфер + копилка</span><strong class="num" id="cardReservesTotal">—</strong><small>все резервы</small></div>
         </div>
         <div class="card period">
           <div class="section-head"><h3 id="nextPayTitle">До следующей выплаты</h3><span class="muted" id="nextPayDate">—</span></div>
@@ -167,7 +167,8 @@
         <div class="card">
           <div class="section-head"><h3>План по периодам</h3><span class="muted" id="planDaily">—</span></div>
           <div class="buf-chart" id="bufChart" role="img" aria-label="Остаток буфера по периодам"></div>
-          <div class="buf-chart-legend"><span>Остаток буфера</span><span id="bufChartEnd">—</span></div>
+          <div class="buf-chart-keys" aria-hidden="true"><span><i class="k-cur"></i>сейчас</span><span><i class="k-ok"></i>остаток</span><span><i class="k-low"></i>3 самых маленьких</span></div>
+          <div class="buf-chart-legend"><span>Остаток буфера в конце прогноза</span><span id="bufChartEnd">—</span></div>
           <div class="warning hidden" id="bufWarn"></div>
           <button class="income-btn past-toggle" id="bufPastToggle" type="button" hidden>Показать прошлые периоды</button>
           <div class="plan-cards" id="planCards"></div>
@@ -328,7 +329,11 @@
     <form method="dialog" id="expenseForm" class="dialog-card">
       <div class="section-head"><h2>Новый расход</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <label>Сумма<input id="expenseAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
-      <label>Категория<select id="expenseCategory"></select></label>
+      <div class="cat-field">
+        <span class="cat-field-label" id="expenseCatLabel">Категория</span>
+        <div class="cat-grid" id="expenseCatGrid" role="group" aria-labelledby="expenseCatLabel"></div>
+        <label class="cat-select">Все категории<select id="expenseCategory"></select></label>
+      </div>
       <label>Дата<input id="expenseDate" type="date" required /></label>
       <label>Комментарий<input id="expenseNote" maxlength="200" placeholder="Например, продукты" /></label>
       <button class="primary big" value="default" id="saveExpenseBtn">Записать расход</button>
@@ -505,8 +510,8 @@
   <script src="/static/money-input.js?v=20260917-full-design"></script>
   <script src="/static/app.js?v=20261009-month-payments"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
-  <script src="/static/buffer-ui.js?v=20261007-past-periods"></script>
-  <script src="/static/design-ui.js?v=20261006-irregular"></script>
+  <script src="/static/buffer-ui.js?v=20261011-canvas-design"></script>
+  <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261009-average-text"></script>
   <script src="/static/irregular-ui.js?v=20261009-bills-by-month"></script>
