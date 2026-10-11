@@ -355,6 +355,8 @@ function renderCategories() {
 }
 
 function openCategoryDialog(category = null) {
+  // Desktop Telegram can briefly retain an older HTML shell after an update.
+  if (!$("categoryDialog")) return toast("Обновите приложение, чтобы изменить категорию");
   const categories = state.bootstrap?.categories || [];
   $("categoryDialogTitle").textContent = category ? "Категория" : "Новая категория";
   $("categoryId").value = category?.id || "";
@@ -377,7 +379,7 @@ $("categoriesList").addEventListener("click", event => {
 
 $("addCategoryBtn").addEventListener("click", () => openCategoryDialog());
 
-$("categoryForm").addEventListener("submit", async e => {
+$("categoryForm")?.addEventListener("submit", async e => {
   e.preventDefault();
   const id = $("categoryId").value;
   const body = { title: $("categoryTitle").value.trim(), emoji: $("categoryEmoji").value.trim() || "💳" };
@@ -389,7 +391,7 @@ $("categoryForm").addEventListener("submit", async e => {
   } catch (err) { toast(err.message); }
 });
 
-$("deleteCategoryBtn").addEventListener("click", async () => {
+$("deleteCategoryBtn")?.addEventListener("click", async () => {
   const id = $("categoryId").value;
   if (!id || !confirm(`Удалить категорию «${$("categoryTitle").value}»?`)) return;
   const moveTo = $("categoryMoveTo").value;
