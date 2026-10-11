@@ -561,6 +561,52 @@ def reorder_categories(
     return {"ok": True}
 
 
+@app.put("/api/categories/{category_id}")
+def update_category(
+    category_id: int, payload: CategoryIn, user: TelegramUser = Depends(current_user)
+) -> dict:
+    uid = user_ready(user)
+    title, emoji = payload.title.strip(), payload.emoji.strip()
+    if not title or not emoji:
+        raise HTTPException(422, "Укажите название и эмодзи")
+    try:
+        with connect() as con:
+            cur = con.execute(
+                "UPDATE categories SET title=?,emoji=? WHERE id=? AND user_id=?",
+                (title, emoji, category_id, uid),
+            )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "Категория с таким названием уже есть") from exc
+    if not cur.rowcount:
+        raise HTTPException(404, "Категория не найдена")
+    return one("SELECT * FROM categories WHERE id=?", (category_id,)) or {}
+
+
+@app.delete("/api/categories/{category_id}")
+def delete_category(
+    category_id: int,
+    move_to: int | None = None,
+    user: TelegramUser = Depends(current_user),
+) -> dict:
+    """Delete a category; its expenses and bills move to `move_to` or lose the category."""
+    uid = user_ready(user)
+    with connect() as con:
+        require_category(con, uid, category_id)
+        if move_to == category_id:
+            raise HTTPException(422, "Нельзя перенести траты в удаляемую категорию")
+        require_category(con, uid, move_to)
+        count = con.execute("SELECT COUNT(*) FROM categories WHERE user_id=?", (uid,)).fetchone()[0]
+        if count <= 1:
+            raise HTTPException(422, "Нужна хотя бы одна категория")
+        for table in ("transactions", "bill_rules"):
+            con.execute(
+                f"UPDATE {table} SET category_id=? WHERE category_id=? AND user_id=?",
+                (move_to, category_id, uid),
+            )
+        con.execute("DELETE FROM categories WHERE id=? AND user_id=?", (category_id, uid))
+    return {"ok": True}
+
+
 @app.put("/api/settings")
 def save_settings(payload: SettingsIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)

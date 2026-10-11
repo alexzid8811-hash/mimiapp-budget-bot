@@ -43,7 +43,7 @@ function setup() {
     window: {location:{hash:'',search:''},addEventListener(){}},
     document: {addEventListener(){}, body:{classList:{toggle(){}}}, createElement:()=>({}),getElementById:get, querySelectorAll:()=>[],querySelector:()=>null},
     fetch: async (url, options) => {
-      requests.push({url,body:options?.body});
+      requests.push({url,body:options?.body,method:options?.method});
       return {ok:true,status:200,json:async()=>responses[url] ?? {}};
     },
   };
@@ -184,6 +184,35 @@ test('category order uses a touch-friendly drag handle', async () => {
   assert.match(script,/touchmove/);
   assert.match(script,/passive:false/);
   assert.match(script,/\/api\/categories\/order/);
+});
+
+test('category can be renamed and deleted from settings', async () => {
+  const {sandbox,get,responses,requests}=setup();
+  sandbox.confirm=()=>true;
+  responses['/api/bootstrap'].categories=[
+    {id:1,title:'Продукты',emoji:'🛒'},
+    {id:2,title:'Транспорт',emoji:'🚕'},
+  ];
+  await get('refreshBtn').listeners.click();
+  assert.match(get('categoriesList').innerHTML,/data-edit-category="2"/);
+  const edit={dataset:{editCategory:'2'}};
+  get('categoriesList').listeners.click({target:{closest:()=>edit}});
+  assert.equal(get('categoryTitle').value,'Транспорт');
+  assert.equal(get('categoryEmoji').value,'🚕');
+  assert.match(get('categoryMoveTo').innerHTML,/value="1"/);
+  assert.doesNotMatch(get('categoryMoveTo').innerHTML,/value="2"/);
+
+  get('categoryTitle').value='Такси';
+  await get('categoryForm').listeners.submit({preventDefault(){}});
+  const put=requests.find(r=>r.url==='/api/categories/2');
+  assert.equal(put.method,'PUT');
+  assert.deepEqual(JSON.parse(put.body),{title:'Такси',emoji:'🚕'});
+
+  get('categoriesList').listeners.click({target:{closest:()=>edit}});
+  get('categoryMoveTo').value='1';
+  await get('deleteCategoryBtn').listeners.click();
+  const del=requests.find(r=>r.url==='/api/categories/2?move_to=1');
+  assert.equal(del.method,'DELETE');
 });
 
 test('buffer has no separate vacation reserve card', () => {

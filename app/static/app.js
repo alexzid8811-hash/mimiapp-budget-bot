@@ -349,10 +349,57 @@ function renderCategories() {
   const categories = state.bootstrap?.categories || [];
   $("categoriesList").innerHTML = categories.map(category => `
     <div class="category-order-item" data-category-id="${category.id}">
-      <span class="category-order-name">${escapeHtml(category.emoji)} ${escapeHtml(category.title)}</span>
+      <button class="category-order-name" type="button" data-edit-category="${category.id}" aria-label="Изменить ${escapeHtml(category.title)}"><b>${escapeHtml(category.emoji)}</b><span>${escapeHtml(category.title)}</span><i aria-hidden="true">✎</i></button>
       <button class="category-drag-handle" type="button" aria-label="Перетащить ${escapeHtml(category.title)}" title="Зажмите и перетащите">☰</button>
     </div>`).join("");
 }
+
+function openCategoryDialog(category = null) {
+  const categories = state.bootstrap?.categories || [];
+  $("categoryDialogTitle").textContent = category ? "Категория" : "Новая категория";
+  $("categoryId").value = category?.id || "";
+  $("categoryEmoji").value = category?.emoji || "💳";
+  $("categoryTitle").value = category?.title || "";
+  const others = categories.filter(c => c.id !== category?.id);
+  $("categoryMoveTo").innerHTML = others.map(c => `<option value="${c.id}">Перенести в ${escapeHtml(c.emoji)} ${escapeHtml(c.title)}</option>`).join("")
+    + `<option value="">Оставить без категории</option>`;
+  $("categoryDeleteBlock").style.display = category && others.length ? "" : "none";
+  $("categoryDialog").showModal();
+}
+
+$("categoriesList").addEventListener("click", event => {
+  const button = event.target.closest?.("[data-edit-category]");
+  if (!button) return;
+  const id = Number(button.dataset.editCategory);
+  const category = (state.bootstrap?.categories || []).find(c => c.id === id);
+  if (category) openCategoryDialog(category);
+});
+
+$("addCategoryBtn").addEventListener("click", () => openCategoryDialog());
+
+$("categoryForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const id = $("categoryId").value;
+  const body = { title: $("categoryTitle").value.trim(), emoji: $("categoryEmoji").value.trim() || "💳" };
+  try {
+    await api(id ? `/api/categories/${id}` : "/api/categories", { method: id ? "PUT" : "POST", body: JSON.stringify(body) });
+    $("categoryDialog").close();
+    toast(id ? "Категория сохранена" : "Категория добавлена");
+    await loadAll();
+  } catch (err) { toast(err.message); }
+});
+
+$("deleteCategoryBtn").addEventListener("click", async () => {
+  const id = $("categoryId").value;
+  if (!id || !confirm(`Удалить категорию «${$("categoryTitle").value}»?`)) return;
+  const moveTo = $("categoryMoveTo").value;
+  try {
+    await api(`/api/categories/${id}${moveTo ? `?move_to=${moveTo}` : ""}`, { method: "DELETE" });
+    $("categoryDialog").close();
+    toast("Категория удалена");
+    await loadAll();
+  } catch (err) { toast(err.message); }
+});
 
 let categoryDrag = null;
 
@@ -383,16 +430,48 @@ function categoryIdsFromList(list) {
 }
 
 const categoriesList = $("categoriesList");
-function beginCategoryDrag(target, inputId) {
+const CATEGORY_MOVE_MS = 200;
+
+function reducedMotion() {
+  return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+}
+
+// FLIP: the items jump to their new place in the DOM, then slide there from
+// where they were drawn a moment ago.
+function slideItems(items, change) {
+  const animate = !reducedMotion() && items.every(item => item.animate);
+  const before = animate ? items.map(item => item.getBoundingClientRect().top) : [];
+  change();
+  if (!animate) return;
+  items.forEach((item, index) => {
+    item.categoryMove?.cancel();
+    const shift = before[index] - item.getBoundingClientRect().top;
+    if (!shift) return;
+    item.categoryMove = item.animate(
+      [{transform: `translateY(${shift}px)`}, {transform: 'none'}],
+      {duration: CATEGORY_MOVE_MS, easing: 'cubic-bezier(.2,.8,.2,1)'}
+    );
+  });
+}
+
+function placeDraggedCategory(clientY) {
+  const {item} = categoryDrag;
+  const top = clientY - categoriesList.getBoundingClientRect().top - categoryDrag.grabOffset;
+  item.style.transform = `translateY(${top - item.offsetTop}px)`;
+}
+
+function beginCategoryDrag(target, inputId, clientY) {
   if (categoryDrag) return false;
   const handle = target.closest('.category-drag-handle');
-  if (!handle) return;
+  if (!handle) return false;
   const item = handle.closest('.category-order-item');
-  if (!item) return;
+  if (!item) return false;
+  item.categoryMove?.cancel();
   categoryDrag = {
     inputId,
     item,
     previous: [...(state.bootstrap?.categories || [])],
+    grabOffset: clientY - categoriesList.getBoundingClientRect().top - item.offsetTop,
   };
   item.classList.add('dragging');
   categoriesList.classList.add('sorting');
@@ -401,12 +480,16 @@ function beginCategoryDrag(target, inputId) {
 
 function moveCategoryDrag(clientY, inputId) {
   if (!categoryDrag || categoryDrag.inputId !== inputId) return false;
+  const {item} = categoryDrag;
+  // Compare layout positions (offsetTop ignores the sliding transforms), so
+  // neighbours mid-animation do not make the order flicker.
+  const center = clientY - categoriesList.getBoundingClientRect().top - categoryDrag.grabOffset + item.offsetHeight / 2;
   const others = [...categoriesList.querySelectorAll('.category-order-item:not(.dragging)')];
-  const before = others.find(item => {
-    const rect = item.getBoundingClientRect();
-    return clientY < rect.top + rect.height / 2;
-  });
-  categoriesList.insertBefore(categoryDrag.item, before || null);
+  const before = others.find(other => center < other.offsetTop + other.offsetHeight / 2) || null;
+  if (item.nextElementSibling !== before) {
+    slideItems(others, () => categoriesList.insertBefore(item, before));
+  }
+  placeDraggedCategory(clientY);
   if (clientY < 90) window.scrollBy(0, -12);
   else if (clientY > window.innerHeight - 90) window.scrollBy(0, 12);
   return true;
@@ -416,12 +499,16 @@ async function finishCategoryDrag(inputId, cancelled = false) {
   if (!categoryDrag || categoryDrag.inputId !== inputId) return;
   const drag = categoryDrag;
   categoryDrag = null;
-  drag.item.classList.remove('dragging');
   categoriesList.classList.remove('sorting');
   if (cancelled) {
+    drag.item.classList.remove('dragging');
     renderCategories();
     return;
   }
+  // Settle the dragged item into its slot instead of snapping.
+  slideItems([drag.item], () => { drag.item.style.transform = ''; });
+  if (drag.item.categoryMove) drag.item.categoryMove.onfinish = () => drag.item.classList.remove('dragging');
+  else drag.item.classList.remove('dragging');
   const categoryIds = categoryIdsFromList(categoriesList);
   if (categoryIds.every((id, index) => id === drag.previous[index]?.id)) return;
   await persistCategoryOrder(drag.previous, categoryIds);
@@ -431,7 +518,7 @@ categoriesList.addEventListener('pointerdown', event => {
   // Touch is handled below through the iOS-compatible touch event path.
   if (event.pointerType === 'touch') return;
   const inputId = `pointer:${event.pointerId}`;
-  if (!beginCategoryDrag(event.target, inputId)) return;
+  if (!beginCategoryDrag(event.target, inputId, event.clientY)) return;
   event.preventDefault();
   categoriesList.setPointerCapture?.(event.pointerId);
 });
@@ -456,7 +543,7 @@ categoriesList.addEventListener('pointercancel', event => {
 categoriesList.addEventListener('touchstart', event => {
   if (categoryDrag) return;
   const touch = event.changedTouches[0];
-  if (!touch || !beginCategoryDrag(event.target, `touch:${touch.identifier}`)) return;
+  if (!touch || !beginCategoryDrag(event.target, `touch:${touch.identifier}`, touch.clientY)) return;
   event.preventDefault();
 }, {passive:false});
 
@@ -764,12 +851,6 @@ $("savePayrollBtn").addEventListener("click", async () => {
     toast("Расчёт зарплаты сохранён");
     await loadAll();
   } catch(e) { toast(e.message); }
-});
-
-$("addCategoryBtn").addEventListener("click", async () => {
-  const title = prompt("Название категории"); if (!title) return;
-  const emoji = prompt("Эмодзи", "💳") || "💳";
-  try { await api("/api/categories", {method:"POST", body:JSON.stringify({title,emoji})}); await loadAll(); } catch(e){ toast(e.message); }
 });
 
 window.addEventListener("DOMContentLoaded", () => loadAll(), { once: true });

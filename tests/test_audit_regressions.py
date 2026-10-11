@@ -525,6 +525,42 @@ def test_category_order_rejects_incomplete_or_duplicate_lists(client):
     assert client.put('/api/categories/order', json={'category_ids': [ids[0], *ids]}).status_code == 422
 
 
+def test_category_can_be_renamed(client):
+    first, second = client.get('/api/bootstrap').json()['categories'][:2]
+    response = client.put(f"/api/categories/{first['id']}", json={'title': ' Еда ', 'emoji': '🥗'})
+    assert response.status_code == 200
+    assert (response.json()['title'], response.json()['emoji']) == ('Еда', '🥗')
+    assert client.put(f"/api/categories/{first['id']}", json={'title': second['title'], 'emoji': '🥗'}).status_code == 409
+    assert client.put('/api/categories/99999', json={'title': 'Нет', 'emoji': '❓'}).status_code == 404
+
+
+def test_deleted_category_moves_expenses_and_bills(client):
+    first, second, third = client.get('/api/bootstrap').json()['categories'][:3]
+    tx = client.post('/api/transactions', json={'type': 'expense', 'amount': 10, 'category_id': first['id']}).json()
+    bill = client.post('/api/bill-rules', json={'title': 'Связь', 'amount': 5, 'day_of_month': 10, 'category_id': first['id']}).json()
+    assert client.delete(f"/api/categories/{first['id']}?move_to={first['id']}").status_code == 422
+    assert client.delete(f"/api/categories/{first['id']}?move_to={second['id']}").status_code == 200
+    ids = [row['id'] for row in client.get('/api/bootstrap').json()['categories']]
+    assert first['id'] not in ids
+    moved = next(row for row in client.get('/api/transactions').json() if row['id'] == tx['id'])
+    assert moved['category_id'] == second['id']
+    rules = client.get('/api/bootstrap').json()['bill_rules']
+    assert next(row for row in rules if row['id'] == bill['id'])['category_id'] == second['id']
+
+    tx2 = client.post('/api/transactions', json={'type': 'expense', 'amount': 3, 'category_id': third['id']}).json()
+    assert client.delete(f"/api/categories/{third['id']}").status_code == 200
+    orphan = next(row for row in client.get('/api/transactions').json() if row['id'] == tx2['id'])
+    assert orphan['category_id'] is None
+
+
+def test_last_category_cannot_be_deleted(client):
+    ids = [row['id'] for row in client.get('/api/bootstrap').json()['categories']]
+    for category_id in ids[:-1]:
+        assert client.delete(f'/api/categories/{category_id}').status_code == 200
+    assert client.delete(f'/api/categories/{ids[-1]}').status_code == 422
+    assert client.delete('/api/categories/99999').status_code == 422
+
+
 def test_backdated_withdrawal_and_removal_preserve_running_balance(client):
     deposit = client.post('/api/piggy-bank/deposit', json={'amount': 300, 'movement_date': '2026-09-12'}).json()['movement']
     assert client.post('/api/piggy-bank/withdraw', json={'amount': 100, 'movement_date': '2026-09-01'}).status_code == 422
