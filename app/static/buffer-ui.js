@@ -113,7 +113,9 @@
     const max = Math.max(0, ...periods.map(p => Number(p.buffer) || 0));
     const commonDaily = periods.every(p => Number(p.daily) === Number(periods[0].daily));
     setText("planDaily", commonDaily ? "В день везде " + formatMoney(periods[0].daily) : "Дневной лимит по периодам");
-    chart.innerHTML = periods.map((p,i) => `<div class="bar ${i===0?"cur":p.buffer<max*.1?"low":""}" style="height:${max>0?Math.max(3,Math.max(0,Number(p.buffer))/max*100):3}%" title="${safe(formatDate(p.start)+" — "+formatDate(p.end)+": "+formatMoney(p.buffer))}"></div>`).join("");
+    // Red marks only the three smallest balances ahead; the current period is blue.
+    const lowest = new Set(periods.map((p,i)=>({i,b:Number(p.buffer)||0})).filter(x=>x.i>0).sort((a,b)=>a.b-b.b).slice(0,3).map(x=>x.i));
+    chart.innerHTML = periods.map((p,i) => `<div class="bar ${i===0?"cur":lowest.has(i)?"low":""}" style="height:${max>0?Math.max(3,Math.max(0,Number(p.buffer))/max*100):3}%" title="${safe(formatDate(p.start)+" — "+formatDate(p.end)+": "+formatMoney(p.buffer))}"></div>`).join("");
     const last = periods[periods.length-1];
     setText("bufChartEnd", formatDate(last.end)+": "+formatMoney(last.buffer));
     const worst = periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
@@ -150,7 +152,8 @@
     const rowClass = (p, i) => p.past ? "past" : (i === 0 ? "cur" : "");
     cards.innerHTML = shown.map((p,j)=>{
       const i = j - (shown.length - periods.length);
-      const [c,m,label]=movement(p);
+      const [c,m,shortLabel]=movement(p);
+      const label = c==="pos" ? "положить в буфер" : c==="neg" ? "взять из буфера" : shortLabel;
       return `<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}</div><div class="pc-kind">${safe(p.kind)}, ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div><div class="pc-flow num"><div><span>${i===0&&!p.past?"Доступно сейчас":"Получено"}</span>${receivedMarkup(p)}</div><div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div>${toCardLine(p)}</div><div class="pc-foot"><span>Остаток буфера</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";

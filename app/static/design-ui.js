@@ -60,6 +60,7 @@
     for(let i=0;i<=Math.min(62,days(start,payday));i++){
       const s=shift(start,i), el=document.createElement("div");
       el.className="day "+(s===payday?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"");
+      el.textContent=String(Number(s.slice(8)));
       el.title=date(s)+(bills.has(s)?" · обязательный платёж":"");
       strip.appendChild(el);
     }
@@ -70,6 +71,7 @@
     const peak=flow ? Math.max(balance,...periods.map(p=>Number(p.buffer)||0)) : Number(d.reserve.future_target)||0;
     $("bufferMeter").style.width=(peak>0?Math.min(100,Math.max(0,balance/peak*100)):0)+"%";
     payroll();navigation(currentPage);
+    syncCategories();
   }
   document.addEventListener("click",event=>{
     const go=event.target.closest("[data-seg],[data-go]");
@@ -95,5 +97,52 @@
   $("coverFromPiggyBtn")?.addEventListener("click",()=>{
     if (typeof window.openCoverOverspend==="function") window.openCoverOverspend();
   });
-  window.budgetDesign={render,navigation};
+  // Category tiles in the expense form. The <select> stays the single source
+  // of truth (it is what the form submits); the tiles only mirror and set it.
+  const CAT_TILES=8;
+  let catsExpanded=false;
+  function syncCategories(){
+    const select=$("expenseCategory"), grid=$("expenseCatGrid");
+    if(!select||!grid||!select.options) return;
+    const options=[...select.options];
+    const many=options.length>CAT_TILES;
+    const current=select.value;
+    // The chosen category is always visible, even when it is past the first tiles.
+    const shown=!many||catsExpanded ? options : options.slice(0,CAT_TILES-1);
+    if(many&&!catsExpanded&&current&&!shown.some(o=>o.value===current)){
+      const picked=options.find(o=>o.value===current);
+      if(picked) shown[shown.length-1]=picked;
+    }
+    grid.replaceChildren();
+    shown.forEach(option=>{
+      const text=option.textContent.trim(), space=text.indexOf(" ");
+      const emoji=space>0?text.slice(0,space):"", title=space>0?text.slice(space+1):text;
+      const tile=document.createElement("button");
+      tile.type="button";tile.className="cat-tile";
+      tile.setAttribute("aria-pressed",String(option.value===current));
+      const ico=document.createElement("span");ico.className="cat-ico";ico.setAttribute("aria-hidden","true");ico.textContent=emoji||"•";
+      const name=document.createElement("span");name.className="cat-name";name.textContent=title;
+      tile.append(ico,name);
+      tile.addEventListener("click",()=>{select.value=option.value;select.dispatchEvent(new Event("change"));syncCategories();});
+      grid.appendChild(tile);
+    });
+    if(many){
+      const more=document.createElement("button");
+      more.type="button";more.className="cat-tile cat-more";
+      more.setAttribute("aria-expanded",String(catsExpanded));
+      const ico=document.createElement("span");ico.className="cat-ico";ico.setAttribute("aria-hidden","true");ico.textContent=catsExpanded?"−":"…";
+      const name=document.createElement("span");name.className="cat-name";name.textContent=catsExpanded?"Свернуть":"Ещё";
+      more.append(ico,name);
+      more.addEventListener("click",()=>{catsExpanded=!catsExpanded;syncCategories();});
+      grid.appendChild(more);
+    }
+  }
+  $("expenseCategory")?.addEventListener("change",syncCategories);
+  // The dialog is opened from several places that set the select directly;
+  // refresh the tiles whenever it opens.
+  const expenseDialog=$("expenseDialog");
+  if(expenseDialog&&typeof MutationObserver==="function"){
+    new MutationObserver(()=>{if(expenseDialog.open){catsExpanded=false;syncCategories();}}).observe(expenseDialog,{attributes:true,attributeFilter:["open"]});
+  }
+  window.budgetDesign={render,navigation,syncCategories};
 })();
