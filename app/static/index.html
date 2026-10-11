@@ -298,7 +298,7 @@
 
         <div class="card">
           <div class="section-head"><h3>Категории</h3><button class="secondary" id="addCategoryBtn">＋</button></div>
-          <p class="muted category-order-help">Зажмите ручку ☰ и перетащите категорию на нужное место.</p>
+          <p class="muted category-order-help">Нажмите на категорию, чтобы переименовать или удалить её. Зажмите ручку ☰ и перетащите на нужное место.</p>
           <div id="categoriesList" class="category-order-list"></div>
         </div>
 
@@ -437,6 +437,22 @@
       <label>Комментарий<input id="vacationNote" maxlength="120" placeholder="Необязательно" /></label>
       <p class="muted">Для нового отпуска дата выплаты по умолчанию ставится за 3 календарных дня до начала. Её можно изменить на фактическую.</p>
       <button class="primary big" value="default">Сохранить отпуск</button>
+    </form>
+  </dialog>
+
+  <dialog id="categoryDialog">
+    <form method="dialog" id="categoryForm" class="dialog-card">
+      <div class="section-head"><h2 id="categoryDialogTitle">Категория</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <input id="categoryId" type="hidden" />
+      <div class="category-fields">
+        <label class="category-emoji-field">Эмодзи<input id="categoryEmoji" required maxlength="16" autocomplete="off" /></label>
+        <label>Название<input id="categoryTitle" required maxlength="40" autocomplete="off" placeholder="Например, кафе" /></label>
+      </div>
+      <button class="primary big" value="default" id="saveCategoryBtn">Сохранить</button>
+      <div id="categoryDeleteBlock" class="category-delete">
+        <label>Траты и платежи этой категории<select id="categoryMoveTo"></select></label>
+        <button class="secondary big danger" type="button" id="deleteCategoryBtn">Удалить категорию</button>
+      </div>
     </form>
   </dialog>
 
