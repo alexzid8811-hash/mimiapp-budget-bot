@@ -918,6 +918,8 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 
 /* Нижнее меню */
 .nav-fab{width:56px;height:56px;border-radius:18px}
+/* Компьютер: «Добавить расход» во всю ширину боковой панели */
+@media(min-width:1024px){.nav-fab{width:100%;height:auto;border-radius:12px}}
 
 /* Главная на компьютере: деньги теперь внутри карточки дня */
 @media(min-width:900px){

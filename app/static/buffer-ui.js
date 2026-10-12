@@ -63,13 +63,15 @@
     if (element) element.textContent = value;
   }
 
-  function receivedMarkup(period, compact = false) {
+  // "Изменить" is offered for the current period only; later paydays are
+  // corrected once their period comes.
+  function receivedMarkup(period, compact = false, current = false) {
     const value = `<span>${formatMoney(period.received)}</span>`;
     if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
     const status = period.income_confirmed ? '<small class="income-status done">получено ✓</small>'
       : period.income_pending ? '<small class="income-status pending">ждём подтверждения</small>'
         : period.income_overridden ? '<small class="income-status">изменено</small>' : '';
-    const edit = `<button class="income-btn" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">Изменить</button>`;
+    const edit = !current ? "" : `<button class="income-btn" type="button" onclick="editCashflowIncome('${period.override_key}')" aria-label="Изменить полученную сумму">Изменить</button>`;
     // The payday has come but the money is not confirmed yet: offer to enter
     // the amount actually received next to "Изменить".
     const confirm = period.income_pending
@@ -129,16 +131,7 @@
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"в буфер"]
         : ["zero","—","без движения"];
-    // The daily amount spreads the card money of the period plus what is left
-    // on the card from the previous one (or minus its overspend).
-    const carryLine = p => {
-      const carry = Number(p.carry_in) || 0;
-      if (Math.abs(carry) < 0.01) return "";
-      return carry > 0
-        ? `<small class="carry-line">+ ${formatMoney(carry)} остаток прошлого периода</small>`
-        : `<small class="carry-line neg">− ${formatMoney(-carry)} перерасход прошлого периода</small>`;
-    };
-    const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>${carryLine(p)}`;
+    const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>`;
     const toCardLine = p => Number(p.to_card) > 0
       ? `<div><span>На карту</span><b>${toCardInner(p)}</b></div>` : "";
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
@@ -153,7 +146,7 @@
     // Cards follow the design: period and movement on top, the payout as its
     // own block (amount, status, "Изменить" / "Получил ✓"), then where the
     // money goes, then what stays in the buffer.
-    const payoutBlock = p => {
+    const payoutBlock = (p, current) => {
       const head = `${safe(p.kind)}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
       if (!p.received_editable) {
         const done = p.past ? '<span class="pc-status done">получено ✓</span>' : "";
@@ -162,11 +155,12 @@
       const status = p.income_confirmed ? '<span class="pc-status done">получено ✓</span>'
         : p.income_pending ? '<span class="pc-status pending">ждём подтверждения</span>'
           : p.income_overridden ? '<span class="pc-status">изменено</span>' : "";
-      const edit = `<button class="income-btn" type="button" onclick="editCashflowIncome('${p.override_key}')" aria-label="Изменить полученную сумму">Изменить</button>`;
+      const edit = !current ? "" : `<button class="income-btn" type="button" onclick="editCashflowIncome('${p.override_key}')" aria-label="Изменить полученную сумму">Изменить</button>`;
       const confirm = p.income_pending
         ? `<button class="income-btn accent" type="button" onclick="confirmCashflowIncome('${p.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`
         : "";
-      return `<div class="pc-pay"><div class="pc-pay-top"><div><span>${head}</span><b class="num">${formatMoney(p.received)}</b></div>${status}</div><div class="pc-pay-actions${confirm ? " two" : ""}">${edit}${confirm}</div></div>`;
+      const actions = edit || confirm ? `<div class="pc-pay-actions${edit && confirm ? " two" : ""}">${edit}${confirm}</div>` : "";
+      return `<div class="pc-pay"><div class="pc-pay-top"><div><span>${head}</span><b class="num">${formatMoney(p.received)}</b></div>${status}</div>${actions}</div>`;
     };
     const groupTitle = (p, i, j) => {
       if (p.past) return j === 0 ? '<h4 class="pc-group">Прошедшие</h4>' : "";
@@ -180,7 +174,7 @@
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : i===0 ? '<span class="pc-chip">сейчас</span>' : "";
       const flow = `<div class="pc-flow pc-flow3 num">${toCardLine(p)}<div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>`;
       const footLabel = p.past ? "Остаток буфера" : "Останется в буфере";
-      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p)}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = shown.map((p,j)=>{
@@ -188,8 +182,8 @@
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),formatMoney(p.free)];
-      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>${carryLine(p)}`;
-      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
+      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>`;
+      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
   }
 
