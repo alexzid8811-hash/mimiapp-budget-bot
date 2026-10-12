@@ -1010,3 +1010,17 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .pc-flow.pc-flow3 b{font-size:14px}
 .pc-foot{font-size:13px}
 .pc-flow.pc-flow3 b small:not(.carry-line){white-space:nowrap;font-size:10.5px}
+
+/* Главная на компьютере: две независимые колонки (home-layout.js задаёт
+   каждой карточке высоту в строках по 1px), без пустот под короткими блоками. */
+@media(min-width:900px){
+  .page[data-page="home"].active.masonry,
+  .page[data-page="home"].active.masonry:has(#overspendPanel.hidden),
+  body.mode-irregular .page[data-page="home"].active.masonry,
+  body.mode-irregular .page[data-page="home"].active.masonry:has(#overspendPanel.hidden){
+    grid-template-columns:repeat(2,minmax(0,1fr));grid-template-areas:none;grid-auto-rows:1px;grid-auto-flow:row dense;
+    row-gap:0;column-gap:8px;align-items:start
+  }
+  .page[data-page="home"].active.masonry>*{grid-area:auto;grid-column:1;margin:0;align-self:start}
+  .page[data-page="home"].active.masonry>:is(.period,.irr-home,.home-bills,.home-forecast){grid-column:2}
+}
