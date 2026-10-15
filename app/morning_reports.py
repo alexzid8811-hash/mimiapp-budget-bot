@@ -25,13 +25,19 @@ def _nearest_unpaid_bills(user_id: int, today: date) -> tuple[date | None, list[
     """Return every unpaid active bill on the nearest payment date."""
     with connect() as con:
         rules = con.execute(
-            "SELECT id,title,amount,day_of_month FROM bill_rules "
+            "SELECT id,title,amount,day_of_month,once_date FROM bill_rules "
             "WHERE user_id=? AND active=1 AND archived=0",
             (user_id,),
         ).fetchall()
         candidates = []
         for rule in rules:
-            due = _next_rule_due_date(int(rule["day_of_month"]), today)
+            if rule["once_date"]:
+                # A one-off payment (a planned credit card repayment).
+                due = date.fromisoformat(rule["once_date"])
+                if due < today:
+                    continue
+            else:
+                due = _next_rule_due_date(int(rule["day_of_month"]), today)
             paid = con.execute(
                 "SELECT 1 FROM transactions WHERE user_id=? AND bill_rule_id=? "
                 "AND bill_due_date=? LIMIT 1",
@@ -46,6 +52,33 @@ def _nearest_unpaid_bills(user_id: int, today: date) -> tuple[date | None, list[
 
     nearest_date = min((item["due_date"] for item in candidates), default=None)
     return nearest_date, [item for item in candidates if item["due_date"] == nearest_date]
+
+
+REMIND_DAYS = (3, 0)  # a credit card payment: three days before and on the day
+
+
+def accounts_summary(user_id: int, today: date) -> dict | None:
+    """«Всего денег» and the credit card debt for the morning report, with a
+    reminder three days before a card's payment day and on the day."""
+    from . import accounts_engine  # local import: optional feature
+
+    if not accounts_engine.is_enabled(user_id):
+        return None
+    snap = accounts_engine.snapshot(user_id)
+    reminders = []
+    for account in snap["accounts"]:
+        if account["kind"] != "credit" or account["archived"] or not (account.get("debt") or 0) > 0:
+            continue
+        due = account.get("due_date")
+        days = (date.fromisoformat(due) - today).days if due else None
+        if days in REMIND_DAYS:
+            reminders.append({"title": account["title"], "debt": float(account["debt"]), "due_date": due, "days": days})
+    return {
+        "total": float(snap["total"]),
+        "credit_debt": float(snap["credit_debt"]),
+        "credit_due_date": snap.get("credit_due_date"),
+        "credit_reminders": reminders,
+    }
 
 
 def pending_morning_reports(now: datetime) -> list[dict]:
@@ -99,6 +132,8 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
         report = _irregular_report(user_id, today, yesterday, expenses, previous)
         if report is None and resend:
             _clear_resend(user_id)
+        if report is not None:
+            report["accounts"] = accounts_summary(user_id, today)
         return report
 
     # The same calculation as the home screen: with the start capital
@@ -131,6 +166,7 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
         "nearest_days_left": None if nearest_date is None
             else (datetime.fromisoformat(nearest_date).date() - today).days,
         "nearest_bills": nearest,
+        "accounts": accounts_summary(user_id, today),
     }
 
 

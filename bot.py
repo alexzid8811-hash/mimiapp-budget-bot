@@ -133,6 +133,11 @@ def spent_text(numbers: dict) -> str:
         lines.extend(["", title, *_items(numbers["bills_paid"])])
     if numbers["reserve_paid"]:
         lines.extend(["", "Оплачено из резерва на непредвиденное:", *_items(numbers["reserve_paid"])])
+    # Cards and accounts: spending that is not today's money.
+    for key, title in (("credit_paid", "Кредиткой (растёт долг, не из суммы на день):"),
+                       ("piggy_paid", "Из копилки:"), ("outside_paid", "Вне бюджета:")):
+        if numbers.get(key):
+            lines.extend(["", title, *_items(numbers[key])])
     return "\n".join(lines)
 
 
@@ -234,6 +239,20 @@ def irregular_report_text(report: dict, spending: str, change: str) -> str:
     return "\n".join(lines)
 
 
+def accounts_lines(summary: dict | None) -> list[str]:
+    """«Всего денег», the credit card debt and the payment reminders."""
+    if not summary:
+        return []
+    lines = ["", f"💰 Всего денег: {money(summary['total'])} ₽"]
+    if summary["credit_debt"] > 0:
+        due = f" · до {_ddmm(summary['credit_due_date'])}" if summary.get("credit_due_date") else ""
+        lines.append(f"💳 Долг по кредитке: {money(summary['credit_debt'])} ₽{due}")
+    for item in summary.get("credit_reminders", []):
+        when = "сегодня" if item["days"] == 0 else f"через {item['days']} дн., {_ddmm(item['due_date'])}"
+        lines.append(f"⏰ Платёж по кредитке «{item['title']}» {when}: долг {money(item['debt'])} ₽")
+    return lines
+
+
 def morning_report_text(report: dict) -> str:
     expenses = "\n".join(f"• {item['title']} — {money(item['amount'])} ₽" for item in report["expenses"])
     spending = f"Вчера потрачено: {money(report['spent_total'])} ₽"
@@ -245,7 +264,7 @@ def morning_report_text(report: dict) -> str:
         ("+" if report["daily_change"] >= 0 else "−") + money(abs(report["daily_change"])) + " ₽"
     )
     if report.get("mode") == "irregular":
-        return irregular_report_text(report, spending, change)
+        return "\n".join([irregular_report_text(report, spending, change), *accounts_lines(report.get("accounts"))])
     if report.get("resend"):
         title = "✅ Зарплата подтверждена — бюджет пересчитан"
     else:
@@ -269,6 +288,7 @@ def morning_report_text(report: dict) -> str:
         when = "сегодня" if days == 0 else "завтра" if days == 1 else f"через {days} дн."
         lines.extend(["", f"Ближайшие обязательные платежи: {report['nearest_due_date'][8:10]}.{report['nearest_due_date'][5:7]}.{report['nearest_due_date'][:4]} ({when})"])
         lines.extend(f"• {bill['title']} — {money(bill['amount'])} ₽" for bill in report["nearest_bills"])
+    lines.extend(accounts_lines(report.get("accounts")))
     return "\n".join(lines)
 
 

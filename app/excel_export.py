@@ -38,6 +38,10 @@ INCOME_DESTINATIONS = {
     "split": "Разделить", "reserve": "Резерв на непредвиденное",
 }
 INCOME_KINDS = {"salary": "Зарплата", "advance": "Аванс", "other": "Другой доход"}
+FUNDING_TITLES = {"spending": "Из бюджета на траты", "piggy": "Из копилки", "reserve": "Из резерва",
+                  "none": "Вне бюджета"}
+ACCOUNT_KINDS = {"debit": "Дебетовая карта", "savings": "Накопительный счёт", "cash": "Наличные",
+                 "credit": "Кредитная карта"}
 
 
 def _date(value: Any):
@@ -316,9 +320,11 @@ def _build_workbook(user_id: int) -> bytes:
             raise ValueError("Настройки пользователя не найдены")
         transactions = _query(
             con,
-            "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title "
+            "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title, "
+            "b.credit_account_id AS bill_credit, a.title AS account_title, a.archived AS account_archived "
             "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
             "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id AND b.user_id=t.user_id "
+            "LEFT JOIN accounts a ON a.id=t.account_id AND a.user_id=t.user_id "
             "WHERE t.user_id=? ORDER BY t.tx_date,t.id",
             (user_id,),
         )
@@ -342,6 +348,7 @@ def _build_workbook(user_id: int) -> bytes:
         vacations = _query(
             con, "SELECT * FROM vacations WHERE user_id=? ORDER BY start_date,id", (user_id,)
         )
+        has_accounts = con.execute("SELECT 1 FROM accounts WHERE user_id=? LIMIT 1", (user_id,)).fetchone() is not None
         has_reserve = con.execute(
             "SELECT 1 FROM emergency_reserve_movements WHERE user_id=? LIMIT 1", (user_id,)
         ).fetchone() is not None
@@ -359,23 +366,28 @@ def _build_workbook(user_id: int) -> bytes:
     ws.title = "Операции"
     op_rows = []
     for t in transactions:
-        if t["bill_rule_id"]:
+        if t["bill_credit"]:
+            kind, category = "Погашение кредитки", t["bill_title"] or ""
+        elif t["bill_rule_id"]:
             kind, category = "Обязательный платёж", t["bill_title"] or t["category_title"] or ""
         elif t["type"] == "expense":
             kind, category = "Расход", t["category_title"] or "Без категории"
         else:
             kind, category = "Доход", INCOME_DESTINATIONS.get(t["income_destination"] or "daily", "")
         signed = -float(t["amount"]) if t["type"] == "expense" else float(t["amount"])
-        op_rows.append([_date(t["tx_date"]), kind, category, signed, t["note"] or ""])
+        account = (t["account_title"] or "") + (" (архив)" if t["account_archived"] else "")
+        funding = FUNDING_TITLES.get(t["funding_envelope"] or "", "") if t["type"] == "expense" else ""
+        op_rows.append([_date(t["tx_date"]), kind, category, signed, t["note"] or "", account, funding])
     _write_table(
-        ws, ["Дата", "Тип", "Категория / назначение", f"Сумма, {currency}", "Комментарий"], op_rows,
-        money_columns={4}, date_columns={1}, widths=[12, 22, 28, 16, 40],
+        ws, ["Дата", "Тип", "Категория / назначение", f"Сумма, {currency}", "Комментарий", "Счёт", "Из чего"],
+        op_rows, money_columns={4}, date_columns={1}, widths=[12, 22, 28, 16, 40, 22, 22],
     )
 
     ws = wb.create_sheet("Расходы по месяцам")
     totals: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for t in transactions:
-        if t["type"] != "expense":
+        # A planned credit card repayment is no expense: the purchases are.
+        if t["type"] != "expense" or t["bill_credit"]:
             continue
         category = "Обязательные платежи" if t["bill_rule_id"] else (t["category_title"] or "Без категории")
         totals[category][str(t["tx_date"])[:7]] += float(t["amount"])
@@ -456,6 +468,9 @@ def _build_workbook(user_id: int) -> bytes:
     if irregular or has_reserve:
         _emergency_reserve_sheet(wb, user_id, currency)
 
+    if has_accounts:
+        _accounts_sheet(wb, user_id, currency)
+
     if vacations:
         ws = wb.create_sheet("Отпуска")
         _write_table(
@@ -468,6 +483,71 @@ def _build_workbook(user_id: int) -> bytes:
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+def _accounts_sheet(wb: Workbook, user_id: int, currency: str) -> None:
+    """«Карты и счета»: balances with their envelopes, credit cards, and every
+    movement of every account."""
+    from . import accounts_engine
+
+    snap = accounts_engine.snapshot(user_id)
+    with connect() as con:
+        history = []
+        for account in snap["accounts"]:
+            for item in accounts_engine.history(con, user_id, account):
+                history.append((account, item))
+        repaid = {int(r["to_account_id"]): (float(r["paid"]), float(r["interest"])) for r in con.execute(
+            "SELECT to_account_id,SUM(amount) AS paid,SUM(interest_amount) AS interest FROM account_transfers "
+            "WHERE user_id=? AND kind='credit_payment' GROUP BY to_account_id", (user_id,))}
+        interest_fixes = {int(r["account_id"]): -float(r["total"]) for r in con.execute(
+            "SELECT account_id,SUM(amount) AS total FROM account_adjustments WHERE user_id=? AND reason='interest' "
+            "GROUP BY account_id", (user_id,))}
+    ws = wb.create_sheet("Карты и счета")
+    ws.cell(row=1, column=1, value="Карты и счета").font = SECTION_FONT
+    ws.cell(row=2, column=1, value="Всего (без кредиток)")
+    total = ws.cell(row=2, column=2, value=snap["total"])
+    total.number_format = MONEY_FORMAT
+    total.font = TOTAL_FONT
+    row = 4
+    _header(ws, row, ["Счёт", "Тип", "Основной", "В архиве", f"Остаток, {currency}", "Конверты на счёте",
+                      "Вне бюджета (+) / не хватает (−)", "Учёт с"])
+    regular = [a for a in snap["accounts"] if a["kind"] != "credit"]
+    values = []
+    for a in regular:
+        part = a.get("breakdown")
+        envelopes = "; ".join(f"{e['label']} {e['amount']:,.2f}".replace(",", " ") for e in part["envelopes"]) if part else ""
+        values.append([a["title"], ACCOUNT_KINDS.get(a["kind"], a["kind"]), "Да" if a["is_main"] else "",
+                       "Да" if a["archived"] else "", a["balance"], envelopes,
+                       part["difference"] if part else None, _date(a["opening_date"])])
+    end = _rows(ws, row + 1, values, {5, 7})
+    for r in range(row + 1, end):
+        ws.cell(row=r, column=8).number_format = DATE_FORMAT
+    credit = [a for a in snap["accounts"] if a["kind"] == "credit"]
+    if credit:
+        row = end + 1
+        ws.cell(row=row, column=1, value="Кредитки").font = SECTION_FONT
+        _header(ws, row + 1, ["Кредитка", f"Долг, {currency}", "Лимит", "Доступно", "Погашено", "Проценты банка",
+                              "День платежа", "Запланировано"])
+        values = []
+        for a in credit:
+            paid, interest = repaid.get(int(a["id"]), (0.0, 0.0))
+            plan = a.get("scheduled")
+            values.append([a["title"] + (" (архив)" if a["archived"] else ""), a["debt"], a.get("credit_limit"),
+                           a.get("available"), paid, round(interest + interest_fixes.get(int(a["id"]), 0.0), 2),
+                           a.get("payment_day"),
+                           f"{plan['amount']:,.2f} на {plan['due_date']}".replace(",", " ") if plan else ""])
+        end = _rows(ws, row + 2, values, {2, 3, 4, 5, 6})
+    row = end + 1
+    ws.cell(row=row, column=1, value="Движения").font = SECTION_FONT
+    _header(ws, row + 1, ["Дата", "Счёт", "Операция", f"Сумма, {currency}", "Подробно", "В остатке"])
+    values = [[_date(item["date"]), account["title"], item["title"], item["amount"], item.get("sub") or "",
+               "Да" if item["counted"] else "Нет (до начала учёта)"]
+              for account, item in sorted(history, key=lambda pair: (pair[1]["date"], pair[0]["id"]))]
+    end = _rows(ws, row + 2, values, {4})
+    for r in range(row + 2, end):
+        ws.cell(row=r, column=1).number_format = DATE_FORMAT
+    for letter, width in zip("ABCDEFGH", (24, 20, 30, 16, 34, 20, 14, 22)):
+        ws.column_dimensions[letter].width = width
 
 
 def _irregular_incomes_sheet(wb: Workbook, user_id: int, transactions: list[dict], currency: str) -> None:

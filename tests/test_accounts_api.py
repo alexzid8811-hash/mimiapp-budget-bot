@@ -871,3 +871,207 @@ def test_irregular_repayment_from_free_money_or_the_reserve(client):
     assert after["reserve_balance"] == flow["reserve_balance"] - 600
     assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
     assert state(client)[1]["Кредитка"]["debt"] == 0
+
+
+# ---------- Stage 5: backup v11 ----------
+
+from app.backup import export_user_data, restore_user_data  # noqa: E402
+
+ACCOUNT_TABLES = ("accounts", "envelope_accounts", "account_transfers", "account_adjustments", "account_incomes")
+
+
+def rich_history(client):
+    """Every kind of accounts record: transfers, linked ones, corrections,
+    incomes, a credit card repayment with interest, a planned repayment."""
+    c1, c2 = two_cards(client, {"piggy": 1})
+    credit = by_title(ok(client.get("/api/accounts")), "Кредитка")["id"]
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 50, "source": "daily_budget"}))
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 300, "account_id": c1, "category_id": 1}))
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 200, "account_id": c2,
+                                              "funding_envelope": "piggy"}))
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 3000, "account_id": credit}))
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 70}))
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": c2, "amount": 10}))
+    ok(client.post(f"/api/accounts/{c2}/adjust", json={"target": 1}))
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 1000, "interest": 100}))
+    ok(client.post(f"/api/accounts/{credit}/adjust", json={"target": 2500}))
+    ok(client.post(f"/api/accounts/{credit}/schedule", json={}))
+    return c1, c2, credit
+
+
+def comparable(snap):
+    names = {a["id"]: a["title"] for a in snap["accounts"]}
+    accounts = [{k: v for k, v in a.items() if k not in ("id", "created_at", "scheduled")} for a in snap["accounts"]]
+    hints = [{**h, "from_account_id": names.get(h.get("from_account_id")), "to_account_id": names.get(h.get("to_account_id"))}
+             for h in snap["hints"]]
+    envelopes = [{**e, "account_id": names.get(e["account_id"])} for e in snap["envelopes"]]
+    return {"accounts": accounts, "hints": hints, "envelopes": envelopes, "total": snap["total"],
+            "credit_debt": snap["credit_debt"], "enabled": snap["enabled"],
+            "main": names.get(snap["main_account_id"])}
+
+
+def test_backup_v11_round_trip_keeps_cards_and_their_history(client):
+    rich_history(client)
+    before = ok(client.get("/api/accounts"))
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    backup = export_user_data(1)
+    assert backup["backup_version"] == 11
+    assert all(backup["data"][t] for t in ACCOUNT_TABLES)
+    ensure_user(2)
+    restore_user_data(2, backup)
+    with user_scope(2):
+        from app import accounts_engine, engine
+        after = accounts_engine.snapshot(2)
+        assert engine.compute(2)["available_today"] == budget
+    assert comparable(after) == comparable(before)
+    # And back over user 1 itself: the same picture.
+    restore_user_data(1, export_user_data(1))
+    assert comparable(ok(client.get("/api/accounts"))) == comparable(before)
+    # Linked records keep working after the ids were remapped.
+    interest = next(t for t in ok(client.get("/api/transactions")) if t["category_title"] == "Проценты банка")
+    assert client.delete(f"/api/transactions/{interest['id']}").status_code == 422
+
+
+@pytest.mark.parametrize("version", range(1, 11))
+def test_older_backups_restore_with_the_feature_off(client, version):
+    rich_history(client)
+    backup = export_user_data(1)
+    old = {**backup, "backup_version": version, "data": {k: v for k, v in backup["data"].items() if k not in ACCOUNT_TABLES}}
+    old["data"]["settings"] = {**old["data"]["settings"], "accounts_enabled": 1}
+    for row in old["data"]["transactions"]:
+        row.pop("account_id", None)
+        row.pop("funding_envelope", None)
+    for row in old["data"]["bill_rules"]:
+        row.pop("credit_account_id", None)
+    old["data"]["emergency_reserve_movements"] = []
+    restore_user_data(1, old)
+    snap = ok(client.get("/api/accounts"))
+    assert snap["enabled"] is False and snap["accounts"] == [] and snap["main_account_id"] is None
+    ok(client.get("/api/cashflow"))
+
+
+def test_backup_with_broken_account_links_is_refused(client):
+    rich_history(client)
+    backup = export_user_data(1)
+    broken = json_copy(backup)
+    broken["data"]["transactions"][0]["account_id"] = 999
+    with pytest.raises(ValueError):
+        restore_user_data(1, broken)
+    broken = json_copy(backup)
+    credit = next(a["id"] for a in broken["data"]["accounts"] if a["kind"] == "credit")
+    broken["data"]["envelope_accounts"][0]["account_id"] = credit
+    with pytest.raises(ValueError):
+        restore_user_data(1, broken)
+    # Nothing was touched.
+    assert len(ok(client.get("/api/accounts"))["accounts"]) == 3
+
+
+def json_copy(value):
+    import json
+    return json.loads(json.dumps(value))
+
+
+def test_backup_keeps_a_repayment_from_the_reserve(client):
+    irregular(client)
+    c1, c2 = two_cards(client, {"reserve": 1})
+    credit = by_title(ok(client.get("/api/accounts")), "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 600, "account_id": credit}))
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c2, "amount": 600, "funding": "reserve"}))
+    before = ok(client.get("/api/accounts"))
+    reserve = ok(client.get("/api/irregular"))["reserve_balance"]
+    restore_user_data(1, export_user_data(1))
+    assert comparable(ok(client.get("/api/accounts"))) == comparable(before)
+    assert ok(client.get("/api/irregular"))["reserve_balance"] == reserve
+
+
+def test_excel_has_cards_and_accounts(client):
+    import io
+
+    from openpyxl import load_workbook
+
+    from app.excel_export import build_workbook
+
+    rich_history(client)
+    wb = load_workbook(io.BytesIO(build_workbook(1)))
+    ops = list(wb["Операции"].iter_rows(values_only=True))
+    assert ops[0][5:7] == ("Счёт", "Из чего")
+    rows = {(r[2], r[3]): r for r in ops[1:]}
+    assert rows[("Без категории", -200)][5:7] == ("Карта 2", "Из копилки")
+    assert rows[("Без категории", -3000)][5:7] == ("Кредитка", "Вне бюджета")
+    sheet = list(wb["Карты и счета"].iter_rows(values_only=True))
+    flat = [v for row in sheet for v in row if v is not None]
+    assert "Всего (без кредиток)" in flat and "Кредитки" in flat and "Движения" in flat
+    credit = next(row for row in sheet if row[0] == "Кредитка" and isinstance(row[1], (int, float)))
+    assert credit[1] == 2500 and credit[4] == 1000 and credit[5] == 500     # interest 100 + correction 400
+    card1 = next(row for row in sheet if row[0] == "Карта 1" and row[1] == "Дебетовая карта")
+    assert card1[2] == "Да" and "на траты" in card1[5]
+    # Credit card purchases count in the months; the planned repayment is no expense.
+    pivot = list(wb["Расходы по месяцам"].iter_rows(values_only=True))
+    assert all(row[0] != "Обязательные платежи" for row in pivot)
+
+
+# ---------- Stage 5: the bot ----------
+
+
+def report_for(day):
+    from datetime import datetime
+
+    from app.morning_reports import pending_morning_reports
+
+    return pending_morning_reports(datetime(day.year, day.month, day.day, 12, 0))[0]
+
+
+def test_morning_report_has_the_total_and_the_credit_debt(client, monkeypatch):
+    import bot
+
+    assert report_for(TODAY)["accounts"] is None
+    assert "Всего денег" not in bot.morning_report_text(report_for(TODAY))
+    snap = setup(client)
+    credit = by_title(snap, "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 3000, "account_id": credit}))
+    report = report_for(TODAY)
+    assert report["accounts"] == {"total": 155000.0, "credit_debt": 3000.0, "credit_due_date": "2026-09-25",
+                                  "credit_reminders": []}
+    text = bot.morning_report_text(report)
+    assert "💰 Всего денег: 155 000,00 ₽" in text
+    assert "💳 Долг по кредитке: 3 000,00 ₽ · до 25.09" in text
+    assert "⏰" not in text
+    # Three days before the payment day and on the day: a reminder.
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 22))
+    text = bot.morning_report_text(report_for(date(2026, 9, 22)))
+    assert "⏰ Платёж по кредитке «Кредитка» через 3 дн., 25.09: долг 3 000,00 ₽" in text
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 24))
+    assert "⏰" not in bot.morning_report_text(report_for(date(2026, 9, 24)))
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 25))
+    assert "⏰ Платёж по кредитке «Кредитка» сегодня: долг 3 000,00 ₽" in bot.morning_report_text(report_for(date(2026, 9, 25)))
+
+
+def test_irregular_morning_report_has_the_total_too(client):
+    import bot
+
+    irregular(client)
+    two_cards(client, {})
+    report = report_for(TODAY)
+    assert report["mode"] == "irregular" and report["accounts"]["credit_debt"] == 0
+    assert "💰 Всего денег:" in bot.morning_report_text(report)
+
+
+def test_spending_today_lists_credit_piggy_and_outside_apart(client):
+    import bot
+    from app.quick_stats import quick_numbers
+
+    c1, c2 = two_cards(client, {"piggy": 1})
+    credit = by_title(ok(client.get("/api/accounts")), "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 30, "account_id": c1, "note": "Кофе"}))
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 3000, "account_id": credit, "note": "Пылесос"}))
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 200, "account_id": c2,
+                                              "funding_envelope": "piggy", "note": "Подарок"}))
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 70, "account_id": c1,
+                                              "funding_envelope": "none", "note": "Чужие деньги"}))
+    numbers = quick_numbers(1)
+    assert numbers["spent_today"] == 30
+    assert [i["title"] for i in numbers["expenses"]] == ["Кофе"]
+    text = bot.spent_text(numbers)
+    assert "Кредиткой (растёт долг, не из суммы на день):\n• Пылесос — 3 000,00 ₽" in text
+    assert "Из копилки:\n• Подарок — 200,00 ₽" in text
+    assert "Вне бюджета:\n• Чужие деньги — 70,00 ₽" in text

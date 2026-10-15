@@ -28,22 +28,33 @@ def _today_expenses(user_id: int, day: str, irregular: bool) -> tuple[list[dict]
         rows = con.execute(
             "SELECT COALESCE(NULLIF(t.note,''),c.title,'Расход') AS title,t.amount,"
             "t.bill_rule_id IS NOT NULL AS is_bill,EXISTS(SELECT 1 FROM emergency_reserve_movements m "
-            "WHERE m.user_id=t.user_id AND m.expense_transaction_id=t.id) AS from_reserve "
+            "WHERE m.user_id=t.user_id AND m.expense_transaction_id=t.id) AS from_reserve,"
+            "t.funding_envelope,a.kind AS account_kind "
             "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
+            "LEFT JOIN accounts a ON a.id=t.account_id AND a.user_id=t.user_id "
             "WHERE t.user_id=? AND t.type='expense' AND t.tx_date=? ORDER BY t.id",
             (user_id, day),
         ).fetchall()
     everyday, bills, from_reserve = [], [], []
+    other: dict[str, list[dict]] = {"credit": [], "piggy": [], "outside": []}
     for row in rows:
         item = {"title": row["title"], "amount": float(row["amount"])}
+        funding = row["funding_envelope"]
         if row["is_bill"]:
             bills.append(item)
-        elif irregular and row["from_reserve"]:
+        elif (irregular and row["from_reserve"]) or funding == "reserve":
             # The irregular mode does not count them in today's spending.
             from_reserve.append(item)
+        # Cards and accounts: not today's money either.
+        elif row["account_kind"] == "credit":
+            other["credit"].append(item)
+        elif funding == "piggy":
+            other["piggy"].append(item)
+        elif funding == "none":
+            other["outside"].append(item)
         else:
             everyday.append(item)
-    return everyday, bills, from_reserve
+    return everyday, bills, from_reserve, other
 
 
 def quick_numbers(user_id: int) -> dict | None:
@@ -79,7 +90,7 @@ def quick_numbers(user_id: int) -> dict | None:
             "period_days_left": int(flow["period"]["days_left"]),
             "payday_waiting": flow.get("payday_waiting"),
         }
-    everyday, bills, from_reserve = _today_expenses(user_id, numbers["today"], numbers["mode"] == "irregular")
+    everyday, bills, from_reserve, other = _today_expenses(user_id, numbers["today"], numbers["mode"] == "irregular")
     numbers.update({
         "today_target": float(flow["today_target"]),
         "available_today": float(flow["available_today"]),
@@ -88,6 +99,9 @@ def quick_numbers(user_id: int) -> dict | None:
         "expenses": everyday,
         "bills_paid": bills,
         "reserve_paid": from_reserve,
+        "credit_paid": other["credit"],
+        "piggy_paid": other["piggy"],
+        "outside_paid": other["outside"],
     })
     if numbers["mode"] == "payroll" and not flow["enabled"]:
         # Without the start capital the home screen (design-ui.js) shows
