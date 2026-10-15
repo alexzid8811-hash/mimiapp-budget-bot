@@ -199,4 +199,199 @@ def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
         "accounts": accounts,
         "envelopes": envelopes,
         "operations_without_account": pending,
+        "hints": payroll_income_hints(uid) if settings["enabled"] else [],
     }
+
+
+# ---------- Operations of the accounts themselves ----------
+
+
+def account_state(con, uid: int, account_id: int):
+    return calculate(build_input(con, uid)).states[int(account_id)]
+
+
+def add_adjustment(con, uid: int, account: dict, target: float, day: date, note: str) -> int:
+    """Store the difference between the real amount and the calculated one.
+    For a credit card ``target`` is the real debt: a growing debt is bank
+    interest, a shrinking one is cashback or a refund."""
+    state = account_state(con, uid, account["id"])
+    credit = account["kind"] == "credit"
+    wanted = -cents(target) if credit else cents(target)
+    difference = wanted - state.balance
+    if difference == 0:
+        from fastapi import HTTPException
+
+        raise HTTPException(422, "Сумма уже совпадает: исправлять нечего")
+    reason = ("interest" if difference < 0 else "cashback") if credit else "correction"
+    return con.execute(
+        "INSERT INTO account_adjustments(user_id,account_id,amount,date,reason,note) VALUES(?,?,?,?,?,?)",
+        (uid, account["id"], amount(difference), day.isoformat(), reason, note),
+    ).lastrowid
+
+
+def delete_adjustment(con, uid: int, row: dict) -> None:
+    con.execute("DELETE FROM account_adjustments WHERE id=? AND user_id=?", (row["id"], uid))
+
+
+def delete_transfer(con, uid: int, row: dict) -> None:
+    con.execute("DELETE FROM account_transfers WHERE id=? AND user_id=?", (row["id"], uid))
+
+
+ADJUSTMENT_TITLES = {"correction": "Исправление остатка", "interest": "Проценты банка", "cashback": "Кэшбэк, возврат"}
+INCOME_TITLES = {"payroll": "Выплата", "piggy_external": "В копилку извне", "reserve_external": "В резерв извне"}
+TRANSFER_TITLES = {"hint": "Перевод по подсказке", "reassign": "Перенос конверта", "credit_payment": "Погашение кредитки"}
+
+
+def history(con, uid: int, account: dict) -> list[dict]:
+    """Every operation of one account, newest first, with its signed effect on
+    the money of the account (a credit card purchase is negative).  An
+    operation dated before the opening date is listed but not counted."""
+    account_id = int(account["id"])
+    opening = account["opening_date"]
+    names = {int(r["id"]): r for r in con.execute(
+        "SELECT id,title,emoji,archived FROM accounts WHERE user_id=?", (uid,))}
+
+    def name(other_id) -> str:
+        other = names.get(int(other_id)) if other_id is not None else None
+        if other is None:
+            return "вне счетов"
+        return f"{other['emoji']} {other['title']}" + (" (архив)" if other["archived"] else "")
+
+    items: list[dict] = []
+    for r in con.execute(
+        "SELECT t.id,t.type,t.amount,t.tx_date,t.note,t.bill_rule_id,t.funding_envelope,"
+        "c.title AS category_title,c.emoji AS category_emoji,b.title AS bill_title "
+        "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
+        "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id AND b.user_id=t.user_id "
+        "WHERE t.user_id=? AND t.account_id=?",
+        (uid, account_id),
+    ):
+        expense = r["type"] == "expense"
+        items.append({
+            "type": "expense" if expense else "income", "id": r["id"], "date": r["tx_date"],
+            "amount": -float(r["amount"]) if expense else float(r["amount"]),
+            "title": r["bill_title"] or r["note"] or r["category_title"] or ("Расход" if expense else "Доход"),
+            "sub": r["category_title"] or "", "emoji": r["category_emoji"] or ("💳" if expense else "💰"),
+            "bill": r["bill_rule_id"] is not None,
+        })
+    for r in con.execute(
+        "SELECT * FROM account_transfers WHERE user_id=? AND (from_account_id=? OR to_account_id=?)",
+        (uid, account_id, account_id),
+    ):
+        outgoing = int(r["from_account_id"]) == account_id
+        value = float(r["amount"])
+        interest = float(r["interest_amount"] or 0)
+        if outgoing:
+            title = f"На {name(r['to_account_id'])}" if r["to_account_id"] is not None else "Ушло со счетов"
+            signed = -value
+        else:
+            title = f"С {name(r['from_account_id'])}"
+            signed = value - (interest if account["kind"] == "credit" else 0)
+        sub = TRANSFER_TITLES.get(r["kind"], "Перевод")
+        if r["kind"] == "linked":
+            sub = "Копилка" if r["piggy_movement_id"] else "Резерв" if r["reserve_movement_id"] else "Платёж"
+        if interest:
+            sub += f" · из них проценты {interest:.2f}".replace(".", ",")
+        items.append({
+            "type": "transfer", "id": r["id"], "date": r["date"], "amount": signed, "title": title,
+            "sub": " · ".join(x for x in (sub, r["note"]) if x), "emoji": "↔️", "kind": r["kind"],
+            "deletable": r["kind"] in ("manual", "hint", "reassign"),
+        })
+    for r in con.execute("SELECT * FROM account_adjustments WHERE user_id=? AND account_id=?", (uid, account_id)):
+        items.append({
+            "type": "adjustment", "id": r["id"], "date": r["date"], "amount": float(r["amount"]),
+            "title": ADJUSTMENT_TITLES.get(r["reason"], "Исправление"), "sub": r["note"] or "",
+            "emoji": "✏️", "reason": r["reason"], "deletable": True,
+        })
+    for r in con.execute("SELECT * FROM account_incomes WHERE user_id=? AND account_id=?", (uid, account_id)):
+        items.append({
+            "type": "account_income", "id": r["id"], "date": r["date"], "amount": float(r["amount"]),
+            "title": INCOME_TITLES.get(r["source"], "Приход"), "sub": r["note"] or "",
+            "emoji": "💰", "source": r["source"],
+        })
+    for item in items:
+        item["counted"] = item["date"] >= opening
+    items.sort(key=lambda i: (i["date"], i["type"], i["id"]), reverse=True)
+    return items
+
+
+# ---------- Payroll income ----------
+
+
+def accounts_since(con, uid: int) -> date | None:
+    row = con.execute("SELECT MIN(opening_date) FROM accounts WHERE user_id=?", (uid,)).fetchone()
+    return date.fromisoformat(row[0]) if row and row[0] else None
+
+
+def write_payroll_income(con, uid: int, period_start: str, payday: str, value: float, account_id: int) -> None:
+    con.execute(
+        "INSERT INTO account_incomes(user_id,account_id,amount,date,source,payroll_period_start) "
+        "VALUES(?,?,?,?,'payroll',?) ON CONFLICT(user_id,payroll_period_start) "
+        "WHERE payroll_period_start IS NOT NULL DO UPDATE SET amount=excluded.amount,"
+        "account_id=excluded.account_id,date=excluded.date",
+        (uid, account_id, value, payday, period_start),
+    )
+
+
+def sync_payroll_income(con, uid: int, *, period_start: str, payday: str, value: float, confirmed: bool,
+                        account_id: int | None) -> None:
+    """After «Получил ✓» (or an edit of a confirmed payout): the money arrives
+    on the main account (or the chosen one).  An unconfirmed payout never
+    touches a balance."""
+    existing = con.execute(
+        "SELECT account_id FROM account_incomes WHERE user_id=? AND payroll_period_start=?",
+        (uid, period_start),
+    ).fetchone()
+    settings = settings_for(con, uid)
+    if existing is None and not (confirmed and settings["enabled"]):
+        return
+    target = account_id or (existing["account_id"] if existing else settings["main_account_id"])
+    if target is None or not value:
+        return
+    write_payroll_income(con, uid, period_start, payday, value, target)
+
+
+def payroll_income_hints(uid: int) -> list[dict]:
+    """Paydays the budget counts although no money was recorded on an
+    account: confirmed while the feature was off, or counted by the budget
+    on its own once the next payday came (it can no longer be confirmed)."""
+    from datetime import timedelta
+
+    from . import engine
+
+    with connect() as con:
+        settings = settings_for(con, uid)
+        since = accounts_since(con, uid)
+        recorded = {r[0] for r in con.execute(
+            "SELECT payroll_period_start FROM account_incomes WHERE user_id=? AND payroll_period_start IS NOT NULL",
+            (uid,))}
+        main_id = settings["main_account_id"]
+    budget = engine.settings_for(uid)
+    if not settings["enabled"] or settings["mode"] != "payroll" or since is None or not budget["cashflow_enabled"]:
+        return []
+    today = clock.today()
+    start = min(date.fromisoformat(budget["start_date"]), today)
+    since = max(since, start)
+    schedule = engine.payday_schedule(uid, since - timedelta(days=40), today)
+    paydays = sorted(schedule["paydays"])
+    overrides, confirmed = engine.income_overrides(uid, set(paydays))
+    waiting = engine.unconfirmed_payday(paydays, confirmed, start=start, today=today,
+                                        confirm_from=budget["payday_confirm_from"])
+    hints = []
+    for day in paydays:
+        key = (day + timedelta(days=1)).isoformat()
+        if day < since or day > today or day == waiting or key in recorded:
+            continue
+        value = overrides.get(day, schedule["paydays"][day]["amount"])
+        if value <= 0:
+            continue
+        hints.append({
+            "type": "payroll_income",
+            "period_start": key,
+            "payday": day.isoformat(),
+            "title": ", ".join(schedule["paydays"][day]["titles"]) or "Выплата",
+            "amount": amount(value),
+            "confirmed": day in confirmed,
+            "account_id": main_id,
+        })
+    return hints

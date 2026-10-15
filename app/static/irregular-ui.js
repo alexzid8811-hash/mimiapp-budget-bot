@@ -184,6 +184,7 @@
       reserve_percent: percent === "" ? null : Number(percent),
       destination: $("irrIncomeDestination").value || "split",
       note: $("irrIncomeNote").value,
+      ...(window.accountsUi?.fieldPayload("irrIncome") || {}),
     };
   }
 
@@ -229,6 +230,7 @@
     const destination = transaction?.income_destination;
     $("irrIncomeDestination").value = ["piggy", "reserve"].includes(destination) ? destination : "split";
     $("irrIncomeNote").value = transaction?.note || "";
+    window.accountsUi?.prepareIncome("irrIncome", transaction);
     const sources = [...new Set((current.state?.transactions || []).map(t => t.income_source).filter(Boolean))];
     if ($("irrSources")) $("irrSources").innerHTML = sources.map(s => `<option value="${esc(s)}"></option>`).join("");
     if ($("irrIncomePreview")) $("irrIncomePreview").innerHTML = "";

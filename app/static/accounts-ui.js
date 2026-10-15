@@ -9,6 +9,7 @@
   }).format(Number(v || 0));
   const esc = s => String(s ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
   const parseMoney = v => window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(String(v ?? "")) : Number(v) || 0;
+  const fmtDay = iso => (iso ? new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" }).format(new Date(`${iso}T12:00:00`)) : "");
   const fmtInput = v => (window.ruMoneyInput?.formatMoney ? window.ruMoneyInput.formatMoney(String(v)) : String(v));
   const notify = message => { if (typeof toast === "function") toast(message); };
   const show = (id, visible) => $(id)?.classList.toggle("hidden", !visible);
@@ -75,7 +76,7 @@
     const value = a.kind === "credit" ? creditLine(a) : money(a.balance);
     const nonZero = Math.abs(Number(a.balance) || 0) >= 0.005;
     const warn = nonZero
-      ? `<div class="warning">${a.kind === "credit" ? "По архивной кредитке есть долг" : "На архивном счёте не ноль"}: ${value}. Верните счёт или исправьте остаток.</div>` : "";
+      ? `<div class="warning">${a.kind === "credit" ? "По архивной кредитке есть долг" : "На архивном счёте не ноль"}: ${value}. Верните счёт или исправьте остаток. <button class="tiny" type="button" data-adjust-account="${a.id}">Исправить остаток</button></div>` : "";
     const remove = a.has_operations ? "" : `<button class="tiny danger" type="button" data-delete-account="${a.id}">Удалить навсегда</button>`;
     return `<div class="list-row account-archived"><div class="row-main"><div class="emoji">${esc(a.emoji)}</div><div class="row-text"><div class="row-title">${esc(a.title)} <span class="pill">в архиве</span></div><div class="row-sub">${esc(KIND_LABELS[a.kind] || a.kind)} · ${value}</div>${warn}</div></div><div class="actions"><button class="tiny" type="button" data-restore-account="${a.id}">Вернуть</button>${remove}</div></div>`;
   }
@@ -131,7 +132,7 @@
     $("accountIsMain").checked = Boolean(account?.is_main);
     $("accountIsMain").disabled = Boolean(account?.is_main);
     $("accountDialogNote").textContent = account
-      ? (account.kind === "credit" ? `Долг ${money(account.debt)}. Учёт ведётся с ${account.opening_date}.` : `На счёте ${money(account.balance)}. Учёт ведётся с ${account.opening_date}.`)
+      ? (account.kind === "credit" ? `Долг ${money(account.debt)}. Учёт ведётся с ${fmtDay(account.opening_date)}.` : `На счёте ${money(account.balance)}. Учёт ведётся с ${fmtDay(account.opening_date)}.`)
       : "Учёт по счёту начнётся с сегодняшнего дня.";
     show("accountDangerBlock", Boolean(account));
     const del = $("deleteAccountBtn");
@@ -173,7 +174,16 @@
       $("accountDialog")?.close();
       notify("Счёт в архиве");
       await reload();
-    } catch (error) { notify(error.message); }
+    } catch (error) {
+      const account = byId(id);
+      // Money left on the account: offer to move it first.
+      if (account && account.kind !== "credit" && /остаток/.test(error.message)
+          && confirm(`${error.message}. Перевести ${money(account.balance)} на другой счёт?`)) {
+        $("accountDialog")?.close();
+        return openTransfer({ from: account.id, amount: account.balance });
+      }
+      notify(error.message);
+    }
   }
 
   async function deleteAccount(id) {
@@ -392,49 +402,225 @@
     }
   }
 
-  // ---------- Expense form ----------
+  // ---------- Account fields of the operation forms ----------
+  // Every form has <prefix>AccountField, <prefix>Account, optionally
+  // <prefix>AccountHint and a date input <prefix>Date.
 
-  function spendingAccountId() {
-    const envelope = (snap?.envelopes || []).find(e => e.key === "spending");
+  function envelopeAccountId(key) {
+    const envelope = (snap?.envelopes || []).find(e => e.key === key);
     return envelope?.account_id ?? snap?.main_account_id ?? null;
   }
 
-  // Accounts an expense can be paid from (credit cards come with their own rules).
-  function expenseAccounts(current) {
-    return active().filter(a => a.kind !== "credit" || a.id === current);
-  }
-
-  function updateExpenseHint() {
-    const hint = $("expenseAccountHint");
+  function updateHint(prefix) {
+    const hint = $(`${prefix}AccountHint`);
     if (!hint) return;
-    const account = byId($("expenseAccount")?.value);
-    const day = $("expenseDate")?.value;
+    const account = byId($(`${prefix}Account`)?.value);
+    const day = $(`${prefix}Date`)?.value;
     const early = Boolean(account && day && day < account.opening_date);
     hint.textContent = early
-      ? `Дата раньше начала учёта по «${account.title}» (${account.opening_date}): остаток счёта эта трата не изменит.` : "";
+      ? `Дата раньше начала учёта по «${account.title}» (${fmtDay(account.opening_date)}): остаток счёта эта операция не изменит.` : "";
     hint.classList.toggle("hidden", !early);
   }
 
-  function prepareExpense(transaction = null) {
-    const field = $("expenseAccountField");
-    const select = $("expenseAccount");
+  // ``transaction`` (an edit) keeps its account, even an archived one; a new
+  // operation gets ``fallback``.  Credit cards only where ``credit`` allows.
+  function prepareField(prefix, { transaction = null, fallback = null, credit = false, visible = true } = {}) {
+    const field = $(`${prefix}AccountField`);
+    const select = $(`${prefix}Account`);
     if (!field || !select) return;
-    field.classList.toggle("hidden", !enabled());
-    if (!enabled()) return;
+    const on = enabled() && visible;
+    field.classList.toggle("hidden", !on);
+    if (!on) return;
     const current = transaction ? transaction.account_id : undefined;
-    const options = expenseAccounts(current).map(a => `<option value="${a.id}">${accountName(a)}</option>`);
+    const options = active().filter(a => credit || a.kind !== "credit" || a.id === current)
+      .map(a => `<option value="${a.id}">${accountName(a)}</option>`);
     const old = current ? byId(current) : null;
     if (old && old.archived) options.push(`<option value="${old.id}">${accountName(old)} (архив)</option>`);
     if (transaction && !current) options.push('<option value="">Без карты</option>');
     select.innerHTML = options.join("");
-    select.value = String(transaction ? (current ?? "") : (spendingAccountId() ?? ""));
-    updateExpenseHint();
+    select.value = String(transaction ? (current ?? "") : (fallback ?? ""));
+    updateHint(prefix);
   }
 
-  function expensePayload() {
-    if (!enabled() || $("expenseAccountField")?.classList.contains("hidden")) return {};
-    const value = $("expenseAccount")?.value;
+  function fieldPayload(prefix) {
+    if (!enabled() || $(`${prefix}AccountField`)?.classList.contains("hidden")) return {};
+    const value = $(`${prefix}Account`)?.value;
     return { account_id: value ? Number(value) : null };
+  }
+
+  const prepareExpense = (transaction = null) =>
+    prepareField("expense", { transaction, fallback: envelopeAccountId("spending") });
+  const expensePayload = () => fieldPayload("expense");
+  // Income arrives on the main account by default.
+  const prepareIncome = (prefix, transaction = null) =>
+    prepareField(prefix, { transaction, fallback: snap?.main_account_id ?? null });
+
+  // ---------- Account history, transfers, corrections ----------
+
+  let historyAccount = null;
+
+  function historyRow(item) {
+    const negative = Number(item.amount) < 0;
+    const amountText = `${negative ? "−" : "+"}${money(Math.abs(Number(item.amount)))}`;
+    const date = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(new Date(`${item.date}T12:00:00`));
+    const sub = [date, item.sub, item.counted ? "" : "до начала учёта, не в остатке"].filter(Boolean).map(esc).join(" · ");
+    const remove = item.deletable
+      ? `<div class="actions"><button class="tiny danger" type="button" data-history-delete="${item.type}:${item.id}">Удалить</button></div>` : "";
+    return `<div class="list-row${item.counted ? "" : " not-counted"}"><div class="row-main"><div class="emoji">${esc(item.emoji)}</div><div class="row-text"><div class="row-title">${esc(item.title)}</div><div class="row-sub">${sub}</div></div></div><div><div class="amount ${negative ? "expense" : "income"}">${amountText}</div>${remove}</div></div>`;
+  }
+
+  async function openHistory(id) {
+    const account = byId(id);
+    if (!account || !$("accountHistoryDialog")) return;
+    historyAccount = account;
+    let data = null;
+    try { data = await request(`/api/accounts/${id}/history`); } catch (error) { return notify(error.message); }
+    const state = data?.account || account;
+    historyAccount = state;
+    const credit = state.kind === "credit";
+    $("accountHistoryTitle").textContent = `${state.emoji} ${state.title}${state.archived ? " (архив)" : ""}`;
+    $("accountHistoryCaption").textContent = credit ? "Долг" : "Остаток";
+    $("accountHistoryBalance").textContent = money(credit ? state.debt : state.balance);
+    $("accountHistoryNote").textContent = credit && state.available !== null && state.available !== undefined
+      ? `Доступно ${money(state.available)} · учёт с ${fmtDay(state.opening_date)}` : `Учёт с ${fmtDay(state.opening_date)}`;
+    const actions = [];
+    if (!state.archived && !credit) {
+      actions.push('<button class="secondary" type="button" data-history-action="transfer">Перевести</button>');
+      actions.push('<button class="secondary" type="button" data-history-action="expense">Записать трату с этого счёта</button>');
+    }
+    actions.push(`<button class="secondary" type="button" data-history-action="adjust">${credit ? "Исправить долг" : "Исправить остаток"}</button>`);
+    $("accountHistoryActions").innerHTML = actions.join("");
+    const items = data?.items || [];
+    $("accountHistoryList").innerHTML = items.length ? items.map(historyRow).join("")
+      : '<div class="empty">Операций по счёту пока нет.</div>';
+    if (!$("accountHistoryDialog").open) $("accountHistoryDialog").showModal();
+  }
+
+  function transferOptions(selected, { excludeCredit = true } = {}) {
+    return active().filter(a => !excludeCredit || a.kind !== "credit")
+      .map(a => `<option value="${a.id}"${a.id === Number(selected) ? " selected" : ""}>${accountName(a)} · ${money(a.balance)}</option>`).join("");
+  }
+
+  function openTransfer({ from = null, to = null, amount = "", kind = "manual", note = "", transfer = null } = {}) {
+    if (!$("transferDialog")) return;
+    const regular = active().filter(a => a.kind !== "credit");
+    if (regular.length < 2 && !transfer) return notify("Для перевода нужны хотя бы два счёта");
+    const source = transfer?.from_account_id ?? from ?? snap?.main_account_id ?? regular[0]?.id;
+    const target = transfer?.to_account_id ?? to ?? regular.find(a => a.id !== Number(source))?.id;
+    $("transferId").value = transfer?.id || "";
+    $("transferKind").value = kind;
+    $("transferTitle").textContent = kind === "hint" ? "Перевёл между счетами" : "Перевод между счетами";
+    $("transferFrom").innerHTML = transferOptions(source);
+    $("transferTo").innerHTML = transferOptions(target);
+    $("transferFrom").value = String(source ?? "");
+    $("transferTo").value = String(target ?? "");
+    $("transferAmount").value = amount === "" ? "" : fmtInput(amount);
+    $("transferDate").value = window.budgetDate?.today?.() || "";
+    $("transferNote").value = note;
+    $("transferDialog").showModal();
+  }
+
+  async function saveTransfer(event) {
+    event?.preventDefault?.();
+    const id = $("transferId").value;
+    const body = {
+      from_account_id: Number($("transferFrom").value), to_account_id: Number($("transferTo").value),
+      amount: parseMoney($("transferAmount").value), date: $("transferDate").value, note: $("transferNote").value,
+      kind: $("transferKind").value || "manual",
+    };
+    try {
+      await request(id ? `/api/accounts/transfers/${id}` : "/api/accounts/transfers", { method: id ? "PUT" : "POST", body: JSON.stringify(body) });
+      $("transferDialog").close();
+      notify("Перевод записан");
+      await afterChange();
+    } catch (error) { notify(error.message); }
+  }
+
+  function openAdjust(id) {
+    const account = byId(id);
+    if (!account || !$("adjustDialog")) return;
+    const credit = account.kind === "credit";
+    $("adjustAccountId").value = account.id;
+    $("adjustTitle").textContent = credit ? "Исправить долг" : "Исправить остаток";
+    $("adjustLabel").textContent = credit ? "Долг по выписке банка" : "Сколько на счёте на самом деле";
+    $("adjustCaption").textContent = `${account.emoji} ${account.title}: сейчас ${credit ? `долг ${money(account.debt)}` : money(account.balance)}`;
+    $("adjustHint").textContent = credit
+      ? "Долг вырос — запишутся проценты или комиссия банка, уменьшился — кэшбэк или возврат. Бюджет не меняется."
+      : "Разница запишется исправлением остатка. Бюджет не меняется.";
+    $("adjustTarget").value = fmtInput(credit ? account.debt : account.balance);
+    $("adjustDate").value = window.budgetDate?.today?.() || "";
+    $("adjustNote").value = "";
+    $("adjustDialog").showModal();
+  }
+
+  async function saveAdjust(event) {
+    event?.preventDefault?.();
+    const id = $("adjustAccountId").value;
+    try {
+      await request(`/api/accounts/${id}/adjust`, { method: "POST", body: JSON.stringify({
+        target: parseMoney($("adjustTarget").value), date: $("adjustDate").value, note: $("adjustNote").value,
+      }) });
+      $("adjustDialog").close();
+      notify("Остаток исправлен");
+      await afterChange();
+    } catch (error) { notify(error.message); }
+  }
+
+  async function deleteFromHistory(key) {
+    const [type, id] = key.split(":");
+    const path = type === "transfer" ? `/api/accounts/transfers/${id}` : type === "adjustment" ? `/api/accounts/adjustments/${id}` : null;
+    if (!path || !confirm("Удалить операцию? Остатки пересчитаются.")) return;
+    try {
+      await request(path, { method: "DELETE" });
+      notify("Операция удалена");
+      await afterChange();
+    } catch (error) { notify(error.message); }
+  }
+
+  async function afterChange() {
+    await reload();
+    if (historyAccount && $("accountHistoryDialog")?.open) await openHistory(historyAccount.id);
+  }
+
+  function historyAction(action) {
+    const account = historyAccount;
+    if (!account) return;
+    if (action === "transfer") return openTransfer({ from: account.id });
+    if (action === "adjust") return openAdjust(account.id);
+    if (action === "expense") {
+      $("accountHistoryDialog").close();
+      if (typeof openExpenseDialog === "function") openExpenseDialog();
+      const select = $("expenseAccount");
+      if (select) { select.value = String(account.id); updateHint("expense"); }
+    }
+  }
+
+  // ---------- «Нужно перевести» ----------
+
+  function hintRow(hint) {
+    if (hint.type === "payroll_income") {
+      const main = byId(hint.account_id);
+      const what = hint.confirmed ? "не записана на счёт" : "не отмечена полученной";
+      const date = `${hint.payday.slice(8, 10)}.${hint.payday.slice(5, 7)}`;
+      return `<div class="acc-hint"><span>${esc(hint.title)} ${date} ${what} — записать приход ${money(hint.amount)} на ${main ? accountName(main) : "основной счёт"}?</span><button class="tiny" type="button" data-hint-income="${hint.period_start}">Записать приход</button></div>`;
+    }
+    return "";
+  }
+
+  function renderHints() {
+    const box = $("accHints");
+    if (!box) return;
+    const hints = enabled() ? (snap.hints || []) : [];
+    box.innerHTML = hints.length
+      ? `<details class="acc-hints"><summary>Нужно перевести (${hints.length})</summary>${hints.map(hintRow).join("")}</details>` : "";
+  }
+
+  async function recordPayrollIncome(periodStart) {
+    try {
+      await request("/api/accounts/payroll-income", { method: "POST", body: JSON.stringify({ period_start: periodStart }) });
+      notify("Приход записан");
+      await reload();
+    } catch (error) { notify(error.message); }
   }
 
   // ---------- Drag and drop (the same behaviour as the categories) ----------
@@ -570,8 +756,31 @@
     $("accountsWizardBack")?.addEventListener("click", wizardBack);
     $("accountsWizardBody")?.addEventListener("click", wizardClick);
     $("accountsWizardBody")?.addEventListener("change", wizardChange);
-    $("expenseAccount")?.addEventListener("change", updateExpenseHint);
-    $("expenseDate")?.addEventListener("change", updateExpenseHint);
+    for (const prefix of ["expense", "incomeTx", "irrIncome"]) {
+      $(`${prefix}Account`)?.addEventListener("change", () => updateHint(prefix));
+      $(`${prefix}Date`)?.addEventListener("change", () => updateHint(prefix));
+    }
+    $("transferForm")?.addEventListener("submit", saveTransfer);
+    $("adjustForm")?.addEventListener("submit", saveAdjust);
+    $("adjustAccountBtn")?.addEventListener("click", () => { $("accountDialog")?.close(); openAdjust($("accountId").value); });
+    $("accountHistoryActions")?.addEventListener("click", event => {
+      const button = event.target?.closest?.("[data-history-action]");
+      if (button) historyAction(button.dataset.historyAction);
+    });
+    $("accountHistoryList")?.addEventListener("click", event => {
+      const button = event.target?.closest?.("[data-history-delete]");
+      if (button) deleteFromHistory(button.dataset.historyDelete);
+    });
+    const openFromHome = event => {
+      const row = event.target?.closest?.("[data-account-id]");
+      return row ? openHistory(row.dataset.accountId) : null;
+    };
+    $("accList")?.addEventListener("click", openFromHome);
+    $("accCredit")?.addEventListener("click", openFromHome);
+    $("accHints")?.addEventListener("click", event => {
+      const income = event.target?.closest?.("[data-hint-income]");
+      return income ? recordPayrollIncome(income.dataset.hintIncome) : null;
+    });
     const list = $("accountsList");
     if (list) {
       list.addEventListener("click", event => {
@@ -581,6 +790,8 @@
       bindDrag(list);
     }
     $("accountsArchive")?.addEventListener("click", event => {
+      const fix = event.target?.closest?.("[data-adjust-account]");
+      if (fix) return openAdjust(fix.dataset.adjustAccount);
       const restore = event.target?.closest?.("[data-restore-account]");
       if (restore) return restoreAccount(restore.dataset.restoreAccount);
       const remove = event.target?.closest?.("[data-delete-account]");
@@ -591,12 +802,14 @@
   function render(state) {
     snap = state?.accounts && Array.isArray(state.accounts.accounts) ? state.accounts : null;
     renderHome();
+    renderHints();
     renderSettings();
   }
 
   bind();
   window.accountsUi = {
-    render, prepareExpense, expensePayload, openAccount, openWizard,
+    render, prepareExpense, expensePayload, prepareIncome, fieldPayload, prepareField, openAccount, openWizard,
+    openHistory, openTransfer, openAdjust, mainAccountId: () => snap?.main_account_id ?? null,
     accountLabel(t) {
       if (!t?.account_title) return "";
       return `${esc(t.account_emoji)} ${esc(t.account_title)}${t.account_archived ? " (архив)" : ""}`;

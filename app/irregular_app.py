@@ -51,6 +51,9 @@ class IncomeIn(APIModel):
     reserve_percent: float | None = Field(default=None, ge=0, le=100)
     destination: Destination = "split"
     note: str = Field(default="", max_length=200)
+    # Cards and accounts: the card the money arrived on.  Left out of an
+    # edit, the income keeps its account.
+    account_id: int | None = None
 
 
 class PreviewIn(APIModel):
@@ -198,18 +201,27 @@ def _write_income(uid: int, payload: IncomeIn, tx_id: int | None = None) -> int:
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            current = None if tx_id is None else con.execute(
+                "SELECT account_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
+            ).fetchone()
+            account_id = current["account_id"] if current else None
+            if "account_id" in payload.model_fields_set:
+                from .accounts_app import check_account
+
+                check_account(con, uid, payload.account_id, operation="income", current=account_id)
+                account_id = payload.account_id
             if tx_id is None:
                 tx_id = con.execute(
                     "INSERT INTO transactions(user_id,type,amount,tx_date,note,income_destination,"
-                    "reserve_percent,income_source) VALUES(?, 'income', ?, ?, ?, ?, ?, ?)",
-                    (uid, *values),
+                    "reserve_percent,income_source,account_id) VALUES(?, 'income', ?, ?, ?, ?, ?, ?, ?)",
+                    (uid, *values, account_id),
                 ).lastrowid
             else:
                 cur = con.execute(
                     "UPDATE transactions SET amount=?,tx_date=?,note=?,income_destination=?,reserve_percent=?,"
-                    "income_source=?,category_id=NULL WHERE id=? AND user_id=? AND type='income' "
+                    "income_source=?,category_id=NULL,account_id=? WHERE id=? AND user_id=? AND type='income' "
                     "AND bill_rule_id IS NULL",
-                    (*values, tx_id, uid),
+                    (*values, account_id, tx_id, uid),
                 )
                 if cur.rowcount == 0:
                     raise HTTPException(404, "Доход не найден")

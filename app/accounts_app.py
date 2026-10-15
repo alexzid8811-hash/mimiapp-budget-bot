@@ -3,6 +3,7 @@ through :mod:`app.accounts_engine`; this module validates requests and stores
 accounts and their settings.  The budget is never changed here."""
 from __future__ import annotations
 
+from datetime import date as Date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -61,6 +62,28 @@ class SetupIn(APIModel):
     accounts: list[SetupAccountIn] = Field(min_length=1, max_length=30)
     # Envelope -> index in ``accounts``.
     envelopes: dict[Envelope, int] = Field(default_factory=dict)
+
+
+class TransferIn(APIModel):
+    from_account_id: int
+    to_account_id: int
+    amount: float = Field(gt=0)
+    date: Date = Field(default_factory=lambda: clock.today())
+    note: str = Field(default="", max_length=160)
+    # "hint": the user pressed «Перевёл» on a suggested transfer.
+    kind: Literal["manual", "hint"] = "manual"
+
+
+class AdjustIn(APIModel):
+    # The real money on the account; for a credit card the real debt.
+    target: float
+    date: Date = Field(default_factory=lambda: clock.today())
+    note: str = Field(default="", max_length=160)
+
+
+class PayrollIncomeIn(APIModel):
+    period_start: Date
+    account_id: int | None = None
 
 
 def _ready(user: TelegramUser) -> int:
@@ -357,3 +380,150 @@ def check_account(con, uid: int, account_id: int | None, *, operation: str, curr
         raise HTTPException(422, "Для этой операции кредитку выбрать нельзя")
     return account
 
+
+
+# ---------- Transfers, corrections, history ----------
+
+
+def _future(day: Date) -> None:
+    if day > clock.today():
+        raise HTTPException(422, "Дата операции не может быть в будущем")
+
+
+def check_transfer(con, uid: int, from_id: int, to_id: int | None, *, current: tuple = ()) -> tuple[dict, dict | None]:
+    """Both sides of a transfer.  ``current`` holds the accounts the edited
+    transfer already has (an archived one stays acceptable there)."""
+    if from_id == to_id:
+        raise HTTPException(422, "Выберите два разных счёта")
+    source = _account(con, uid, from_id)
+    if source["archived"] and from_id not in current:
+        raise HTTPException(422, f"Счёт «{source['title']}» в архиве")
+    if source["kind"] == "credit":
+        raise HTTPException(422, "С кредитки переводить нельзя")
+    target = None
+    if to_id is not None:
+        target = _account(con, uid, to_id)
+        if target["archived"] and to_id not in current:
+            raise HTTPException(422, f"Счёт «{target['title']}» в архиве")
+    return source, target
+
+
+@router.post("/accounts/transfers")
+def create_transfer(payload: TransferIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """Money moved between two of the user's accounts: two balances change,
+    «Всего» and the budget do not."""
+    uid = _ready(user)
+    _future(payload.date)
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        _source, target = check_transfer(con, uid, payload.from_account_id, payload.to_account_id)
+        if target and target["kind"] == "credit":
+            raise HTTPException(422, "Перевод на кредитку — это погашение: кнопка «Погасить» у кредитки")
+        con.execute(
+            "INSERT INTO account_transfers(user_id,from_account_id,to_account_id,amount,date,note,kind) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (uid, payload.from_account_id, payload.to_account_id, payload.amount, payload.date.isoformat(),
+             payload.note.strip(), payload.kind),
+        )
+    return engine.snapshot(uid)
+
+
+def _own_transfer(con, uid: int, transfer_id: int) -> dict:
+    row = con.execute("SELECT * FROM account_transfers WHERE id=? AND user_id=?", (transfer_id, uid)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Перевод не найден")
+    row = dict(row)
+    if row["kind"] == "linked":
+        raise HTTPException(422, "Этот перевод создан вместе с операцией копилки, резерва или платежа: измените её")
+    return row
+
+
+@router.put("/accounts/transfers/{transfer_id}")
+def update_transfer(transfer_id: int, payload: TransferIn, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = _ready(user)
+    _future(payload.date)
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = _own_transfer(con, uid, transfer_id)
+        if row["kind"] not in ("manual", "hint", "reassign"):
+            raise HTTPException(422, "Это погашение кредитки: измените его в истории кредитки")
+        _source, target = check_transfer(con, uid, payload.from_account_id, payload.to_account_id,
+                                         current=(row["from_account_id"], row["to_account_id"]))
+        if target and target["kind"] == "credit":
+            raise HTTPException(422, "Перевод на кредитку — это погашение: кнопка «Погасить» у кредитки")
+        con.execute(
+            "UPDATE account_transfers SET from_account_id=?,to_account_id=?,amount=?,date=?,note=? "
+            "WHERE id=? AND user_id=?",
+            (payload.from_account_id, payload.to_account_id, payload.amount, payload.date.isoformat(),
+             payload.note.strip(), transfer_id, uid),
+        )
+    return engine.snapshot(uid)
+
+
+@router.delete("/accounts/transfers/{transfer_id}")
+def delete_transfer(transfer_id: int, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = _ready(user)
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = _own_transfer(con, uid, transfer_id)
+        engine.delete_transfer(con, uid, row)
+    return engine.snapshot(uid)
+
+
+@router.post("/accounts/{account_id}/adjust")
+def adjust_balance(account_id: int, payload: AdjustIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """«Исправить остаток»: the user enters the real amount (for a credit card
+    the real debt); the difference is stored.  The budget is not touched."""
+    uid = _ready(user)
+    _future(payload.date)
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        account = _account(con, uid, account_id)
+        if payload.date.isoformat() < account["opening_date"]:
+            raise HTTPException(422, f"Учёт по счёту ведётся с {account['opening_date']}: выберите дату не раньше")
+        if account["kind"] == "credit" and payload.target < 0:
+            raise HTTPException(422, "Долг не может быть отрицательным")
+        engine.add_adjustment(con, uid, account, payload.target, payload.date, payload.note.strip())
+    return engine.snapshot(uid)
+
+
+@router.delete("/accounts/adjustments/{adjustment_id}")
+def delete_adjustment(adjustment_id: int, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = _ready(user)
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute(
+            "SELECT * FROM account_adjustments WHERE id=? AND user_id=?", (adjustment_id, uid)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Исправление не найдено")
+        engine.delete_adjustment(con, uid, dict(row))
+    return engine.snapshot(uid)
+
+
+@router.get("/accounts/{account_id}/history")
+def account_history(account_id: int, user: TelegramUser = Depends(current_user)) -> dict:
+    uid = _ready(user)
+    with connect() as con:
+        account = _account(con, uid, account_id)
+        items = engine.history(con, uid, account)
+    snap = engine.snapshot(uid)
+    state = next((a for a in snap["accounts"] if a["id"] == account_id), None)
+    return {"account": state, "items": items}
+
+
+@router.post("/accounts/payroll-income")
+def record_payroll_income(payload: PayrollIncomeIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """«Записать приход» for a payday the budget counted without «Получил ✓»."""
+    uid = _ready(user)
+    hint = next((h for h in engine.payroll_income_hints(uid)
+                 if h["period_start"] == payload.period_start.isoformat()), None)
+    if hint is None:
+        raise HTTPException(422, "Эта выплата уже записана на счёт или ещё не засчитана бюджетом")
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        account_id = payload.account_id or engine.settings_for(con, uid)["main_account_id"]
+        check_account(con, uid, account_id, operation="income")
+        engine.write_payroll_income(con, uid, payload.period_start.isoformat(), hint["payday"],
+                                    hint["amount"], account_id)
+    return engine.snapshot(uid)

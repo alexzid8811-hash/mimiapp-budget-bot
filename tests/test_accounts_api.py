@@ -250,3 +250,160 @@ def test_budget_and_old_responses_do_not_change_while_the_feature_is_off(client)
     assert ok(client.get("/api/accounts"))["enabled"] is False
     tx = ok(client.get("/api/transactions"))[0]
     assert tx["account_id"] is None and tx["funding_envelope"] is None
+
+
+# ---------- Stage 2: transfers, corrections, history, payroll income ----------
+
+
+def balances(client):
+    snap = ok(client.get("/api/accounts"))
+    return {a["title"]: a["balance"] for a in snap["accounts"]}, snap
+
+
+def test_transfer_moves_money_between_two_accounts_only(client):
+    snap = setup(client)
+    c1, c2 = by_title(snap, "Карта 1")["id"], by_title(snap, "Карта 2")["id"]
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": c2, "amount": 10000}))
+    values, snap = balances(client)
+    assert (values["Карта 1"], values["Карта 2"], snap["total"]) == (30000, 25000, 155000)
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget
+    # Cash withdrawal is a transfer to a cash account.
+    cash = by_title(ok(client.post("/api/accounts", json={"title": "Наличные", "kind": "cash"})), "Наличные")["id"]
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": cash, "amount": 3000}))
+    values, snap = balances(client)
+    assert (values["Карта 1"], values["Наличные"], snap["total"]) == (27000, 3000, 155000)
+
+
+@pytest.mark.parametrize("change, status", [
+    ({"to_account_id": "same"}, 422),
+    ({"to_account_id": "credit"}, 422),
+    ({"from_account_id": "credit"}, 422),
+    ({"date": "2026-09-20"}, 422),
+    ({"to_account_id": 999}, 404),
+])
+def test_transfer_validation(client, change, status):
+    snap = setup(client)
+    ids = {"same": by_title(snap, "Карта 1")["id"], "credit": by_title(snap, "Кредитка")["id"]}
+    payload = {"from_account_id": ids["same"], "to_account_id": by_title(snap, "Карта 2")["id"], "amount": 10}
+    payload.update({k: ids.get(v, v) for k, v in change.items()})
+    assert client.post("/api/accounts/transfers", json=payload).status_code == status
+
+
+def test_transfer_edit_and_delete_recalculate(client):
+    snap = setup(client)
+    c1, c2 = by_title(snap, "Карта 1")["id"], by_title(snap, "Карта 2")["id"]
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": c2, "amount": 100}))
+    history = ok(client.get(f"/api/accounts/{c1}/history"))
+    item = history["items"][0]
+    assert item["type"] == "transfer" and item["amount"] == -100 and "Карта 2" in item["title"]
+    ok(client.put(f"/api/accounts/transfers/{item['id']}",
+                  json={"from_account_id": c1, "to_account_id": c2, "amount": 250}))
+    assert balances(client)[0]["Карта 1"] == 39750
+    ok(client.delete(f"/api/accounts/transfers/{item['id']}"))
+    assert balances(client)[0]["Карта 1"] == 40000
+
+
+def test_correct_balance_writes_the_difference_and_keeps_the_budget(client):
+    snap = setup(client)
+    c2 = by_title(snap, "Карта 2")["id"]
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    ok(client.post(f"/api/accounts/{c2}/adjust", json={"target": 15500, "note": "проценты"}))
+    values, snap = balances(client)
+    assert values["Карта 2"] == 15500 and snap["total"] == 155500
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget
+    item = ok(client.get(f"/api/accounts/{c2}/history"))["items"][0]
+    assert (item["type"], item["amount"], item["title"]) == ("adjustment", 500, "Исправление остатка")
+    assert client.post(f"/api/accounts/{c2}/adjust", json={"target": 15500}).status_code == 422
+    assert client.post(f"/api/accounts/{c2}/adjust", json={"target": 1, "date": "2026-09-01"}).status_code == 422
+    ok(client.delete(f"/api/accounts/adjustments/{item['id']}"))
+    assert balances(client)[0]["Карта 2"] == 15000
+
+
+def test_correct_credit_debt_is_interest_or_cashback(client):
+    snap = setup(client)
+    credit = by_title(snap, "Кредитка")["id"]
+    ok(client.post(f"/api/accounts/{credit}/adjust", json={"target": 700}))
+    item = ok(client.get(f"/api/accounts/{credit}/history"))["items"][0]
+    assert (item["reason"], item["amount"], item["title"]) == ("interest", -700, "Проценты банка")
+    state = by_title(ok(client.get("/api/accounts")), "Кредитка")
+    assert (state["debt"], state["available"]) == (700, 49300)
+    ok(client.post(f"/api/accounts/{credit}/adjust", json={"target": 200}))
+    item = ok(client.get(f"/api/accounts/{credit}/history"))["items"][0]
+    assert (item["reason"], item["amount"]) == ("cashback", 500)
+    assert ok(client.get("/api/accounts"))["total"] == 155000
+
+
+def test_history_lists_operations_before_opening_as_not_counted(client):
+    snap = setup(client)
+    c1 = by_title(snap, "Карта 1")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 50, "tx_date": "2026-09-01", "account_id": c1}))
+    ok(client.post("/api/transactions", json={"type": "income", "amount": 70, "account_id": c1}))
+    items = ok(client.get(f"/api/accounts/{c1}/history"))["items"]
+    assert [(i["type"], i["amount"], i["counted"]) for i in items] == [("income", 70, True), ("expense", -50, False)]
+
+
+def test_income_arrives_on_the_chosen_card(client):
+    snap = setup(client)
+    c2 = by_title(snap, "Карта 2")["id"]
+    ok(client.post("/api/transactions", json={"type": "income", "amount": 5000, "income_destination": "daily",
+                                              "account_id": c2}))
+    assert balances(client)[0]["Карта 2"] == 20000
+
+
+def advance_key(client):
+    rows = ok(client.get("/api/cashflow"))["periods"]
+    return next(r for r in rows if r["payday"] == "2026-09-22")["override_key"]
+
+
+def test_confirmed_payout_arrives_on_the_main_account(client, monkeypatch):
+    setup(client)
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 22))
+    key = advance_key(client)
+    # Not confirmed: the balances stay as they were.
+    assert balances(client)[0]["Карта 1"] == 40000
+    ok(client.put(f"/api/cashflow/income-overrides/{key}", json={"amount": 60000, "confirmed": True}))
+    values, snap = balances(client)
+    assert values["Карта 1"] == 100000 and snap["total"] == 215000
+    # A later correction of the amount follows; the reset removes the income.
+    ok(client.put(f"/api/cashflow/income-overrides/{key}", json={"amount": 58000}))
+    assert balances(client)[0]["Карта 1"] == 98000
+    ok(client.delete(f"/api/cashflow/income-overrides/{key}"))
+    assert balances(client)[0]["Карта 1"] == 40000
+
+
+def test_confirmed_payout_can_go_to_another_card(client, monkeypatch):
+    snap = setup(client)
+    c2 = by_title(snap, "Карта 2")["id"]
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 22))
+    ok(client.put(f"/api/cashflow/income-overrides/{advance_key(client)}",
+                  json={"amount": 1000, "confirmed": True, "account_id": c2}))
+    values, _ = balances(client)
+    assert (values["Карта 1"], values["Карта 2"]) == (40000, 16000)
+
+
+def test_payout_counted_without_confirmation_offers_to_record_the_income(client, monkeypatch):
+    setup(client)
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 10, 7))
+    snap = ok(client.get("/api/accounts"))
+    hints = [h for h in snap["hints"] if h["type"] == "payroll_income"]
+    # 22.09 is counted by the budget on its own; 07.10 still waits for «Получил ✓».
+    assert [h["payday"] for h in hints] == ["2026-09-22"]
+    assert hints[0]["confirmed"] is False and hints[0]["amount"] > 0
+    snap = ok(client.post("/api/accounts/payroll-income", json={"period_start": hints[0]["period_start"]}))
+    assert by_title(snap, "Карта 1")["balance"] == 40000 + hints[0]["amount"]
+    assert snap["hints"] == []
+    assert client.post("/api/accounts/payroll-income", json={"period_start": hints[0]["period_start"]}).status_code == 422
+
+
+def test_irregular_income_keeps_its_card(client):
+    snap = setup(client)
+    c2 = by_title(snap, "Карта 2")["id"]
+    ok(client.put("/api/budget-mode", json={"budget_mode": "irregular", "start_date": TODAY.isoformat(),
+                                             "start_total": 10000, "start_reserve": 0}))
+    income = ok(client.post("/api/irregular/incomes", json={"amount": 1000, "account_id": c2}))
+    assert balances(client)[0]["Карта 2"] == 16000
+    ok(client.put(f"/api/irregular/incomes/{income['id']}", json={"amount": 2000}))
+    assert balances(client)[0]["Карта 2"] == 17000
+    listed = ok(client.get("/api/irregular/incomes"))[0]
+    assert listed["account_id"] == c2

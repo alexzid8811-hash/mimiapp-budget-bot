@@ -51,6 +51,8 @@ class CashflowIncomeOverrideIn(APIModel):
     amount: float = Field(ge=0)
     # True when the user confirms the payout actually arrived.
     confirmed: bool = False
+    # Cards and accounts: where the confirmed money arrived (main by default).
+    account_id: int | None = None
 
 
 def today_numbers(user_id: int) -> dict:
@@ -170,6 +172,14 @@ def save_cashflow_income_override(
     # «Изменить») means the money arrived: it confirms the payday.
     confirmed = payload.confirmed or row["income_pending"]
     with legacy.connect() as con:
+        if payload.account_id is not None:
+            from .accounts_app import check_account
+
+            check_account(con, uid, payload.account_id, operation="income")
+        was_confirmed = con.execute(
+            "SELECT confirmed FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
+            (uid, period_start.isoformat()),
+        ).fetchone()
         con.execute(
             "INSERT INTO cashflow_income_overrides(user_id,period_start,amount,confirmed) VALUES(?,?,?,?) "
             "ON CONFLICT(user_id,period_start) DO UPDATE SET "
@@ -186,6 +196,15 @@ def save_cashflow_income_override(
             ).fetchone()
             if sent:
                 con.execute("UPDATE settings SET morning_report_resend=1 WHERE user_id=?", (uid,))
+        # The received money arrives on an account; an unconfirmed payout
+        # never touches a balance.
+        from . import accounts_engine
+
+        accounts_engine.sync_payroll_income(
+            con, uid, period_start=period_start.isoformat(), payday=row["payday"], value=payload.amount,
+            confirmed=bool(confirmed or (was_confirmed and was_confirmed["confirmed"])),
+            account_id=payload.account_id,
+        )
     return get_buffer(user)
 
 
@@ -202,6 +221,10 @@ def delete_cashflow_income_override(
     with legacy.connect() as con:
         deleted = con.execute(
             "DELETE FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
+            (uid, period_start.isoformat()),
+        )
+        con.execute(
+            "DELETE FROM account_incomes WHERE user_id=? AND payroll_period_start=?",
             (uid, period_start.isoformat()),
         )
     if deleted.rowcount == 0:

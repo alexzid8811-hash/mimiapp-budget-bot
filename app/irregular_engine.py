@@ -361,7 +361,7 @@ def incomes(uid: int, limit: int = 300) -> list[dict]:
     splits = ran[1].splits if ran else {}
     with connect() as con:
         rows = [dict(r) for r in con.execute(
-            "SELECT id,tx_date,amount,note,reserve_percent,income_destination,income_source "
+            "SELECT id,tx_date,amount,note,reserve_percent,income_destination,income_source,account_id "
             "FROM transactions WHERE user_id=? AND type='income' ORDER BY tx_date DESC,id DESC LIMIT ?",
             (uid, limit),
         )]

@@ -61,6 +61,7 @@
           <div class="acc-total"><span>Всего</span><strong class="num" id="accTotal">—</strong></div>
           <div id="accList" class="acc-list"></div>
           <div id="accCredit" class="acc-list acc-credit"></div>
+          <div id="accHints"></div>
         </div>
         <div class="card period">
           <div class="section-head"><h3 id="nextPayTitle">До следующей выплаты</h3><span class="muted" id="nextPayDate">—</span></div>
@@ -364,6 +365,8 @@
       <div class="section-head"><h2>Дополнительный доход</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
       <label>Сумма<input id="incomeTxAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="incomeTxDate" type="date" required /></label>
+      <label id="incomeTxAccountField" class="hidden">На какую карту<select id="incomeTxAccount"></select></label>
+      <p class="muted hidden" id="incomeTxAccountHint"></p>
       <label>Направить доход
         <select id="incomeTxDestination">
           <option value="daily">Деньги на карте</option>
@@ -384,6 +387,8 @@
       <label>Сумма<input id="irrIncomeAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <div class="grid2">
         <label>Дата<input id="irrIncomeDate" type="date" required /></label>
+        <label id="irrIncomeAccountField" class="hidden">На какую карту<select id="irrIncomeAccount"></select></label>
+        <p class="muted hidden" id="irrIncomeAccountHint"></p>
         <label>Откуда<input id="irrIncomeSource" maxlength="80" list="irrSources" placeholder="ремонт, доставка…" /></label>
       </div>
       <datalist id="irrSources"></datalist>
@@ -498,9 +503,48 @@
       <p class="muted" id="accountDialogNote"></p>
       <button class="primary big" value="default" id="saveAccountBtn">Сохранить</button>
       <div id="accountDangerBlock" class="category-delete hidden">
+        <button class="secondary big" type="button" id="adjustAccountBtn">Исправить остаток</button>
         <button class="secondary big" type="button" id="archiveAccountBtn">В архив</button>
         <button class="secondary big danger" type="button" id="deleteAccountBtn">Удалить</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="accountHistoryDialog">
+    <div class="dialog-card">
+      <div class="section-head"><h2 id="accountHistoryTitle">Счёт</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <div class="acc-total"><span id="accountHistoryCaption">Остаток</span><strong class="num" id="accountHistoryBalance">—</strong></div>
+      <p class="muted" id="accountHistoryNote"></p>
+      <div class="acc-actions" id="accountHistoryActions"></div>
+      <div id="accountHistoryList" class="list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="transferDialog">
+    <form method="dialog" id="transferForm" class="dialog-card">
+      <div class="section-head"><h2 id="transferTitle">Перевод между счетами</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <input id="transferId" type="hidden" />
+      <input id="transferKind" type="hidden" value="manual" />
+      <label>Откуда<select id="transferFrom"></select></label>
+      <label>Куда<select id="transferTo"></select></label>
+      <label>Сумма<input id="transferAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label>Дата<input id="transferDate" type="date" required /></label>
+      <label>Комментарий<input id="transferNote" maxlength="160" placeholder="Необязательно" /></label>
+      <p class="muted">Перевод меняет остатки двух счетов. «Всего» и бюджет не меняются.</p>
+      <button class="primary big" value="default" id="saveTransferBtn">Перевести</button>
+    </form>
+  </dialog>
+
+  <dialog id="adjustDialog">
+    <form method="dialog" id="adjustForm" class="dialog-card">
+      <div class="section-head"><h2 id="adjustTitle">Исправить остаток</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <input id="adjustAccountId" type="hidden" />
+      <p class="muted" id="adjustCaption"></p>
+      <label><span id="adjustLabel">Сколько на счёте на самом деле</span><input id="adjustTarget" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label>Дата<input id="adjustDate" type="date" required /></label>
+      <label>Комментарий<input id="adjustNote" maxlength="160" placeholder="Например, проценты по счёту" /></label>
+      <p class="muted" id="adjustHint">Разница запишется исправлением остатка. Бюджет не меняется.</p>
+      <button class="primary big" value="default" id="saveAdjustBtn">Сохранить</button>
     </form>
   </dialog>
 
@@ -559,6 +603,7 @@
       <input id="cashflowIncomePeriodStart" type="hidden" />
       <p id="cashflowIncomeCaption" class="muted"></p>
       <label><span id="cashflowIncomeLabel">Получено фактически</span><input id="cashflowIncomeAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label id="cashflowIncomeAccountField" class="hidden">На какую карту пришло<select id="cashflowIncomeAccount"></select></label>
       <p class="muted">После сохранения приложение автоматически пересчитает дневной лимит, свободные деньги и остаток буфера во всех следующих периодах.</p>
       <div class="dialog-actions"><button class="secondary" id="resetCashflowIncomeBtn" type="button">Вернуть расчёт</button><button class="primary big" value="default" id="saveCashflowIncomeBtn">Сохранить и пересчитать</button></div>
     </form>
@@ -584,14 +629,14 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261015-accounts"></script>
+  <script src="/static/app.js?v=20261015-accounts-2"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
-  <script src="/static/buffer-ui.js?v=20261012-current-edit"></script>
+  <script src="/static/buffer-ui.js?v=20261015-accounts"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261009-average-text"></script>
-  <script src="/static/irregular-ui.js?v=20261009-bills-by-month"></script>
-  <script src="/static/accounts-ui.js?v=20261015-accounts"></script>
+  <script src="/static/irregular-ui.js?v=20261015-accounts"></script>
+  <script src="/static/accounts-ui.js?v=20261015-accounts-2"></script>
   <script src="/static/home-layout.js?v=20261012-masonry"></script>
 </body>
 </html>

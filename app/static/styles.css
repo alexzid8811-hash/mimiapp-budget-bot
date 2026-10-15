@@ -1049,3 +1049,9 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 @media (min-width:900px){
   .page[data-page="home"].active.masonry>.home-accounts{grid-column:2}
 }
+.acc-actions{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 10px}
+.acc-actions button{flex:1 1 auto}
+.acc-hints{margin-top:10px;border-top:1px solid var(--line);padding-top:6px}
+.acc-hint{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line)}
+.acc-hint:last-child{border-bottom:0}
+.list-row.not-counted{opacity:.55}

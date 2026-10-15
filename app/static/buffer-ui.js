@@ -204,6 +204,8 @@
     document.getElementById("cashflowIncomeCaption").textContent =
       `${period.kind} ${formatDate(period.payday)} · по расчёту ${formatMoney(period.planned_payday_amount)}`;
     document.getElementById("resetCashflowIncomeBtn").hidden = confirm || !period.income_overridden;
+    // Cards and accounts: the confirmed money arrives on the main card or the chosen one.
+    window.accountsUi?.prepareField?.("cashflowIncome", { fallback: window.accountsUi?.mainAccountId?.(), visible: confirm });
     document.getElementById("cashflowIncomeDialog").showModal();
   }
 
@@ -218,7 +220,8 @@
     const confirm = document.getElementById("cashflowIncomeForm").dataset.mode === "confirm";
     try {
       await request(`/api/cashflow/income-overrides/${periodStart}`, {
-        method: "PUT", body: JSON.stringify(confirm ? { amount, confirmed: true } : { amount }),
+        method: "PUT", body: JSON.stringify(confirm
+          ? { amount, confirmed: true, ...(window.accountsUi?.fieldPayload?.("cashflowIncome") || {}) } : { amount }),
       });
       document.getElementById("cashflowIncomeDialog").close();
       if (typeof toast === "function") {

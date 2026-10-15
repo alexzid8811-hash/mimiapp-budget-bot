@@ -252,3 +252,92 @@ test('archive and restore buttons call their endpoints', async () => {
   await get('archiveAccountBtn').listeners.click();
   assert.ok(requests.some(r => r.url === '/api/accounts/2/archive' && r.method === 'POST'));
 });
+
+test('an account opens its history with transfer, expense and correction actions', async () => {
+  const {get, requests, responses} = setup();
+  responses['/api/accounts/1/history'] = {account: ACCOUNTS.accounts[0], items: [
+    {type: 'transfer', id: 5, date: '2026-10-12', amount: -10000, title: 'На 🏦 Карта 2', sub: 'Перевод', emoji: '↔️', counted: true, deletable: true},
+    {type: 'expense', id: 3, date: '2026-09-30', amount: -50, title: 'Кофе', sub: '', emoji: '☕', counted: false},
+  ]};
+  await get('refreshBtn').listeners.click();
+  await get('accList').listeners.click({target: {closest: () => ({dataset: {accountId: '1'}})}});
+  assert.equal(get('accountHistoryDialog').open, true);
+  assert.match(get('accountHistoryBalance').textContent, /55.000,00/);
+  assert.match(get('accountHistoryActions').innerHTML, /Перевести[\s\S]*Записать трату с этого счёта[\s\S]*Исправить остаток/);
+  const list = get('accountHistoryList').innerHTML;
+  assert.match(list, /На 🏦 Карта 2[\s\S]*−10.000,00/);
+  assert.match(list, /до начала учёта, не в остатке/);
+  assert.match(list, /data-history-delete="transfer:5"/);
+
+  // «Перевести» opens the transfer form from this account.
+  get('accountHistoryActions').listeners.click({target: {closest: () => ({dataset: {historyAction: 'transfer'}})}});
+  assert.equal(get('transferDialog').open, true);
+  assert.equal(get('transferFrom').value, '1');
+  assert.doesNotMatch(get('transferTo').innerHTML, /Кредитка/);
+  get('transferTo').value = '2';
+  get('transferAmount').value = '10 000';
+  get('transferDate').value = '2026-10-15';
+  await get('transferForm').listeners.submit({preventDefault() {}});
+  assert.deepEqual(body(requests, '/api/accounts/transfers'), {from_account_id: 1, to_account_id: 2, amount: 10000, date: '2026-10-15', note: '', kind: 'manual'});
+
+  // «Исправить остаток» sends the real amount.
+  get('accountHistoryActions').listeners.click({target: {closest: () => ({dataset: {historyAction: 'adjust'}})}});
+  assert.equal(get('adjustDialog').open, true);
+  assert.match(get('adjustTarget').value, /55.000,00/);
+  get('adjustTarget').value = '55 500';
+  await get('adjustForm').listeners.submit({preventDefault() {}});
+  assert.equal(body(requests, '/api/accounts/1/adjust').target, 55500);
+});
+
+test('a credit card history offers to correct the debt', async () => {
+  const {get, responses} = setup();
+  responses['/api/accounts/3/history'] = {account: ACCOUNTS.accounts[2], items: []};
+  await get('refreshBtn').listeners.click();
+  await get('accCredit').listeners.click({target: {closest: () => ({dataset: {accountId: '3'}})}});
+  assert.equal(get('accountHistoryCaption').textContent, 'Долг');
+  assert.match(get('accountHistoryNote').textContent, /Доступно 50.000,00/);
+  assert.match(get('accountHistoryActions').innerHTML, /Исправить долг/);
+  assert.doesNotMatch(get('accountHistoryActions').innerHTML, /Перевести/);
+});
+
+test('income forms take the main card by default and send it', async () => {
+  const {get, requests} = setup();
+  await get('refreshBtn').listeners.click();
+  get('quickIncomeBtn').listeners.click();
+  assert.equal(get('incomeTxAccountField').classList.contains('hidden'), false);
+  assert.equal(get('incomeTxAccount').value, '1');
+  assert.doesNotMatch(get('incomeTxAccount').innerHTML, /Кредитка/);
+  get('incomeTxAccount').value = '2';
+  get('incomeTxAmount').value = '500';
+  await get('incomeTxForm').listeners.submit({preventDefault() {}, target: get('incomeTxForm')});
+  assert.equal(body(requests, '/api/transactions').account_id, 2);
+});
+
+test('a payday counted without confirmation is offered in «Нужно перевести»', async () => {
+  const {get, requests} = setup({...ACCOUNTS, hints: [
+    {type: 'payroll_income', period_start: '2026-09-23', payday: '2026-09-22', title: 'Аванс', amount: 25000, confirmed: false, account_id: 1},
+  ]});
+  await get('refreshBtn').listeners.click();
+  const hints = get('accHints').innerHTML;
+  assert.match(hints, /Нужно перевести \(1\)/);
+  assert.match(hints, /Аванс 22\.09 не отмечена полученной — записать приход 25.000,00.₽ на 💳 Карта 1/);
+  await get('accHints').listeners.click({target: {closest: () => ({dataset: {hintIncome: '2026-09-23'}})}});
+  assert.deepEqual(body(requests, '/api/accounts/payroll-income'), {period_start: '2026-09-23'});
+});
+
+test('confirming a payout lets the user pick the card', async () => {
+  const {get, sandbox, requests, responses} = setup();
+  responses['/api/cashflow'].periods = [
+    {start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',received:61199.72,received_editable:true,income_pending:true,income_confirmed:false,override_key:'2026-10-08',payday_amount:61199.72,planned_payday_amount:61199.72,mandatory:0,free:0,daily:1,put_aside:0,take:0,buffer:0,to_card:0},
+  ];
+  await get('refreshBtn').listeners.click();
+  sandbox.window.confirmCashflowIncome('2026-10-08');
+  assert.equal(get('cashflowIncomeAccountField').classList.contains('hidden'), false);
+  assert.equal(get('cashflowIncomeAccount').value, '1');
+  get('cashflowIncomeAccount').value = '2';
+  await get('cashflowIncomeForm').listeners.submit({preventDefault() {}});
+  assert.deepEqual(body(requests, '/api/cashflow/income-overrides/2026-10-08'), {amount: 61199.72, confirmed: true, account_id: 2});
+  // Editing the amount does not ask for a card.
+  sandbox.window.editCashflowIncome('2026-10-08');
+  assert.equal(get('cashflowIncomeAccountField').classList.contains('hidden'), true);
+});
