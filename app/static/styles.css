@@ -1024,3 +1024,28 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
   .page[data-page="home"].active.masonry>*{grid-area:auto;grid-column:1;margin:0;align-self:start}
   .page[data-page="home"].active.masonry>:is(.period,.irr-home,.home-bills,.home-forecast){grid-column:2}
 }
+
+/* Cards and accounts */
+.acc-total{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:6px 0 8px;border-bottom:1px solid var(--line)}
+.acc-total span{color:var(--muted);font-size:13px}
+.acc-total strong{font-size:22px;font-weight:750;letter-spacing:-.02em}
+.acc-list{display:flex;flex-direction:column}
+.acc-credit{border-top:1px dashed var(--line);margin-top:4px;padding-top:4px}
+.acc-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;width:100%;border:0;background:none;color:var(--text);padding:9px 0;text-align:left;font-size:14px;cursor:pointer;border-bottom:1px solid var(--line)}
+.acc-list .acc-row:last-child{border-bottom:0}
+.acc-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+.acc-main{font-style:normal;font-size:12px}
+.acc-row b{font-weight:650;white-space:nowrap}
+.acc-row.credit small{color:var(--muted);font-size:12.5px;white-space:nowrap}
+.account-sub{display:block;color:var(--muted);font-size:12px;font-weight:400;margin-top:1px;overflow:hidden;text-overflow:ellipsis}
+.category-order-name span:has(.account-sub){white-space:normal}
+.accounts-archive{margin-top:12px}
+.account-archived{opacity:.62}
+.account-archived .warning{opacity:1}
+.account-archived .pill{font-size:11px;padding:2px 7px}
+.wizard-account{border:1px solid var(--line);border-radius:13px;padding:8px 10px;margin:8px 0}
+.wizard-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.wizard-actions .hidden+.primary{grid-column:1/-1}
+@media (min-width:900px){
+  .page[data-page="home"].active.masonry>.home-accounts{grid-column:2}
+}

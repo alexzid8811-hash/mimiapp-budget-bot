@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261012-home-masonry" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261015-accounts" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -55,6 +55,12 @@
           </div>
           <div id="irrBillsWarning" class="warning hidden"></div>
           <div id="irrNoIncomeWarning" class="warning irr-no-income hidden"><span id="irrNoIncomeText"></span><button class="secondary" id="irrTakeReserveBtn" type="button">Взять из резерва</button></div>
+        </div>
+        <div class="card home-accounts hidden" id="homeAccounts">
+          <div class="section-head"><h3>Карты и счета</h3><button class="link-btn" type="button" data-go="settings" data-accounts-settings>Настроить</button></div>
+          <div class="acc-total"><span>Всего</span><strong class="num" id="accTotal">—</strong></div>
+          <div id="accList" class="acc-list"></div>
+          <div id="accCredit" class="acc-list acc-credit"></div>
         </div>
         <div class="card period">
           <div class="section-head"><h3 id="nextPayTitle">До следующей выплаты</h3><span class="muted" id="nextPayDate">—</span></div>
@@ -209,6 +215,17 @@
           <p class="muted">Переключение не удаляет данные другого режима: к нему можно вернуться.</p>
         </div>
 
+        <div class="card" id="accountsSettingsCard">
+          <div class="section-head"><h3>Карты и счета</h3><button class="secondary hidden" id="addAccountBtn" type="button" aria-label="Добавить карту или счёт">＋</button></div>
+          <label class="checkbox"><input id="accountsEnabled" type="checkbox" /> Учёт по картам и счетам</label>
+          <p class="muted" id="accountsIntro">Показывает, на каких картах и счетах лежат деньги и сколько их всего. Бюджет и «Можно сегодня» считаются как прежде. Чтобы включить учёт, сначала добавьте карты и счета с суммами на них.</p>
+          <div id="accountsSettingsBody" class="hidden">
+            <p class="muted category-order-help">Нажмите на счёт, чтобы изменить его. Зажмите ручку ☰ и перетащите на нужное место.</p>
+            <div id="accountsList" class="category-order-list"></div>
+            <div id="accountsArchive"></div>
+          </div>
+        </div>
+
         <div class="card irregular-only" id="irregularSettingsCard">
           <h3>Подработки</h3>
           <div class="grid2">
@@ -335,6 +352,8 @@
         <label class="cat-select">Все категории<select id="expenseCategory"></select></label>
       </div>
       <label>Дата<input id="expenseDate" type="date" required /></label>
+      <label id="expenseAccountField" class="hidden">С какой карты<select id="expenseAccount"></select></label>
+      <p class="muted hidden" id="expenseAccountHint"></p>
       <label>Комментарий<input id="expenseNote" maxlength="200" placeholder="Например, продукты" /></label>
       <button class="primary big" value="default" id="saveExpenseBtn">Записать расход</button>
     </form>
@@ -456,6 +475,47 @@
     </form>
   </dialog>
 
+  <dialog id="accountDialog">
+    <form method="dialog" id="accountForm" class="dialog-card">
+      <div class="section-head"><h2 id="accountDialogTitle">Новая карта или счёт</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <input id="accountId" type="hidden" />
+      <div class="category-fields">
+        <label class="category-emoji-field">Эмодзи<input id="accountEmoji" required maxlength="16" autocomplete="off" /></label>
+        <label>Название<input id="accountTitle" required maxlength="40" autocomplete="off" placeholder="Например, Тинькофф" /></label>
+      </div>
+      <label id="accountKindField">Тип<select id="accountKind">
+        <option value="debit">Дебетовая карта</option>
+        <option value="savings">Накопительный счёт</option>
+        <option value="cash">Наличные</option>
+        <option value="credit">Кредитная карта</option>
+      </select></label>
+      <label id="accountBalanceField"><span id="accountBalanceLabel">Сколько сейчас на счёте</span><input id="accountBalance" data-money type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" /></label>
+      <div id="accountCreditFields" class="grid2 hidden">
+        <label>Кредитный лимит<input id="accountLimit" data-money type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" /></label>
+        <label>День платежа<input id="accountPaymentDay" type="number" min="1" max="31" placeholder="необязательно" /></label>
+      </div>
+      <label class="checkbox hidden" id="accountMainField"><input id="accountIsMain" type="checkbox" /> Основной счёт: сюда приходит доход</label>
+      <p class="muted" id="accountDialogNote"></p>
+      <button class="primary big" value="default" id="saveAccountBtn">Сохранить</button>
+      <div id="accountDangerBlock" class="category-delete hidden">
+        <button class="secondary big" type="button" id="archiveAccountBtn">В архив</button>
+        <button class="secondary big danger" type="button" id="deleteAccountBtn">Удалить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="accountsWizard">
+    <form method="dialog" id="accountsWizardForm" class="dialog-card">
+      <div class="section-head"><h2 id="accountsWizardTitle">Карты и счета</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <p class="muted" id="accountsWizardStep">Шаг 1 из 3</p>
+      <div id="accountsWizardBody"></div>
+      <div class="wizard-actions">
+        <button class="secondary" type="button" id="accountsWizardBack">Назад</button>
+        <button class="primary" type="button" id="accountsWizardNext">Далее</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="ruleDialog">
     <form method="dialog" id="ruleForm" class="dialog-card">
       <div class="section-head"><h2 id="ruleDialogTitle">Правило</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
@@ -524,13 +584,14 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261011-category-edit"></script>
+  <script src="/static/app.js?v=20261015-accounts"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20261012-current-edit"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261009-average-text"></script>
   <script src="/static/irregular-ui.js?v=20261009-bills-by-month"></script>
+  <script src="/static/accounts-ui.js?v=20261015-accounts"></script>
   <script src="/static/home-layout.js?v=20261012-masonry"></script>
 </body>
 </html>

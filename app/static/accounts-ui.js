@@ -1,0 +1,605 @@
+// Cards and accounts: where the money physically lies.  The home block with
+// «Всего», the settings list (drag to reorder, archive), the setup wizard and
+// the account field of the expense form.  All numbers come from /api/accounts;
+// the budget is never computed here.
+(() => {
+  const $ = id => document.getElementById(id);
+  const money = v => new Intl.NumberFormat("ru-RU", {
+    style: "currency", currency: "RUB", minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(Number(v || 0));
+  const esc = s => String(s ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
+  const parseMoney = v => window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(String(v ?? "")) : Number(v) || 0;
+  const fmtInput = v => (window.ruMoneyInput?.formatMoney ? window.ruMoneyInput.formatMoney(String(v)) : String(v));
+  const notify = message => { if (typeof toast === "function") toast(message); };
+  const show = (id, visible) => $(id)?.classList.toggle("hidden", !visible);
+  const reload = () => (typeof loadAll === "function" ? loadAll() : null);
+
+  async function request(path, options = {}) {
+    if (typeof api === "function") return api(path, options);
+    const res = await fetch(path, { ...options, headers: { "Content-Type": "application/json" } });
+    if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+    return res.json();
+  }
+
+  const KIND_LABELS = { debit: "Дебетовая карта", savings: "Накопительный счёт", cash: "Наличные", credit: "Кредитная карта" };
+  const KIND_EMOJI = { debit: "💳", savings: "🏦", cash: "💵", credit: "💳" };
+
+  let snap = null;
+  const accounts = () => snap?.accounts || [];
+  const active = () => accounts().filter(a => !a.archived);
+  const archived = () => accounts().filter(a => a.archived);
+  const byId = id => accounts().find(a => a.id === Number(id));
+  const enabled = () => Boolean(snap?.enabled);
+  const accountName = a => `${esc(a.emoji)} ${esc(a.title)}`;
+
+  // ---------- Home ----------
+
+  function creditLine(a) {
+    const available = a.available === null || a.available === undefined ? "" : ` · доступно ${money(a.available)}`;
+    return `долг ${money(a.debt)}${available}`;
+  }
+
+  function renderHome() {
+    const card = $("homeAccounts");
+    if (!card) return;
+    card.classList.toggle("hidden", !enabled());
+    if (!enabled()) return;
+    $("accTotal").textContent = money(snap.total);
+    const regular = active().filter(a => a.kind !== "credit");
+    const credit = active().filter(a => a.kind === "credit");
+    $("accList").innerHTML = regular.map(a => `
+      <button class="acc-row" type="button" data-account-id="${a.id}">
+        <span class="acc-name">${accountName(a)}${a.is_main ? ' <i class="acc-main" title="Основной счёт">⭐</i>' : ""}</span>
+        <b class="num">${money(a.balance)}</b>
+      </button>`).join("") || `<div class="empty">Добавьте карты и счета в настройках.</div>`;
+    $("accCredit").innerHTML = credit.map(a => `
+      <button class="acc-row credit" type="button" data-account-id="${a.id}">
+        <span class="acc-name">${accountName(a)}</span>
+        <small class="num">${creditLine(a)}</small>
+      </button>`).join("");
+    show("accCredit", credit.length > 0);
+  }
+
+  // ---------- Settings ----------
+
+  function settingsRow(a) {
+    const value = a.kind === "credit" ? creditLine(a) : money(a.balance);
+    return `
+    <div class="category-order-item account-item" data-account-id="${a.id}">
+      <button class="category-order-name" type="button" data-edit-account="${a.id}" aria-label="Изменить ${esc(a.title)}"><b>${esc(a.emoji)}</b><span>${esc(a.title)}${a.is_main ? " ⭐" : ""}<small class="account-sub">${esc(KIND_LABELS[a.kind] || a.kind)} · ${value}</small></span><i aria-hidden="true">✎</i></button>
+      <button class="category-drag-handle" type="button" aria-label="Перетащить ${esc(a.title)}" title="Зажмите и перетащите">☰</button>
+    </div>`;
+  }
+
+  function archiveRow(a) {
+    const value = a.kind === "credit" ? creditLine(a) : money(a.balance);
+    const nonZero = Math.abs(Number(a.balance) || 0) >= 0.005;
+    const warn = nonZero
+      ? `<div class="warning">${a.kind === "credit" ? "По архивной кредитке есть долг" : "На архивном счёте не ноль"}: ${value}. Верните счёт или исправьте остаток.</div>` : "";
+    const remove = a.has_operations ? "" : `<button class="tiny danger" type="button" data-delete-account="${a.id}">Удалить навсегда</button>`;
+    return `<div class="list-row account-archived"><div class="row-main"><div class="emoji">${esc(a.emoji)}</div><div class="row-text"><div class="row-title">${esc(a.title)} <span class="pill">в архиве</span></div><div class="row-sub">${esc(KIND_LABELS[a.kind] || a.kind)} · ${value}</div>${warn}</div></div><div class="actions"><button class="tiny" type="button" data-restore-account="${a.id}">Вернуть</button>${remove}</div></div>`;
+  }
+
+  function renderSettings() {
+    const toggle = $("accountsEnabled");
+    if (toggle) toggle.checked = enabled();
+    show("accountsSettingsBody", enabled());
+    show("addAccountBtn", enabled());
+    const intro = $("accountsIntro");
+    if (intro) {
+      intro.textContent = enabled()
+        ? "Сумма всех карт, счетов и наличных — «Всего» на главной. Кредитки считаются отдельно: долг и доступный лимит."
+        : accounts().length
+          ? "Учёт выключен: карты, счета и их история сохранены. Включите, чтобы снова видеть остатки."
+          : "Показывает, на каких картах и счетах лежат деньги и сколько их всего. Бюджет и «Можно сегодня» считаются как прежде. Чтобы включить учёт, сначала добавьте карты и счета с суммами на них.";
+    }
+    const list = $("accountsList");
+    if (list) list.innerHTML = active().map(settingsRow).join("");
+    const box = $("accountsArchive");
+    if (box) {
+      const items = archived();
+      const warn = items.some(a => Math.abs(Number(a.balance) || 0) >= 0.005);
+      box.innerHTML = items.length
+        ? `<details class="accounts-archive"${warn ? " open" : ""}><summary>Архив (${items.length})${warn ? " ⚠️" : ""}</summary><div class="list">${items.map(archiveRow).join("")}</div></details>`
+        : "";
+    }
+  }
+
+  // ---------- Account dialog ----------
+
+  function syncKindFields() {
+    const kind = $("accountKind").value;
+    const editing = Boolean($("accountId").value);
+    show("accountCreditFields", kind === "credit");
+    show("accountBalanceField", !editing);
+    $("accountBalanceLabel").textContent = kind === "credit" ? "Долг сейчас" : "Сколько сейчас на счёте";
+    const account = editing ? byId($("accountId").value) : null;
+    show("accountMainField", Boolean(account) && kind !== "credit");
+  }
+
+  function openAccount(account = null) {
+    if (!$("accountDialog")) return notify("Обновите приложение");
+    $("accountDialogTitle").textContent = account ? account.title : "Новая карта или счёт";
+    $("accountId").value = account?.id || "";
+    $("accountEmoji").value = account?.emoji || "💳";
+    $("accountTitle").value = account?.title || "";
+    $("accountKind").value = account?.kind || "debit";
+    $("accountKind").disabled = Boolean(account);
+    $("accountBalance").value = "";
+    $("accountLimit").value = account?.credit_limit ?? "";
+    $("accountPaymentDay").value = account?.payment_day ?? "";
+    $("accountIsMain").checked = Boolean(account?.is_main);
+    $("accountIsMain").disabled = Boolean(account?.is_main);
+    $("accountDialogNote").textContent = account
+      ? (account.kind === "credit" ? `Долг ${money(account.debt)}. Учёт ведётся с ${account.opening_date}.` : `На счёте ${money(account.balance)}. Учёт ведётся с ${account.opening_date}.`)
+      : "Учёт по счёту начнётся с сегодняшнего дня.";
+    show("accountDangerBlock", Boolean(account));
+    const del = $("deleteAccountBtn");
+    if (del) del.textContent = account?.has_operations ? "Удалить (уйдёт в архив)" : "Удалить";
+    syncKindFields();
+    $("accountDialog").showModal();
+  }
+
+  function accountPayload() {
+    const kind = $("accountKind").value;
+    const day = $("accountPaymentDay").value;
+    const limit = $("accountLimit").value;
+    return {
+      title: $("accountTitle").value.trim(),
+      emoji: $("accountEmoji").value.trim() || KIND_EMOJI[kind] || "💳",
+      credit_limit: kind === "credit" && String(limit).trim() !== "" ? parseMoney(limit) : null,
+      payment_day: kind === "credit" && day ? Number(day) : null,
+    };
+  }
+
+  async function saveAccount(event) {
+    event?.preventDefault?.();
+    const id = $("accountId").value;
+    const kind = $("accountKind").value;
+    const body = id
+      ? { ...accountPayload(), is_main: $("accountIsMain").checked }
+      : { ...accountPayload(), kind, balance: parseMoney($("accountBalance").value) };
+    try {
+      await request(id ? `/api/accounts/${id}` : "/api/accounts", { method: id ? "PUT" : "POST", body: JSON.stringify(body) });
+      $("accountDialog").close();
+      notify(id ? "Счёт сохранён" : "Счёт добавлен");
+      await reload();
+    } catch (error) { notify(error.message); }
+  }
+
+  async function archiveAccount(id) {
+    try {
+      await request(`/api/accounts/${id}/archive`, { method: "POST" });
+      $("accountDialog")?.close();
+      notify("Счёт в архиве");
+      await reload();
+    } catch (error) { notify(error.message); }
+  }
+
+  async function deleteAccount(id) {
+    const account = byId(id);
+    if (!account) return;
+    const question = account.has_operations
+      ? `По счёту «${account.title}» были операции: он уйдёт в архив, история сохранится. Продолжить?`
+      : `Удалить «${account.title}» навсегда?`;
+    if (!confirm(question)) return;
+    try {
+      const result = await request(`/api/accounts/${id}`, { method: "DELETE" });
+      $("accountDialog")?.close();
+      notify(result?.outcome === "archived" ? "Счёт в архиве: по нему были операции" : "Счёт удалён");
+      await reload();
+    } catch (error) { notify(error.message); }
+  }
+
+  async function restoreAccount(id) {
+    try {
+      await request(`/api/accounts/${id}/restore`, { method: "POST" });
+      notify("Счёт снова активен");
+      await reload();
+    } catch (error) { notify(error.message); }
+  }
+
+  // ---------- Switch and wizard ----------
+
+  async function toggleFeature() {
+    const toggle = $("accountsEnabled");
+    const wanted = Boolean(toggle?.checked);
+    if (wanted === enabled()) return;
+    if (wanted) {
+      const ready = active().some(a => a.kind !== "credit" && a.is_main);
+      if (!ready) {
+        if (toggle) toggle.checked = false;
+        return openWizard();
+      }
+    } else if (!confirm("Скрыть карты и счета? Ничего не удаляется: при включении всё вернётся.")) {
+      if (toggle) toggle.checked = true;
+      return;
+    }
+    try {
+      const result = await request("/api/accounts/settings", { method: "PUT", body: JSON.stringify({ enabled: wanted }) });
+      const pending = Number(result?.operations_without_account || 0);
+      if (wanted && pending > 0) {
+        alert(`Пока учёт был выключен, записано операций без карты: ${pending}. Они не изменили остатки. Сверьте остатки с банком и при необходимости исправьте их.`);
+      } else {
+        notify(wanted ? "Учёт по картам и счетам включён" : "Учёт по картам и счетам выключен");
+      }
+      await reload();
+    } catch (error) {
+      if (toggle) toggle.checked = enabled();
+      notify(error.message);
+    }
+  }
+
+  const wizard = { step: 1, rows: [], main: 0, envelopes: {}, info: null, balances: {} };
+
+  function blankRow(index) {
+    return index === 0
+      ? { emoji: "💳", title: "Основная карта", kind: "debit", credit_limit: "", payment_day: "" }
+      : { emoji: "💳", title: "", kind: "debit", credit_limit: "", payment_day: "" };
+  }
+
+  async function openWizard() {
+    if (!$("accountsWizard")) return notify("Обновите приложение");
+    wizard.step = 1;
+    wizard.rows = [blankRow(0)];
+    wizard.main = 0;
+    wizard.envelopes = {};
+    wizard.balances = {};
+    wizard.info = null;
+    try { wizard.info = await request("/api/accounts?with_amounts=true"); } catch (_) { wizard.info = null; }
+    renderWizard();
+    $("accountsWizard").showModal();
+  }
+
+  const regularIndexes = () => wizard.rows.map((r, i) => (r.kind === "credit" ? -1 : i)).filter(i => i >= 0);
+
+  function readWizard() {
+    if (wizard.step === 1) {
+      wizard.rows = wizard.rows.map((row, i) => ({
+        emoji: $(`wizEmoji-${i}`)?.value?.trim() || row.emoji,
+        title: $(`wizTitle-${i}`)?.value?.trim() ?? row.title,
+        kind: $(`wizKind-${i}`)?.value || row.kind,
+        credit_limit: $(`wizLimit-${i}`)?.value ?? row.credit_limit,
+        payment_day: $(`wizDay-${i}`)?.value ?? row.payment_day,
+      }));
+    } else if (wizard.step === 2) {
+      wizard.main = Number($("wizMain")?.value ?? wizard.main);
+      (wizard.info?.envelopes || []).forEach(e => {
+        const value = $(`wizEnvelope-${e.key}`)?.value;
+        if (value !== undefined && value !== "") wizard.envelopes[e.key] = Number(value);
+      });
+    } else {
+      wizard.rows.forEach((_, i) => { wizard.balances[i] = $(`wizBalance-${i}`)?.value ?? wizard.balances[i]; });
+    }
+  }
+
+  function envelopeIndex(key) {
+    const value = wizard.envelopes[key];
+    return value === undefined || wizard.rows[value]?.kind === "credit" ? wizard.main : value;
+  }
+
+  // Sum of the budget envelopes lying on an account: its suggested balance.
+  function prefill(index) {
+    if (!wizard.info?.budget_configured) return "";
+    const sum = (wizard.info.envelopes || [])
+      .filter(e => envelopeIndex(e.key) === index)
+      .reduce((total, e) => total + Math.round(Number(e.amount || 0) * 100), 0);
+    return sum ? fmtInput(sum / 100) : "";
+  }
+
+  function renderWizard() {
+    const body = $("accountsWizardBody");
+    if (!body) return;
+    const step = wizard.step;
+    $("accountsWizardStep").textContent = `Шаг ${step} из 3`;
+    $("accountsWizardBack").classList.toggle("hidden", step === 1);
+    $("accountsWizardNext").textContent = step === 3 ? "Включить учёт" : "Далее";
+    if (step === 1) {
+      $("accountsWizardTitle").textContent = "Ваши карты и счета";
+      body.innerHTML = `<p class="muted">Добавьте все карты, счета, наличные и кредитки, где лежат ваши деньги.</p>${wizard.rows.map((row, i) => `
+        <div class="wizard-account">
+          <div class="category-fields">
+            <label class="category-emoji-field">Эмодзи<input id="wizEmoji-${i}" maxlength="16" value="${esc(row.emoji)}" /></label>
+            <label>Название<input id="wizTitle-${i}" maxlength="40" value="${esc(row.title)}" placeholder="Например, Сбер" /></label>
+          </div>
+          <label>Тип<select id="wizKind-${i}" data-wiz-kind="${i}">${Object.entries(KIND_LABELS).map(([k, v]) => `<option value="${k}"${row.kind === k ? " selected" : ""}>${v}</option>`).join("")}</select></label>
+          ${row.kind === "credit" ? `<div class="grid2"><label>Кредитный лимит<input id="wizLimit-${i}" data-money inputmode="decimal" value="${esc(row.credit_limit)}" placeholder="0,00" /></label><label>День платежа<input id="wizDay-${i}" type="number" min="1" max="31" value="${esc(row.payment_day)}" placeholder="необязательно" /></label></div>` : ""}
+          ${wizard.rows.length > 1 ? `<button class="tiny danger" type="button" data-wiz-remove="${i}">Убрать</button>` : ""}
+        </div>`).join("")}
+        <button class="secondary wide" type="button" id="wizAddRow">＋ Ещё карта или счёт</button>`;
+    } else if (step === 2) {
+      $("accountsWizardTitle").textContent = "Куда приходит доход";
+      const options = selected => regularIndexes()
+        .map(i => `<option value="${i}"${i === selected ? " selected" : ""}>${esc(wizard.rows[i].emoji)} ${esc(wizard.rows[i].title)}</option>`).join("");
+      const envelopes = wizard.info?.envelopes || [];
+      body.innerHTML = `
+        <label>Основной счёт: сюда приходит доход<select id="wizMain">${options(wizard.main)}</select></label>
+        <h4>Где лежат деньги бюджета</h4>
+        <p class="muted">По умолчанию всё на основном счёте. Несколько конвертов могут лежать на одной карте.</p>
+        ${envelopes.map(e => `<label>${esc(e.label)}${e.amount !== null && e.amount !== undefined ? ` · ${money(e.amount)}` : ""}<select id="wizEnvelope-${e.key}">${options(envelopeIndex(e.key))}</select></label>`).join("")}`;
+    } else {
+      $("accountsWizardTitle").textContent = "Сколько денег сейчас";
+      body.innerHTML = `<p class="muted">Для счёта с конвертами сумма подставлена из бюджета. Исправьте её, если в банке другая сумма.</p>${wizard.rows.map((row, i) => {
+        const credit = row.kind === "credit";
+        const value = wizard.balances[i] ?? (credit ? fmtInput(0) : prefill(i));
+        return `<label>${esc(row.emoji)} ${esc(row.title)} · ${credit ? "долг сейчас" : "сейчас на счёте"}<input id="wizBalance-${i}" data-money inputmode="decimal" value="${esc(value)}" placeholder="0,00" /></label>`;
+      }).join("")}`;
+    }
+  }
+
+  function validateStep() {
+    if (wizard.step === 1) {
+      if (wizard.rows.some(r => !r.title)) return "Укажите название каждой карты и счёта";
+      if (!regularIndexes().length) return "Нужна хотя бы одна карта, счёт или наличные, куда приходит доход";
+      if (wizard.rows[wizard.main]?.kind === "credit" || !wizard.rows[wizard.main]) wizard.main = regularIndexes()[0];
+    }
+    return "";
+  }
+
+  async function wizardNext() {
+    readWizard();
+    const problem = validateStep();
+    if (problem) return notify(problem);
+    if (wizard.step < 3) {
+      wizard.step += 1;
+      return renderWizard();
+    }
+    const payload = {
+      accounts: wizard.rows.map((row, i) => ({
+        title: row.title, emoji: row.emoji || KIND_EMOJI[row.kind], kind: row.kind,
+        balance: parseMoney(wizard.balances[i] || 0),
+        credit_limit: row.kind === "credit" && String(row.credit_limit).trim() !== "" ? parseMoney(row.credit_limit) : null,
+        payment_day: row.kind === "credit" && row.payment_day ? Number(row.payment_day) : null,
+        is_main: i === wizard.main,
+      })),
+      envelopes: Object.fromEntries((wizard.info?.envelopes || []).map(e => [e.key, envelopeIndex(e.key)])),
+    };
+    try {
+      await request("/api/accounts/setup", { method: "POST", body: JSON.stringify(payload) });
+      $("accountsWizard").close();
+      notify("Учёт по картам и счетам включён");
+      await reload();
+    } catch (error) { notify(error.message); }
+  }
+
+  function wizardBack() {
+    readWizard();
+    if (wizard.step > 1) wizard.step -= 1;
+    renderWizard();
+  }
+
+  function wizardClick(event) {
+    if (event.target?.id === "wizAddRow") {
+      readWizard();
+      wizard.rows.push(blankRow(wizard.rows.length));
+      return renderWizard();
+    }
+    const remove = event.target?.closest?.("[data-wiz-remove]");
+    if (remove) {
+      readWizard();
+      const index = Number(remove.dataset.wizRemove);
+      wizard.rows.splice(index, 1);
+      wizard.envelopes = {};
+      if (wizard.main >= wizard.rows.length || wizard.main === index) wizard.main = 0;
+      renderWizard();
+    }
+  }
+
+  function wizardChange(event) {
+    if (event.target?.dataset?.wizKind !== undefined) {
+      readWizard();
+      renderWizard();
+    }
+  }
+
+  // ---------- Expense form ----------
+
+  function spendingAccountId() {
+    const envelope = (snap?.envelopes || []).find(e => e.key === "spending");
+    return envelope?.account_id ?? snap?.main_account_id ?? null;
+  }
+
+  // Accounts an expense can be paid from (credit cards come with their own rules).
+  function expenseAccounts(current) {
+    return active().filter(a => a.kind !== "credit" || a.id === current);
+  }
+
+  function updateExpenseHint() {
+    const hint = $("expenseAccountHint");
+    if (!hint) return;
+    const account = byId($("expenseAccount")?.value);
+    const day = $("expenseDate")?.value;
+    const early = Boolean(account && day && day < account.opening_date);
+    hint.textContent = early
+      ? `Дата раньше начала учёта по «${account.title}» (${account.opening_date}): остаток счёта эта трата не изменит.` : "";
+    hint.classList.toggle("hidden", !early);
+  }
+
+  function prepareExpense(transaction = null) {
+    const field = $("expenseAccountField");
+    const select = $("expenseAccount");
+    if (!field || !select) return;
+    field.classList.toggle("hidden", !enabled());
+    if (!enabled()) return;
+    const current = transaction ? transaction.account_id : undefined;
+    const options = expenseAccounts(current).map(a => `<option value="${a.id}">${accountName(a)}</option>`);
+    const old = current ? byId(current) : null;
+    if (old && old.archived) options.push(`<option value="${old.id}">${accountName(old)} (архив)</option>`);
+    if (transaction && !current) options.push('<option value="">Без карты</option>');
+    select.innerHTML = options.join("");
+    select.value = String(transaction ? (current ?? "") : (spendingAccountId() ?? ""));
+    updateExpenseHint();
+  }
+
+  function expensePayload() {
+    if (!enabled() || $("expenseAccountField")?.classList.contains("hidden")) return {};
+    const value = $("expenseAccount")?.value;
+    return { account_id: value ? Number(value) : null };
+  }
+
+  // ---------- Drag and drop (the same behaviour as the categories) ----------
+
+  const MOVE_MS = 200;
+  let drag = null;
+  const reduced = () => Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+
+  function slide(items, change) {
+    const animate = !reduced() && items.every(item => item.animate);
+    const before = animate ? items.map(item => item.getBoundingClientRect().top) : [];
+    change();
+    if (!animate) return;
+    items.forEach((item, index) => {
+      item.accountMove?.cancel();
+      const shift = before[index] - item.getBoundingClientRect().top;
+      if (!shift) return;
+      item.accountMove = item.animate([{ transform: `translateY(${shift}px)` }, { transform: "none" }],
+        { duration: MOVE_MS, easing: "cubic-bezier(.2,.8,.2,1)" });
+    });
+  }
+
+  function beginDrag(list, target, inputId, clientY) {
+    if (drag) return false;
+    const handle = target?.closest?.(".category-drag-handle");
+    const item = handle?.closest?.(".account-item");
+    if (!item) return false;
+    item.accountMove?.cancel();
+    drag = { inputId, item, previous: active().map(a => a.id),
+      grabOffset: clientY - list.getBoundingClientRect().top - item.offsetTop };
+    item.classList.add("dragging");
+    list.classList.add("sorting");
+    return true;
+  }
+
+  function moveDrag(list, clientY, inputId) {
+    if (!drag || drag.inputId !== inputId) return false;
+    const { item } = drag;
+    const top = clientY - list.getBoundingClientRect().top - drag.grabOffset;
+    const center = top + item.offsetHeight / 2;
+    const others = [...list.querySelectorAll(".account-item:not(.dragging)")];
+    const before = others.find(other => center < other.offsetTop + other.offsetHeight / 2) || null;
+    if (item.nextElementSibling !== before) slide(others, () => list.insertBefore(item, before));
+    item.style.transform = `translateY(${top - item.offsetTop}px)`;
+    if (clientY < 90) window.scrollBy(0, -12);
+    else if (clientY > window.innerHeight - 90) window.scrollBy(0, 12);
+    return true;
+  }
+
+  async function saveOrder(ids, previous) {
+    if (ids.every((id, i) => id === previous[i])) return;
+    const order = new Map(ids.map((id, i) => [id, i]));
+    snap.accounts = [...active().sort((a, b) => order.get(a.id) - order.get(b.id)), ...archived()];
+    renderHome();
+    try {
+      await request("/api/accounts/order", { method: "PUT", body: JSON.stringify({ account_ids: ids }) });
+    } catch (error) {
+      const back = new Map(previous.map((id, i) => [id, i]));
+      snap.accounts = [...active().sort((a, b) => back.get(a.id) - back.get(b.id)), ...archived()];
+      renderSettings();
+      renderHome();
+      notify(error.message);
+    }
+  }
+
+  async function finishDrag(list, inputId, cancelled = false) {
+    if (!drag || drag.inputId !== inputId) return;
+    const current = drag;
+    drag = null;
+    list.classList.remove("sorting");
+    if (cancelled) {
+      current.item.classList.remove("dragging");
+      return renderSettings();
+    }
+    slide([current.item], () => { current.item.style.transform = ""; });
+    if (current.item.accountMove) current.item.accountMove.onfinish = () => current.item.classList.remove("dragging");
+    else current.item.classList.remove("dragging");
+    const ids = [...list.querySelectorAll(".account-item")].map(item => Number(item.dataset.accountId));
+    await saveOrder(ids, current.previous);
+  }
+
+  function bindDrag(list) {
+    list.addEventListener("pointerdown", event => {
+      if (event.pointerType === "touch") return;
+      const inputId = `pointer:${event.pointerId}`;
+      if (!beginDrag(list, event.target, inputId, event.clientY)) return;
+      event.preventDefault();
+      list.setPointerCapture?.(event.pointerId);
+    });
+    list.addEventListener("pointermove", event => {
+      if (moveDrag(list, event.clientY, `pointer:${event.pointerId}`)) event.preventDefault();
+    });
+    list.addEventListener("pointerup", event => {
+      const inputId = `pointer:${event.pointerId}`;
+      if (!drag || drag.inputId !== inputId) return;
+      try { list.releasePointerCapture?.(event.pointerId); } catch (_) {}
+      finishDrag(list, inputId);
+    });
+    list.addEventListener("pointercancel", event => finishDrag(list, `pointer:${event.pointerId}`, true));
+    // Telegram's iOS webview can omit Pointer Events: classic touch events.
+    list.addEventListener("touchstart", event => {
+      if (drag) return;
+      const touch = event.changedTouches[0];
+      if (!touch || !beginDrag(list, event.target, `touch:${touch.identifier}`, touch.clientY)) return;
+      event.preventDefault();
+    }, { passive: false });
+    list.addEventListener("touchmove", event => {
+      if (!drag || !drag.inputId.startsWith("touch:")) return;
+      const id = Number(drag.inputId.slice(6));
+      const touch = [...event.touches].find(item => item.identifier === id);
+      if (touch && moveDrag(list, touch.clientY, drag.inputId)) event.preventDefault();
+    }, { passive: false });
+    list.addEventListener("touchend", event => {
+      if (!drag || !drag.inputId.startsWith("touch:")) return;
+      const id = Number(drag.inputId.slice(6));
+      if ([...event.changedTouches].some(item => item.identifier === id)) finishDrag(list, drag.inputId);
+    });
+    list.addEventListener("touchcancel", () => {
+      if (drag?.inputId.startsWith("touch:")) finishDrag(list, drag.inputId, true);
+    });
+  }
+
+  // ---------- Wiring ----------
+
+  function bind() {
+    $("accountsEnabled")?.addEventListener("change", toggleFeature);
+    $("addAccountBtn")?.addEventListener("click", () => openAccount());
+    $("accountForm")?.addEventListener("submit", saveAccount);
+    $("accountKind")?.addEventListener("change", syncKindFields);
+    $("archiveAccountBtn")?.addEventListener("click", () => archiveAccount($("accountId").value));
+    $("deleteAccountBtn")?.addEventListener("click", () => deleteAccount($("accountId").value));
+    $("accountsWizardNext")?.addEventListener("click", wizardNext);
+    $("accountsWizardBack")?.addEventListener("click", wizardBack);
+    $("accountsWizardBody")?.addEventListener("click", wizardClick);
+    $("accountsWizardBody")?.addEventListener("change", wizardChange);
+    $("expenseAccount")?.addEventListener("change", updateExpenseHint);
+    $("expenseDate")?.addEventListener("change", updateExpenseHint);
+    const list = $("accountsList");
+    if (list) {
+      list.addEventListener("click", event => {
+        const button = event.target?.closest?.("[data-edit-account]");
+        if (button) openAccount(byId(button.dataset.editAccount));
+      });
+      bindDrag(list);
+    }
+    $("accountsArchive")?.addEventListener("click", event => {
+      const restore = event.target?.closest?.("[data-restore-account]");
+      if (restore) return restoreAccount(restore.dataset.restoreAccount);
+      const remove = event.target?.closest?.("[data-delete-account]");
+      if (remove) return deleteAccount(remove.dataset.deleteAccount);
+    });
+  }
+
+  function render(state) {
+    snap = state?.accounts && Array.isArray(state.accounts.accounts) ? state.accounts : null;
+    renderHome();
+    renderSettings();
+  }
+
+  bind();
+  window.accountsUi = {
+    render, prepareExpense, expensePayload, openAccount, openWizard,
+    accountLabel(t) {
+      if (!t?.account_title) return "";
+      return `${esc(t.account_emoji)} ${esc(t.account_title)}${t.account_archived ? " (архив)" : ""}`;
+    },
+  };
+})();

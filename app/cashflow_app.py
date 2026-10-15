@@ -331,3 +331,7 @@ app.include_router(analytics_router)
 from .irregular_app import router as irregular_router
 
 app.include_router(irregular_router)
+
+from .accounts_app import router as accounts_router
+
+app.include_router(accounts_router)

@@ -67,14 +67,16 @@ let loadVersion = 0;
 async function loadAll() {
   const version = ++loadVersion;
   try {
-    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular] = await Promise.all([
+    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts] = await Promise.all([
       api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
       api("/api/piggy-bank").catch(() => ({ movements: [] })),
-      api("/api/irregular").catch(() => null)
+      api("/api/irregular").catch(() => null),
+      api("/api/accounts").catch(() => null)
     ]);
     if (version !== loadVersion) return;
     window.budgetDate.configure(bootstrap.budget_timezone);
-    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular };
+    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts };
+    window.accountsUi?.render(state);
     render();
     window.applyCashflowSettings?.(cashflowSettings);
     window.applyCashflow?.(cashflow);
@@ -189,7 +191,9 @@ function renderTransactionRow(t) {
     ? `<button class="tiny" onclick="editBillPayment(${t.id})">Изменить</button>`
     : `<button class="tiny" onclick="editTransaction(${t.id})">Изменить</button>`;
   const source = !isExpense && t.income_source ? ` · ${escapeHtml(t.income_source)}` : '';
-  return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}${source}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
+  const account = window.accountsUi?.accountLabel(t);
+  const accountText = account ? ` · ${account}` : '';
+  return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}${source}${accountText}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
 }
 
 // Transfers between the card and the piggy bank change the day's money, so
@@ -591,6 +595,7 @@ $("refreshBtn").addEventListener("click", () => loadAll());
 let editingTransactionId = null;
 function openExpenseDialog() {
   editingTransactionId = null; $("expenseForm").reset(); $("expenseDate").value = todayISO();
+  window.accountsUi?.prepareExpense();
   $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50);
 }
 function openIncomeDialog() {
@@ -631,6 +636,7 @@ window.editTransaction = id => {
     $("expenseDate").value = transaction.tx_date;
     $("expenseCategory").value = transaction.category_id || "";
     $("expenseNote").value = transaction.note || "";
+    window.accountsUi?.prepareExpense(transaction);
     $("expenseDialog").showModal();
   } else {
     $("incomeTxAmount").value = transaction.amount;
@@ -645,7 +651,7 @@ $("expenseForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const path = editingTransactionId ? `/api/transactions/${editingTransactionId}` : "/api/transactions";
-    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"expense", amount:moneyValue("expenseAmount"), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:$("expenseNote").value }) });
+    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"expense", amount:moneyValue("expenseAmount"), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:$("expenseNote").value, ...(window.accountsUi?.expensePayload() || {}) }) });
     editingTransactionId = null;
     $("expenseDialog").close(); e.target.reset(); toast("Расход записан"); await loadAll();
   } catch(e2) { toast(e2.message); }

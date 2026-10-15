@@ -67,6 +67,9 @@ class TransactionIn(APIModel):
     category_id: int | None = None
     note: str = Field(default="", max_length=200)
     income_destination: Literal["daily", "buffer", "piggy", "split", "reserve"] = "daily"
+    # The card the money left or arrived on (cards and accounts).  Left out
+    # of an edit, the operation keeps its account.
+    account_id: int | None = None
 
 
 class BillPaymentIn(APIModel):
@@ -126,6 +129,17 @@ def income_fields(uid: int, payload: TransactionIn, con) -> tuple[str, float | N
     if payload.income_destination in ("split", "reserve"):
         raise HTTPException(422, "Это направление дохода доступно только в режиме подработок")
     return payload.income_destination, None
+
+
+def transaction_account(con, uid: int, payload: TransactionIn, current: int | None = None) -> int | None:
+    """Account of a generic operation: validated, or the stored one when the
+    request does not mention it (the old app, or the feature switched off)."""
+    from . import accounts_app  # local import: optional feature
+
+    if "account_id" not in payload.model_fields_set:
+        return current
+    accounts_app.check_account(con, uid, payload.account_id, operation=payload.type, current=current)
+    return payload.account_id
 
 
 def check_reserve(con, uid: int) -> None:
@@ -204,11 +218,13 @@ def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) ->
     uid = user_ready(user)
     return rows(
         "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title, "
-        "p.amount AS remainder_amount, "
+        "p.amount AS remainder_amount, a.title AS account_title, a.emoji AS account_emoji, "
+        "a.archived AS account_archived, "
         "CASE WHEN p.id IS NULL THEN 'budget' ELSE 'piggy' END AS remainder_destination "
         "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
         "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id AND b.user_id=t.user_id "
         "LEFT JOIN piggy_bank_movements p ON p.user_id=t.user_id AND p.bill_payment_id=t.id "
+        "LEFT JOIN accounts a ON a.id=t.account_id AND a.user_id=t.user_id "
         "WHERE t.user_id=? ORDER BY tx_date DESC,id DESC LIMIT ?",
         (uid, min(max(limit, 1), 300)),
     )
@@ -222,11 +238,12 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
     with connect() as con:
         require_category(con, uid, payload.category_id)
         destination, percent = income_fields(uid, payload, con)
+        account_id = transaction_account(con, uid, payload)
         cur = con.execute(
-            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination,reserve_percent) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination,reserve_percent,"
+            "account_id) VALUES(?,?,?,?,?,?,?,?,?)",
             (uid, payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-             payload.note, destination, percent),
+             payload.note, destination, percent, account_id),
         )
         tx_id = cur.lastrowid
         if payload.type == "income" and destination == "piggy":
@@ -252,20 +269,21 @@ def update_transaction(
         with connect() as con:
             require_category(con, uid, payload.category_id)
             current = con.execute(
-                "SELECT bill_rule_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
+                "SELECT bill_rule_id,account_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
             ).fetchone()
             if current is None:
                 raise HTTPException(404, "Операция не найдена")
             if current["bill_rule_id"] is not None:
                 raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
             destination, percent = income_fields(uid, payload, con)
+            account_id = transaction_account(con, uid, payload, current["account_id"])
             con.execute(
                 "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=?,"
-                "reserve_percent=CASE WHEN ?='income' THEN COALESCE(reserve_percent,?) ELSE NULL END "
-                "WHERE id=? AND user_id=?",
+                "reserve_percent=CASE WHEN ?='income' THEN COALESCE(reserve_percent,?) ELSE NULL END,"
+                "account_id=? WHERE id=? AND user_id=?",
                 (
                     payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-                    payload.note, destination, payload.type, percent, tx_id, uid,
+                    payload.note, destination, payload.type, percent, account_id, tx_id, uid,
                 ),
             )
             # An expense paid from the emergency reserve keeps its reserve
