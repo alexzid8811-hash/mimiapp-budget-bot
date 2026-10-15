@@ -67,10 +67,18 @@ class TransactionIn(APIModel):
     category_id: int | None = None
     note: str = Field(default="", max_length=200)
     income_destination: Literal["daily", "buffer", "piggy", "split", "reserve"] = "daily"
+    # The card the money left or arrived on (cards and accounts).  Left out
+    # of an edit, the operation keeps its account.
+    account_id: int | None = None
+    # What an expense is paid from: the daily budget, the piggy bank, the
+    # emergency reserve or nothing in the budget.  Left out: as before.
+    funding_envelope: Literal["spending", "piggy", "reserve", "none"] | None = None
 
 
 class BillPaymentIn(APIModel):
     due_date: date
+    # Cards and accounts: paid from this card (the buffer's card by default).
+    account_id: int | None = None
 
 
 class BillPaymentEditIn(APIModel):
@@ -126,6 +134,70 @@ def income_fields(uid: int, payload: TransactionIn, con) -> tuple[str, float | N
     if payload.income_destination in ("split", "reserve"):
         raise HTTPException(422, "Это направление дохода доступно только в режиме подработок")
     return payload.income_destination, None
+
+
+def transaction_account(con, uid: int, payload: TransactionIn, current: int | None = None) -> int | None:
+    """Account of a generic operation: validated, or the stored one when the
+    request does not mention it (the old app, or the feature switched off)."""
+    from . import accounts_app  # local import: optional feature
+
+    if "account_id" not in payload.model_fields_set:
+        return current
+    operation = "credit_expense" if payload.type == "expense" else payload.type
+    accounts_app.check_account(con, uid, payload.account_id, operation=operation, current=current)
+    return payload.account_id
+
+
+def on_credit_card(con, uid: int, account_id: int | None) -> bool:
+    return bool(account_id) and bool(con.execute(
+        "SELECT 1 FROM accounts WHERE id=? AND user_id=? AND kind='credit'", (account_id, uid)
+    ).fetchone())
+
+
+def expense_funding(con, uid: int, payload: TransactionIn, current: str | None = None,
+                    account_id: int | None = None) -> str | None:
+    """«Из чего» of an expense, validated; the stored value when the request
+    does not mention it.  A credit card purchase is outside the budget: only
+    the debt grows."""
+    if payload.type != "expense":
+        return None
+    if on_credit_card(con, uid, account_id):
+        return "none"
+    if "funding_envelope" not in payload.model_fields_set:
+        return current
+    funding = payload.funding_envelope
+    if funding == "reserve":
+        from . import irregular_engine  # local import: optional mode
+
+        if not irregular_engine.is_irregular(uid, con):
+            raise HTTPException(422, "Трата из резерва есть только в режиме подработок")
+    return funding
+
+
+def sync_expense_links(con, uid: int, tx_id: int, payload: TransactionIn, funding: str | None) -> None:
+    """An expense paid from the piggy bank or the reserve keeps its envelope
+    withdrawal in step; any other one has none."""
+    from . import accounts_engine  # local import: optional feature
+
+    value, day = payload.amount, payload.tx_date.isoformat()
+    expense = payload.type == "expense"
+    accounts_engine.sync_piggy_expense(con, uid, tx_id, funding if expense else None, value, day, payload.note)
+    if expense and funding is None:
+        # Not chosen: an expense paid from the reserve in the irregular mode
+        # stays as it was.
+        con.execute(
+            "UPDATE emergency_reserve_movements SET amount=?,movement_date=? "
+            "WHERE user_id=? AND expense_transaction_id=?",
+            (value, day, uid, tx_id),
+        )
+    else:
+        accounts_engine.sync_reserve_expense(con, uid, tx_id, funding if expense else None, value, day, payload.note)
+
+
+def linked_reason(con, uid: int, tx_id: int) -> str | None:
+    from . import accounts_engine  # local import: optional feature
+
+    return accounts_engine.locked_transaction(con, uid, tx_id)
 
 
 def check_reserve(con, uid: int) -> None:
@@ -204,11 +276,13 @@ def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) ->
     uid = user_ready(user)
     return rows(
         "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title, "
-        "p.amount AS remainder_amount, "
+        "p.amount AS remainder_amount, a.title AS account_title, a.emoji AS account_emoji, "
+        "a.archived AS account_archived, "
         "CASE WHEN p.id IS NULL THEN 'budget' ELSE 'piggy' END AS remainder_destination "
         "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
         "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id AND b.user_id=t.user_id "
         "LEFT JOIN piggy_bank_movements p ON p.user_id=t.user_id AND p.bill_payment_id=t.id "
+        "LEFT JOIN accounts a ON a.id=t.account_id AND a.user_id=t.user_id "
         "WHERE t.user_id=? ORDER BY tx_date DESC,id DESC LIMIT ?",
         (uid, min(max(limit, 1), 300)),
     )
@@ -222,13 +296,22 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
     with connect() as con:
         require_category(con, uid, payload.category_id)
         destination, percent = income_fields(uid, payload, con)
+        account_id = transaction_account(con, uid, payload)
+        funding = expense_funding(con, uid, payload, account_id=account_id)
         cur = con.execute(
-            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination,reserve_percent) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination,reserve_percent,"
+            "account_id,funding_envelope) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (uid, payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-             payload.note, destination, percent),
+             payload.note, destination, percent, account_id, funding),
         )
         tx_id = cur.lastrowid
+        if funding in ("piggy", "reserve"):
+            sync_expense_links(con, uid, tx_id, payload, funding)
+            try:
+                check_piggy_history(con, uid)
+                check_reserve(con, uid)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         if payload.type == "income" and destination == "piggy":
             con.execute(
                 "INSERT INTO piggy_bank_movements"
@@ -252,33 +335,35 @@ def update_transaction(
         with connect() as con:
             require_category(con, uid, payload.category_id)
             current = con.execute(
-                "SELECT bill_rule_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
+                "SELECT bill_rule_id,account_id,funding_envelope FROM transactions WHERE id=? AND user_id=?",
+                (tx_id, uid),
             ).fetchone()
             if current is None:
                 raise HTTPException(404, "Операция не найдена")
             if current["bill_rule_id"] is not None:
                 raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
+            locked = linked_reason(con, uid, tx_id)
+            if locked:
+                raise HTTPException(422, locked)
             destination, percent = income_fields(uid, payload, con)
+            account_id = transaction_account(con, uid, payload, current["account_id"])
+            funding = expense_funding(con, uid, payload, current["funding_envelope"], account_id)
+            if (current["funding_envelope"] == "none" and on_credit_card(con, uid, current["account_id"])
+                    and not on_credit_card(con, uid, account_id) and "funding_envelope" not in payload.model_fields_set):
+                # Moved off the credit card without a choice: the daily budget, as usual.
+                funding = None
             con.execute(
                 "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=?,"
-                "reserve_percent=CASE WHEN ?='income' THEN COALESCE(reserve_percent,?) ELSE NULL END "
-                "WHERE id=? AND user_id=?",
+                "reserve_percent=CASE WHEN ?='income' THEN COALESCE(reserve_percent,?) ELSE NULL END,"
+                "account_id=?,funding_envelope=? WHERE id=? AND user_id=?",
                 (
                     payload.type, payload.amount, payload.tx_date.isoformat(), payload.category_id,
-                    payload.note, destination, payload.type, percent, tx_id, uid,
+                    payload.note, destination, payload.type, percent, account_id, funding, tx_id, uid,
                 ),
             )
-            # An expense paid from the emergency reserve keeps its reserve
-            # withdrawal in step; turning it into an income drops the link.
-            if payload.type == "expense":
-                con.execute(
-                    "UPDATE emergency_reserve_movements SET amount=?,movement_date=? "
-                    "WHERE user_id=? AND expense_transaction_id=?",
-                    (payload.amount, payload.tx_date.isoformat(), uid, tx_id),
-                )
-            else:
-                con.execute("DELETE FROM emergency_reserve_movements WHERE user_id=? AND expense_transaction_id=?",
-                            (uid, tx_id))
+            # An expense paid from the emergency reserve or the piggy bank
+            # keeps its withdrawal in step; turning it into an income drops it.
+            sync_expense_links(con, uid, tx_id, payload, funding)
             con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
             if payload.type == "income" and destination == "piggy":
                 con.execute(
@@ -301,6 +386,9 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            locked = linked_reason(con, uid, tx_id)
+            if locked:
+                raise HTTPException(422, locked)
             con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
             cur = con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (tx_id, uid))
             if cur.rowcount == 0:
@@ -352,6 +440,19 @@ def irregular_plan(uid: int) -> list[dict]:
     return result
 
 
+def bill_account(con, uid: int, payload: BillPaymentIn) -> int | None:
+    """A bill is paid from the card of the buffer unless another one is chosen."""
+    from . import accounts_app, accounts_engine  # local import: optional feature
+
+    if not accounts_engine.is_enabled(uid, con):
+        return None
+    account_id = payload.account_id
+    if account_id is None:
+        account_id = accounts_engine.placement(con, uid)[0].get("buffer")
+    accounts_app.check_account(con, uid, account_id, operation="bill")
+    return account_id
+
+
 @app.post("/api/bills/{bill_id}/pay")
 def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)
@@ -364,15 +465,24 @@ def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(
     try:
         with connect() as con:
             require_category(con, uid, event.get("category_id"))
+            account_id = bill_account(con, uid, payload)
+            rule = con.execute(
+                "SELECT title,credit_account_id FROM bill_rules WHERE id=? AND user_id=?", (bill_id, uid)
+            ).fetchone()
             cur = con.execute(
-                "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,bill_planned_amount) "
-                "VALUES(?, 'expense', ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,"
+                "bill_planned_amount,account_id) VALUES(?, 'expense', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     uid, event["amount"], clock.today().isoformat(), event.get("category_id"),
-                    event["title"], bill_id, payload.due_date.isoformat(), event["amount"],
+                    event["title"], bill_id, payload.due_date.isoformat(), event["amount"], account_id,
                 ),
             )
             tx_id = cur.lastrowid
+            if rule and rule["credit_account_id"]:
+                from . import accounts_app  # local import: optional feature
+
+                accounts_app.pay_credit_bill(con, uid, dict(rule), tx_id, account_id, event["amount"],
+                                             clock.today().isoformat())
     except sqlite3.IntegrityError as exc:
         raise HTTPException(409, "This bill occurrence is already marked paid") from exc
     invalidate_current_auto_reserve(uid)
@@ -411,6 +521,11 @@ def edit_bill_payment(
                 "UPDATE transactions SET amount=?,bill_planned_amount=? WHERE id=? AND user_id=?",
                 (money_amount(actual_cents), money_amount(planned_cents), payment_id, uid),
             )
+            # A planned credit card repayment: the repayment follows the amount.
+            con.execute(
+                "UPDATE account_transfers SET amount=? WHERE user_id=? AND transaction_id=? AND kind='credit_payment'",
+                (money_amount(actual_cents), uid, payment_id),
+            )
             existing = con.execute(
                 "SELECT id FROM piggy_bank_movements WHERE user_id=? AND bill_payment_id=?",
                 (uid, payment_id),
@@ -431,6 +546,9 @@ def edit_bill_payment(
                     )
             elif existing:
                 con.execute("DELETE FROM piggy_bank_movements WHERE id=?", (existing["id"],))
+            from . import accounts_engine  # local import: optional feature
+
+            accounts_engine.sync_bill_remainder(con, uid, payment_id)
 
             check_piggy_history(con, uid)
     except ValueError as exc:

@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 10
+BACKUP_VERSION = 11
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -44,22 +44,28 @@ SETTINGS_COLUMNS = (
     "irregular_start_date",
     "irregular_start_total",
     "irregular_start_reserve",
+    "accounts_enabled",
+    "main_account_id",
+    "accounts_disabled_at",
 )
 
 TABLE_COLUMNS = {
     "categories": ("id", "title", "emoji", "sort_order", "created_at"),
     "income_rules": ("id", "title", "amount", "day_of_month", "kind", "is_payday", "active", "archived", "created_at"),
-    "bill_rules": ("id", "title", "amount", "day_of_month", "category_id", "active", "archived", "created_at"),
+    "bill_rules": (
+        "id", "title", "amount", "day_of_month", "category_id", "active", "archived",
+        "once_date", "credit_account_id", "created_at",
+    ),
     "transactions": (
         "id", "type", "amount", "tx_date", "category_id", "note",
         "bill_rule_id", "bill_due_date", "bill_planned_amount", "income_destination",
-        "reserve_percent", "income_source", "created_at",
+        "reserve_percent", "income_source", "account_id", "funding_envelope", "created_at",
     ),
     "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
     "piggy_bank_movements": (
         "id", "direction", "amount", "movement_date", "note", "source", "purpose",
-        "bill_payment_id", "income_transaction_id", "created_at",
+        "bill_payment_id", "income_transaction_id", "expense_transaction_id", "created_at",
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "confirmed", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
@@ -68,12 +74,28 @@ TABLE_COLUMNS = {
     "emergency_reserve_movements": (
         "id", "direction", "amount", "movement_date", "reason", "kind", "expense_transaction_id", "created_at",
     ),
+    # Cards and accounts (v11).
+    "accounts": (
+        "id", "title", "emoji", "kind", "opening_balance", "opening_date", "credit_limit", "payment_day",
+        "sort_order", "archived", "created_at",
+    ),
+    "envelope_accounts": ("envelope", "account_id", "assigned_on", "assigned_at"),
+    "account_transfers": (
+        "id", "from_account_id", "to_account_id", "amount", "date", "note", "kind", "funding_envelope",
+        "interest_amount", "piggy_movement_id", "reserve_movement_id", "transaction_id",
+        "interest_transaction_id", "created_at",
+    ),
+    "account_adjustments": ("id", "account_id", "amount", "date", "reason", "note", "transaction_id", "created_at"),
+    "account_incomes": (
+        "id", "account_id", "amount", "date", "source", "payroll_period_start", "piggy_movement_id",
+        "reserve_movement_id", "note", "created_at",
+    ),
 }
 
 
 def _records(con: Any, table: str, columns: tuple[str, ...], user_id: int) -> list[dict]:
     selected = ",".join(columns)
-    return [dict(row) for row in con.execute(f"SELECT {selected} FROM {table} WHERE user_id=? ORDER BY id", (user_id,))]
+    return [dict(row) for row in con.execute(f"SELECT {selected} FROM {table} WHERE user_id=? ORDER BY rowid", (user_id,))]
 
 
 def export_user_data(user_id: int) -> dict:
@@ -113,7 +135,8 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     try:
         with user_scope(user_id), connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            for table in ("emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories"):
+            for table in ("account_transfers", "account_adjustments", "account_incomes", "envelope_accounts",
+                          "emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories", "accounts"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             # Versions before v5 stored the cash-flow start balance in
@@ -150,6 +173,10 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 "irregular_start_date": settings.get("irregular_start_date"),
                 "irregular_start_total": float(settings.get("irregular_start_total", 0)),
                 "irregular_start_reserve": float(settings.get("irregular_start_reserve", 0)),
+                # Cards and accounts: the main account is set once the accounts exist.
+                "accounts_enabled": int(bool(settings.get("accounts_enabled", 0))),
+                "main_account_id": None,
+                "accounts_disabled_at": settings.get("accounts_disabled_at"),
             }
             assignments = ",".join(f"{column}=?" for column in SETTINGS_COLUMNS)
             con.execute(
@@ -168,6 +195,20 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
                 category_ids[row.get("id")] = int(cur.lastrowid)
 
+            account_ids: dict[Any, int] = {}
+            for row in data["accounts"]:
+                cur = con.execute(
+                    "INSERT INTO accounts(user_id,title,emoji,kind,opening_balance,opening_date,credit_limit,"
+                    "payment_day,sort_order,archived,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        user_id, str(row["title"]), str(row.get("emoji") or "💳"), row["kind"],
+                        float(row.get("opening_balance") or 0), str(row["opening_date"]), row.get("credit_limit"),
+                        row.get("payment_day"), int(row.get("sort_order") or 0), int(bool(row.get("archived"))),
+                        _created_at(row),
+                    ),
+                )
+                account_ids[row["id"]] = int(cur.lastrowid)
+
             income_ids = {}
             for row in data["income_rules"]:
                 cur = con.execute(
@@ -184,10 +225,12 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             bill_ids: dict[Any, int] = {}
             for row in data["bill_rules"]:
                 cur = con.execute(
-                    "INSERT INTO bill_rules(user_id,title,amount,day_of_month,category_id,active,archived,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                    "INSERT INTO bill_rules(user_id,title,amount,day_of_month,category_id,active,archived,once_date,"
+                    "credit_account_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["title"]), float(row.get("amount", 0)), int(row["day_of_month"]),
-                        category_ids.get(row.get("category_id")), int(row["active"]), int(row["archived"]), _created_at(row),
+                        category_ids.get(row.get("category_id")), int(row["active"]), int(row["archived"]),
+                        row.get("once_date"), account_ids.get(row.get("credit_account_id")), _created_at(row),
                     ),
                 )
                 bill_ids[row.get("id")] = int(cur.lastrowid)
@@ -196,14 +239,15 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             for row in data["transactions"]:
                 cur = con.execute(
                     "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,"
-                    "bill_planned_amount,income_destination,reserve_percent,income_source,created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "bill_planned_amount,income_destination,reserve_percent,income_source,account_id,funding_envelope,"
+                    "created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["type"]), float(row["amount"]), str(row["tx_date"]),
                         category_ids.get(row.get("category_id")), str(row.get("note") or ""),
                         bill_ids.get(row.get("bill_rule_id")), row.get("bill_due_date"),
                         row.get("bill_planned_amount"), row.get("income_destination", "daily"),
-                        row.get("reserve_percent"), str(row.get("income_source") or ""), _created_at(row),
+                        row.get("reserve_percent"), str(row.get("income_source") or ""),
+                        account_ids.get(row.get("account_id")), row.get("funding_envelope"), _created_at(row),
                     ),
                 )
                 transaction_ids[row.get("id")] = int(cur.lastrowid)
@@ -225,19 +269,23 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                         str(row.get("source") or "auto"), _created_at(row),
                     ),
                 )
+            piggy_ids: dict[Any, int] = {}
             for row in data["piggy_bank_movements"]:
-                con.execute(
+                cur = con.execute(
                     "INSERT INTO piggy_bank_movements"
-                    "(user_id,direction,amount,movement_date,note,source,purpose,bill_payment_id,income_transaction_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "(user_id,direction,amount,movement_date,note,source,purpose,bill_payment_id,income_transaction_id,"
+                    "expense_transaction_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, row['direction'], row['amount'], row['movement_date'], row['note'], row.get('source', 'external'),
                         row.get('purpose'),
                         transaction_ids.get(row.get('bill_payment_id')), transaction_ids.get(row.get('income_transaction_id')),
-                        _created_at(row),
+                        transaction_ids.get(row.get('expense_transaction_id')), _created_at(row),
                     ),
                 )
+                piggy_ids[row['id']] = int(cur.lastrowid)
+            reserve_ids: dict[Any, int] = {}
             for row in data["emergency_reserve_movements"]:
-                con.execute(
+                cur = con.execute(
                     "INSERT INTO emergency_reserve_movements"
                     "(user_id,direction,amount,movement_date,reason,kind,expense_transaction_id,created_at) "
                     "VALUES(?,?,?,?,?,?,?,?)",
@@ -246,6 +294,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                         row["kind"], transaction_ids.get(row.get("expense_transaction_id")), _created_at(row),
                     ),
                 )
+                reserve_ids[row["id"]] = int(cur.lastrowid)
             for row in data["cashflow_income_overrides"]:
                 con.execute(
                     "INSERT INTO cashflow_income_overrides"
@@ -272,12 +321,55 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 for bill in snapshot['bill_rules']:
                     bill['id'] = bill_ids[bill['id']]
                     bill['category_id'] = category_ids.get(bill.get('category_id'))
+                    bill['credit_account_id'] = account_ids.get(bill.get('credit_account_id'))
                 con.execute("INSERT INTO plan_history(user_id,effective_date,snapshot) VALUES(?,?,?)",
                             (user_id, row['effective_date'], json.dumps(snapshot)))
+            _restore_accounts(con, user_id, data, account_ids, transaction_ids, piggy_ids, reserve_ids)
     except (KeyError, TypeError, ValueError, sqlite3.Error) as exc:
         raise ValueError("Резервная копия повреждена или содержит неверные данные") from exc
 
     return {table: len(data[table]) for table in TABLE_COLUMNS}
+
+
+def _restore_accounts(con, user_id: int, data: dict, account_ids: dict, transaction_ids: dict,
+                     piggy_ids: dict, reserve_ids: dict) -> None:
+    """Cards and accounts with every reference mapped to the new ids."""
+    for row in data["envelope_accounts"]:
+        con.execute(
+            "INSERT INTO envelope_accounts(user_id,envelope,account_id,assigned_on,assigned_at) VALUES(?,?,?,?,?)",
+            (user_id, row["envelope"], account_ids[row["account_id"]], row["assigned_on"],
+             row.get("assigned_at") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
+        )
+    for row in data["account_transfers"]:
+        con.execute(
+            "INSERT INTO account_transfers(user_id,from_account_id,to_account_id,amount,date,note,kind,funding_envelope,"
+            "interest_amount,piggy_movement_id,reserve_movement_id,transaction_id,interest_transaction_id,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                user_id, account_ids[row["from_account_id"]], account_ids.get(row.get("to_account_id")),
+                float(row["amount"]), row["date"], row.get("note") or "", row["kind"], row.get("funding_envelope"),
+                float(row.get("interest_amount") or 0), piggy_ids.get(row.get("piggy_movement_id")),
+                reserve_ids.get(row.get("reserve_movement_id")), transaction_ids.get(row.get("transaction_id")),
+                transaction_ids.get(row.get("interest_transaction_id")), _created_at(row),
+            ),
+        )
+    for row in data["account_adjustments"]:
+        con.execute(
+            "INSERT INTO account_adjustments(user_id,account_id,amount,date,reason,note,transaction_id,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (user_id, account_ids[row["account_id"]], float(row["amount"]), row["date"], row["reason"],
+             row.get("note") or "", transaction_ids.get(row.get("transaction_id")), _created_at(row)),
+        )
+    for row in data["account_incomes"]:
+        con.execute(
+            "INSERT INTO account_incomes(user_id,account_id,amount,date,source,payroll_period_start,piggy_movement_id,"
+            "reserve_movement_id,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (user_id, account_ids[row["account_id"]], float(row["amount"]), row["date"], row["source"],
+             row.get("payroll_period_start"), piggy_ids.get(row.get("piggy_movement_id")),
+             reserve_ids.get(row.get("reserve_movement_id")), row.get("note") or "", _created_at(row)),
+        )
+    main = data["settings"].get("main_account_id")
+    con.execute("UPDATE settings SET main_account_id=? WHERE user_id=?", (account_ids.get(main), user_id))
 
 
 @router.get("")

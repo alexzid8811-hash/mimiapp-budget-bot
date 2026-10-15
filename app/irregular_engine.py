@@ -188,12 +188,20 @@ def build_input(uid: int, today: date | None = None) -> tuple[IrregularInput, di
         moves = _moves(con, uid, start, today)
         for r in con.execute(
             "SELECT t.amount,t.tx_date FROM transactions t WHERE t.user_id=? AND t.type='expense' "
-            "AND t.bill_rule_id IS NULL AND t.tx_date BETWEEN ? AND ? AND NOT EXISTS ("
+            "AND t.bill_rule_id IS NULL AND t.tx_date BETWEEN ? AND ? "
+            "AND COALESCE(t.funding_envelope,'spending')='spending' AND NOT EXISTS ("
             "SELECT 1 FROM emergency_reserve_movements m WHERE m.user_id=t.user_id "
             "AND m.expense_transaction_id=t.id)",
             window,
         ):
             _add(spent, date.fromisoformat(r["tx_date"]), cents(r["amount"]))
+        # Cards and accounts: a credit card repaid from free money.
+        for r in con.execute(
+            "SELECT amount,date FROM account_transfers WHERE user_id=? AND kind='credit_payment' "
+            "AND funding_envelope='spending' AND transaction_id IS NULL AND date BETWEEN ? AND ?",
+            window,
+        ):
+            _add(spent, date.fromisoformat(r["date"]), cents(r["amount"]))
         for r in con.execute(
             "SELECT direction,amount,movement_date,COALESCE(purpose,'') AS purpose "
             "FROM piggy_bank_movements WHERE user_id=? AND source='daily_budget' "
@@ -361,7 +369,7 @@ def incomes(uid: int, limit: int = 300) -> list[dict]:
     splits = ran[1].splits if ran else {}
     with connect() as con:
         rows = [dict(r) for r in con.execute(
-            "SELECT id,tx_date,amount,note,reserve_percent,income_destination,income_source "
+            "SELECT id,tx_date,amount,note,reserve_percent,income_destination,income_source,account_id "
             "FROM transactions WHERE user_id=? AND type='income' ORDER BY tx_date DESC,id DESC LIMIT ?",
             (uid, limit),
         )]

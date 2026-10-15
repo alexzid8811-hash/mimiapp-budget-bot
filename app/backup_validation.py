@@ -37,6 +37,10 @@ class Settings(Payroll):
     irregular_start_date: date | None = None
     irregular_start_total: float = Field(default=0, ge=0)
     irregular_start_reserve: float = Field(default=0, ge=0)
+    # Cards and accounts (v11).
+    accounts_enabled: bool = False
+    main_account_id: int | None = Field(default=None, gt=0)
+    accounts_disabled_at: str | None = Field(default=None, max_length=40)
 
     @model_validator(mode='after')
     def valid_start(self):
@@ -77,6 +81,9 @@ class Bill(Record):
     category_id: int | None = Field(default=None, gt=0)
     active: bool = True
     archived: bool = False
+    # A planned credit card repayment (v11): one-off, repays this card.
+    once_date: date | None = None
+    credit_account_id: int | None = Field(default=None, gt=0)
 
 
 class Transaction(Record):
@@ -91,6 +98,8 @@ class Transaction(Record):
     income_destination: Literal['daily', 'buffer', 'piggy', 'split', 'reserve'] = 'daily'
     reserve_percent: float | None = Field(default=None, ge=0, le=100)
     income_source: str = Field(default='', max_length=80)
+    account_id: int | None = Field(default=None, gt=0)
+    funding_envelope: Literal['spending', 'piggy', 'reserve', 'none'] | None = None
 
     @model_validator(mode='after')
     def bill_fields(self):
@@ -131,6 +140,7 @@ class Piggy(Record):
     purpose: Literal['transfer', 'today', 'cover_overspend'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
+    expense_transaction_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode='after')
     def not_future(self):
@@ -154,7 +164,9 @@ class EmergencyReserve(Record):
         deposit = self.kind in ('deposit', 'from_free')
         if deposit != (self.direction == 'deposit'):
             raise ValueError('Неверное направление операции резерва')
-        if (self.kind == 'pay_expense') != (self.expense_transaction_id is not None):
+        # A credit card repaid from the reserve is a pay_expense without an
+        # expense of its own (checked against the repayment below).
+        if self.expense_transaction_id is not None and self.kind != 'pay_expense':
             raise ValueError('Неверная связь операции резерва с расходом')
         return self
 
@@ -184,6 +196,70 @@ class PayrollChange(Record):
         return self
 
 
+class Account(Record):
+    title: str = Field(min_length=1, max_length=40)
+    emoji: str = Field(default='💳', min_length=1, max_length=8)
+    kind: Literal['debit', 'savings', 'credit', 'cash']
+    opening_balance: float = 0
+    opening_date: date
+    credit_limit: float | None = Field(default=None, ge=0)
+    payment_day: int | None = Field(default=None, ge=1, le=31)
+    sort_order: int = Field(default=0, ge=0)
+    archived: bool = False
+
+
+class EnvelopeAccount(APIModel):
+    envelope: Literal['spending', 'buffer', 'piggy', 'reserve']
+    account_id: int = Field(gt=0)
+    assigned_on: date
+    assigned_at: str | None = Field(default=None, max_length=40)
+
+
+class AccountTransfer(Record):
+    from_account_id: int = Field(gt=0)
+    to_account_id: int | None = Field(default=None, gt=0)
+    amount: float = Field(gt=0)
+    date: date
+    note: str = Field(default='', max_length=160)
+    kind: Literal['manual', 'hint', 'linked', 'reassign', 'credit_payment'] = 'manual'
+    funding_envelope: Literal['spending', 'buffer', 'piggy', 'reserve', 'none'] | None = None
+    interest_amount: float = Field(default=0, ge=0)
+    piggy_movement_id: int | None = Field(default=None, gt=0)
+    reserve_movement_id: int | None = Field(default=None, gt=0)
+    transaction_id: int | None = Field(default=None, gt=0)
+    interest_transaction_id: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode='after')
+    def consistent(self):
+        if self.interest_amount > self.amount:
+            raise ValueError('Проценты больше погашения')
+        return self
+
+
+class AccountAdjustment(Record):
+    account_id: int = Field(gt=0)
+    amount: float
+    date: date
+    reason: Literal['correction', 'interest', 'cashback'] = 'correction'
+    note: str = Field(default='', max_length=160)
+    transaction_id: int | None = Field(default=None, gt=0)
+
+
+class AccountIncome(Record):
+    account_id: int = Field(gt=0)
+    amount: float = Field(gt=0)
+    date: date
+    source: Literal['payroll', 'piggy_external', 'reserve_external']
+    payroll_period_start: date | None = None
+    piggy_movement_id: int | None = Field(default=None, gt=0)
+    reserve_movement_id: int | None = Field(default=None, gt=0)
+    note: str = Field(default='', max_length=160)
+
+
+ACCOUNT_TABLES = {'accounts': Account, 'account_transfers': AccountTransfer,
+                  'account_adjustments': AccountAdjustment, 'account_incomes': AccountIncome}
+
+
 class Conditions(APIModel):
     settings: Payroll
     income_rules: list[Income]
@@ -200,11 +276,12 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'transactions': Transaction, 'vacations': Vacation, 'reserve_movements': Reserve,
           'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
           'plan_history': History, 'card_allocations': CardAllocation,
-          'payroll_changes': PayrollChange, 'emergency_reserve_movements': EmergencyReserve}
+          'payroll_changes': PayrollChange, 'emergency_reserve_movements': EmergencyReserve,
+          **ACCOUNT_TABLES}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 11):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 12):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -212,8 +289,13 @@ def validate_backup(payload):
     if not isinstance(source, dict) or not isinstance(source.get('settings'), dict):
         raise ValueError('В резервной копии нет настроек')
     data = {'settings': Settings.model_validate(source['settings']).model_dump(mode='json')}
+    if payload['backup_version'] < 11:
+        # Copies made before cards and accounts restore with the feature off.
+        data['settings'].update(accounts_enabled=False, main_account_id=None, accounts_disabled_at=None)
     for table, model in MODELS.items():
         optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations', 'payroll_changes'}
+        if payload['backup_version'] < 11:
+            optional_legacy_tables.update(ACCOUNT_TABLES)
         if payload['backup_version'] < 10:
             optional_legacy_tables.add('emergency_reserve_movements')
         if payload['backup_version'] == 1:
@@ -283,4 +365,65 @@ def validate_backup(payload):
     if len(set(months)) != len(months):
         raise ValueError('Повторяющийся месяц изменения зарплаты')
     validate_piggy_history(data['piggy_bank_movements'])
+    _validate_accounts(payload['backup_version'], source, data)
     return data
+
+
+def _validate_accounts(version: int, source: dict, data: dict) -> None:
+    """References of the cards and accounts tables (v11)."""
+    raw = source.get('envelope_accounts', []) if version >= 11 else []
+    if not isinstance(raw, list):
+        raise ValueError('Повреждён раздел envelope_accounts')
+    data['envelope_accounts'] = [EnvelopeAccount.model_validate(r).model_dump(mode='json') for r in raw]
+    accounts = {r['id']: r for r in data['accounts']}
+    credit = {i for i, r in accounts.items() if r['kind'] == 'credit'}
+    transactions = {r['id']: r for r in data['transactions']}
+    piggy = {r['id'] for r in data['piggy_bank_movements']}
+    reserve = {r['id']: r for r in data['emergency_reserve_movements']}
+
+    def known(value, ids, what):
+        if value is not None and value not in ids:
+            raise ValueError(f'Не найден {what} из резервной копии')
+
+    main = data['settings'].get('main_account_id')
+    known(main, accounts, 'основной счёт')
+    if main in credit:
+        raise ValueError('Кредитка не может быть основным счётом')
+    if data['settings'].get('accounts_enabled') and main is None:
+        raise ValueError('Учёт по картам включён без основного счёта')
+    for row in data['transactions']:
+        known(row.get('account_id'), accounts, 'счёт операции')
+    for row in data['bill_rules']:
+        known(row.get('credit_account_id'), credit, 'кредитка платежа')
+    for row in data['piggy_bank_movements']:
+        expense = row.get('expense_transaction_id')
+        if expense is not None and (transactions.get(expense) or {}).get('type') != 'expense':
+            raise ValueError('Не найдена трата, оплаченная из копилки')
+    envelopes = [r['envelope'] for r in data['envelope_accounts']]
+    if len(set(envelopes)) != len(envelopes):
+        raise ValueError('Конверт лежит на двух счетах')
+    for row in data['envelope_accounts']:
+        known(row['account_id'], accounts, 'счёт конверта')
+        if row['account_id'] in credit:
+            raise ValueError('Конверт не может лежать на кредитке')
+    repaid_from_reserve = set()
+    for row in data['account_transfers']:
+        known(row['from_account_id'], accounts, 'счёт перевода')
+        known(row.get('to_account_id'), accounts, 'счёт перевода')
+        known(row.get('piggy_movement_id'), piggy, 'операция копилки')
+        known(row.get('reserve_movement_id'), reserve, 'операция резерва')
+        known(row.get('transaction_id'), transactions, 'платёж погашения')
+        known(row.get('interest_transaction_id'), transactions, 'расход «Проценты банка»')
+        if row['kind'] == 'credit_payment' and row.get('reserve_movement_id'):
+            repaid_from_reserve.add(row['reserve_movement_id'])
+    for row in data['account_adjustments']:
+        known(row['account_id'], accounts, 'счёт исправления')
+        known(row.get('transaction_id'), transactions, 'расход «Проценты банка»')
+    for row in data['account_incomes']:
+        known(row['account_id'], accounts, 'счёт прихода')
+        known(row.get('piggy_movement_id'), piggy, 'операция копилки')
+        known(row.get('reserve_movement_id'), reserve, 'операция резерва')
+    for movement_id, row in reserve.items():
+        if row['kind'] == 'pay_expense' and row.get('expense_transaction_id') is None \
+                and movement_id not in repaid_from_reserve:
+            raise ValueError('Неверная связь операции резерва с расходом')

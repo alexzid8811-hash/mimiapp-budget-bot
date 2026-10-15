@@ -204,6 +204,8 @@
     document.getElementById("cashflowIncomeCaption").textContent =
       `${period.kind} ${formatDate(period.payday)} · по расчёту ${formatMoney(period.planned_payday_amount)}`;
     document.getElementById("resetCashflowIncomeBtn").hidden = confirm || !period.income_overridden;
+    // Cards and accounts: the confirmed money arrives on the main card or the chosen one.
+    window.accountsUi?.prepareField?.("cashflowIncome", { fallback: window.accountsUi?.mainAccountId?.(), visible: confirm });
     document.getElementById("cashflowIncomeDialog").showModal();
   }
 
@@ -218,7 +220,8 @@
     const confirm = document.getElementById("cashflowIncomeForm").dataset.mode === "confirm";
     try {
       await request(`/api/cashflow/income-overrides/${periodStart}`, {
-        method: "PUT", body: JSON.stringify(confirm ? { amount, confirmed: true } : { amount }),
+        method: "PUT", body: JSON.stringify(confirm
+          ? { amount, confirmed: true, ...(window.accountsUi?.fieldPayload?.("cashflowIncome") || {}) } : { amount }),
       });
       document.getElementById("cashflowIncomeDialog").close();
       if (typeof toast === "function") {
@@ -297,6 +300,8 @@
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
+    // Cards and accounts: outside money comes from / goes to a card or outside.
+    window.accountsUi?.preparePiggy?.(mode);
     document.getElementById("piggyDialog").showModal();
   }
 
@@ -312,6 +317,7 @@
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
+    window.accountsUi?.preparePiggy?.("dailyToPiggy");
     document.getElementById("piggyDialog").showModal();
   });
   document.getElementById("piggyToCardBtn")?.addEventListener("click", () => openMovement("toCard"));
@@ -334,7 +340,8 @@
       : `/api/piggy-bank/${document.getElementById("piggyDirection").value}`;
     const body = isToCard
       ? { amount, movement_date, note, purpose }
-      : { amount, movement_date, note, source: document.getElementById("piggySource").value };
+      : { amount, movement_date, note, source: document.getElementById("piggySource").value,
+          ...(window.accountsUi?.fieldPayload?.("piggy") || {}) };
     try {
       await request(path, { method: "POST", body: JSON.stringify(body) });
       document.getElementById("piggyDialog").close();

@@ -184,6 +184,7 @@
       reserve_percent: percent === "" ? null : Number(percent),
       destination: $("irrIncomeDestination").value || "split",
       note: $("irrIncomeNote").value,
+      ...(window.accountsUi?.fieldPayload("irrIncome") || {}),
     };
   }
 
@@ -229,6 +230,7 @@
     const destination = transaction?.income_destination;
     $("irrIncomeDestination").value = ["piggy", "reserve"].includes(destination) ? destination : "split";
     $("irrIncomeNote").value = transaction?.note || "";
+    window.accountsUi?.prepareIncome("irrIncome", transaction);
     const sources = [...new Set((current.state?.transactions || []).map(t => t.income_source).filter(Boolean))];
     if ($("irrSources")) $("irrSources").innerHTML = sources.map(s => `<option value="${esc(s)}"></option>`).join("");
     if ($("irrIncomePreview")) $("irrIncomePreview").innerHTML = "";
@@ -282,6 +284,7 @@
     }
     const reason = $("irrReserveReason");
     if (reason) reason.required = withdraw;
+    window.accountsUi?.prepareReserve?.(mode, purpose);
     const flow = current.flow || {};
     setText("irrReserveHint", !withdraw
       ? (mode === "return" ? `Свободных денег сейчас ${money(flow.free_balance)}.` : "Деньги извне сразу попадают в резерв.")
@@ -303,10 +306,12 @@
         await request("/api/irregular/reserve/withdraw", { method: "POST", body: JSON.stringify({
           amount, movement_date, purpose, reason,
           category_id: purpose === "pay_expense" ? Number($("irrReserveCategory").value) : null,
+          ...(purpose === "pay_expense" ? (window.accountsUi?.fieldPayload?.("irrReserve") || {}) : {}),
         }) });
       } else {
         await request("/api/irregular/reserve/deposit", { method: "POST", body: JSON.stringify({
           amount, movement_date, reason, kind: mode === "return" ? "from_free" : "deposit",
+          ...(mode === "deposit" ? (window.accountsUi?.fieldPayload?.("irrReserve") || {}) : {}),
         }) });
       }
       $("irrReserveDialog").close();

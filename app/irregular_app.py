@@ -51,6 +51,9 @@ class IncomeIn(APIModel):
     reserve_percent: float | None = Field(default=None, ge=0, le=100)
     destination: Destination = "split"
     note: str = Field(default="", max_length=200)
+    # Cards and accounts: the card the money arrived on.  Left out of an
+    # edit, the income keeps its account.
+    account_id: int | None = None
 
 
 class PreviewIn(APIModel):
@@ -67,6 +70,8 @@ class ReserveWithdrawIn(APIModel):
     purpose: Literal["pay_expense", "to_free", "cover_overspend"]
     reason: str = Field(min_length=1, max_length=160)
     category_id: int | None = None
+    # Cards and accounts: the card an expense is paid from (the reserve's by default).
+    account_id: int | None = None
 
 
 class ReserveDepositIn(APIModel):
@@ -74,6 +79,10 @@ class ReserveDepositIn(APIModel):
     movement_date: date = Field(default_factory=lambda: clock.today())
     kind: Literal["deposit", "from_free"] = "deposit"
     reason: str = Field(default="", max_length=160)
+    # Cards and accounts, outside money: the card it came from (None: from outside).
+    account_id: int | None = None
+    # False: the money already lies on the reserve's card («Добавить в резерв»).
+    account_move: bool = True
 
 
 def _ready(user: TelegramUser) -> int:
@@ -198,18 +207,27 @@ def _write_income(uid: int, payload: IncomeIn, tx_id: int | None = None) -> int:
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            current = None if tx_id is None else con.execute(
+                "SELECT account_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
+            ).fetchone()
+            account_id = current["account_id"] if current else None
+            if "account_id" in payload.model_fields_set:
+                from .accounts_app import check_account
+
+                check_account(con, uid, payload.account_id, operation="income", current=account_id)
+                account_id = payload.account_id
             if tx_id is None:
                 tx_id = con.execute(
                     "INSERT INTO transactions(user_id,type,amount,tx_date,note,income_destination,"
-                    "reserve_percent,income_source) VALUES(?, 'income', ?, ?, ?, ?, ?, ?)",
-                    (uid, *values),
+                    "reserve_percent,income_source,account_id) VALUES(?, 'income', ?, ?, ?, ?, ?, ?, ?)",
+                    (uid, *values, account_id),
                 ).lastrowid
             else:
                 cur = con.execute(
                     "UPDATE transactions SET amount=?,tx_date=?,note=?,income_destination=?,reserve_percent=?,"
-                    "income_source=?,category_id=NULL WHERE id=? AND user_id=? AND type='income' "
+                    "income_source=?,category_id=NULL,account_id=? WHERE id=? AND user_id=? AND type='income' "
                     "AND bill_rule_id IS NULL",
-                    (*values, tx_id, uid),
+                    (*values, account_id, tx_id, uid),
                 )
                 if cur.rowcount == 0:
                     raise HTTPException(404, "Доход не найден")
@@ -259,10 +277,14 @@ def get_reserve(user: TelegramUser = Depends(current_user)) -> dict:
 
 
 def _insert_move(uid: int, direction: str, payload_amount: float, day: date, reason: str, kind: str,
-                 expense: dict | None = None) -> None:
+                 expense: dict | None = None, *, account_id: int | None = None, account_move: bool = True) -> None:
+    from . import accounts_engine
+    from .accounts_app import check_account
+
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            check_account(con, uid, account_id, operation="reserve")
             expense_id = None
             if expense is not None:
                 expense_id = con.execute(
@@ -270,10 +292,15 @@ def _insert_move(uid: int, direction: str, payload_amount: float, day: date, rea
                     "VALUES(?, 'expense', ?, ?, ?, ?)",
                     (uid, payload_amount, day.isoformat(), expense["category_id"], expense["note"]),
                 ).lastrowid
-            con.execute(
+            movement_id = con.execute(
                 "INSERT INTO emergency_reserve_movements"
                 "(user_id,direction,amount,movement_date,reason,kind,expense_transaction_id) VALUES(?,?,?,?,?,?,?)",
                 (uid, direction, payload_amount, day.isoformat(), reason, kind, expense_id),
+            ).lastrowid
+            # Cards and accounts: the money moves between the envelopes' cards.
+            accounts_engine.link_reserve(
+                con, uid, movement_id, kind=kind, value=payload_amount, day=day.isoformat(),
+                account_id=account_id, account_move=account_move, expense_id=expense_id,
             )
             engine.check_reserve(con, uid)
     except ValueError as exc:
@@ -303,7 +330,7 @@ def withdraw_reserve(payload: ReserveWithdrawIn, user: TelegramUser = Depends(cu
                 raise HTTPException(422, "Категория не найдена")
         expense = {"category_id": payload.category_id, "note": payload.reason}
     _insert_move(uid, "withdraw", payload.amount, payload.movement_date, payload.reason,
-                 payload.purpose, expense)
+                 payload.purpose, expense, account_id=payload.account_id if expense else None)
     return engine.reserve_snapshot(uid)
 
 
@@ -321,7 +348,9 @@ def deposit_reserve(payload: ReserveDepositIn, user: TelegramUser = Depends(curr
         if cents(payload.amount) > max(0, cents(flow.get("free_balance") or 0)):
             raise HTTPException(422, "Нельзя вернуть больше свободных денег")
         reason = reason or "Возврат из свободных денег"
-    _insert_move(uid, "deposit", payload.amount, payload.movement_date, reason, payload.kind)
+    _insert_move(uid, "deposit", payload.amount, payload.movement_date, reason, payload.kind,
+                 account_id=payload.account_id if payload.kind == "deposit" else None,
+                 account_move=payload.account_move)
     return engine.reserve_snapshot(uid)
 
 
@@ -339,6 +368,11 @@ def delete_reserve_movement(movement_id: int, user: TelegramUser = Depends(curre
                 raise HTTPException(404, "Операция резерва не найдена")
             if row["expense_transaction_id"] is not None:
                 raise HTTPException(422, "Это оплата расхода из резерва: удалите сам расход")
+            if con.execute(
+                "SELECT 1 FROM account_transfers WHERE user_id=? AND reserve_movement_id=? AND kind='credit_payment'",
+                (uid, movement_id),
+            ).fetchone():
+                raise HTTPException(422, "Это погашение кредитки: удалите его в истории кредитки")
             con.execute("DELETE FROM emergency_reserve_movements WHERE id=? AND user_id=?", (movement_id, uid))
             engine.check_reserve(con, uid)
     except ValueError as exc:

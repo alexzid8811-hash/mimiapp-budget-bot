@@ -427,12 +427,141 @@ def _ensure_irregular_schema(con: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_accounts_schema(con: sqlite3.Connection) -> None:
+    """Cards and accounts: where the money physically lies.  Balances are never
+    stored: they are derived from the opening balance and the operations (see
+    app/accounts.py).  Operations without an account (everything recorded
+    before the feature, or while it was off) do not touch any balance."""
+    settings_columns = {row[1] for row in con.execute("PRAGMA table_info(settings)")}
+    additions = {
+        "accounts_enabled": "INTEGER NOT NULL DEFAULT 0",
+        "main_account_id": "INTEGER",
+        # When the feature was last switched off: operations recorded since
+        # then have no account and are counted once it is switched on again.
+        "accounts_disabled_at": "TEXT",
+    }
+    for name, ddl in additions.items():
+        if name not in settings_columns:
+            con.execute(f"ALTER TABLE settings ADD COLUMN {name} {ddl}")
+
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS accounts ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "title TEXT NOT NULL, "
+        "emoji TEXT NOT NULL DEFAULT '💳', "
+        "kind TEXT NOT NULL CHECK(kind IN ('debit','savings','credit','cash')), "
+        # For a credit card: the debt at the opening date (>= 0).
+        "opening_balance REAL NOT NULL DEFAULT 0, "
+        "opening_date TEXT NOT NULL, "
+        "credit_limit REAL, "
+        "payment_day INTEGER CHECK(payment_day BETWEEN 1 AND 31), "
+        "sort_order INTEGER NOT NULL DEFAULT 0, "
+        "archived INTEGER NOT NULL DEFAULT 0, "
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    # A missing row means the envelope lies on the main account.
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS envelope_accounts ("
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "envelope TEXT NOT NULL CHECK(envelope IN ('spending','buffer','piggy','reserve')), "
+        "account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, "
+        "assigned_on TEXT NOT NULL, "
+        "assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+        "PRIMARY KEY(user_id, envelope))"
+    )
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS account_transfers ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "from_account_id INTEGER NOT NULL REFERENCES accounts(id), "
+        # NULL: the money left the user's accounts (e.g. spent from the piggy bank outside).
+        "to_account_id INTEGER REFERENCES accounts(id), "
+        "amount REAL NOT NULL CHECK(amount > 0), "
+        "date TEXT NOT NULL, "
+        "note TEXT NOT NULL DEFAULT '', "
+        "kind TEXT NOT NULL DEFAULT 'manual' "
+        "CHECK(kind IN ('manual','hint','linked','reassign','credit_payment')), "
+        # Credit card repayment: the envelope that pays for it.
+        "funding_envelope TEXT, "
+        "interest_amount REAL NOT NULL DEFAULT 0, "
+        "piggy_movement_id INTEGER REFERENCES piggy_bank_movements(id) ON DELETE CASCADE, "
+        "reserve_movement_id INTEGER REFERENCES emergency_reserve_movements(id) ON DELETE CASCADE, "
+        "transaction_id INTEGER REFERENCES transactions(id) ON DELETE CASCADE, "
+        # The bank interest of a repayment, recorded as an expense for analytics.
+        "interest_transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL, "
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS ix_account_transfers_user_date "
+        "ON account_transfers(user_id, date, id)"
+    )
+    # ``amount`` is the signed change of the money on the account; for a
+    # credit card a negative amount is a growing debt.
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS account_adjustments ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "account_id INTEGER NOT NULL REFERENCES accounts(id), "
+        "amount REAL NOT NULL, "
+        "date TEXT NOT NULL, "
+        "reason TEXT NOT NULL DEFAULT 'correction' CHECK(reason IN ('correction','interest','cashback')), "
+        "note TEXT NOT NULL DEFAULT '', "
+        "transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL, "
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS account_incomes ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+        "account_id INTEGER NOT NULL REFERENCES accounts(id), "
+        "amount REAL NOT NULL CHECK(amount > 0), "
+        "date TEXT NOT NULL, "
+        "source TEXT NOT NULL CHECK(source IN ('payroll','piggy_external','reserve_external')), "
+        "payroll_period_start TEXT, "
+        "piggy_movement_id INTEGER REFERENCES piggy_bank_movements(id) ON DELETE CASCADE, "
+        "reserve_movement_id INTEGER REFERENCES emergency_reserve_movements(id) ON DELETE CASCADE, "
+        "note TEXT NOT NULL DEFAULT '', "
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_account_income_payroll "
+        "ON account_incomes(user_id, payroll_period_start) WHERE payroll_period_start IS NOT NULL"
+    )
+
+    bill_columns = {row[1] for row in con.execute("PRAGMA table_info(bill_rules)")}
+    if "once_date" not in bill_columns:
+        # A one-off obligatory payment (the planned repayment of a credit card).
+        con.execute("ALTER TABLE bill_rules ADD COLUMN once_date TEXT")
+    if "credit_account_id" not in bill_columns:
+        # Paying this bill repays the credit card instead of being an expense.
+        con.execute("ALTER TABLE bill_rules ADD COLUMN credit_account_id INTEGER REFERENCES accounts(id)")
+    envelope_columns = {row[1] for row in con.execute("PRAGMA table_info(envelope_accounts)")}
+    if "assigned_at" not in envelope_columns:
+        con.execute("ALTER TABLE envelope_accounts ADD COLUMN assigned_at TEXT")
+    transaction_columns = {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
+    if "account_id" not in transaction_columns:
+        con.execute("ALTER TABLE transactions ADD COLUMN account_id INTEGER REFERENCES accounts(id)")
+    if "funding_envelope" not in transaction_columns:
+        # What an expense is paid from: spending | piggy | reserve | none.
+        # NULL: the daily budget, as before the feature.
+        con.execute("ALTER TABLE transactions ADD COLUMN funding_envelope TEXT")
+    piggy_columns = {row[1] for row in con.execute("PRAGMA table_info(piggy_bank_movements)")}
+    if "expense_transaction_id" not in piggy_columns:
+        # An expense paid from the piggy bank (like emergency_reserve_movements).
+        con.execute(
+            "ALTER TABLE piggy_bank_movements ADD COLUMN expense_transaction_id INTEGER "
+            "REFERENCES transactions(id) ON DELETE CASCADE"
+        )
+
+
 def _prepare(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
     _ensure_settings_columns(con)
     _ensure_morning_report_columns(con)
     _ensure_payment_columns(con)
     _ensure_irregular_schema(con)
+    _ensure_accounts_schema(con)
     category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
     if "sort_order" not in category_columns:
         con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")

@@ -67,14 +67,16 @@ let loadVersion = 0;
 async function loadAll() {
   const version = ++loadVersion;
   try {
-    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular] = await Promise.all([
+    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts] = await Promise.all([
       api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
       api("/api/piggy-bank").catch(() => ({ movements: [] })),
-      api("/api/irregular").catch(() => null)
+      api("/api/irregular").catch(() => null),
+      api("/api/accounts").catch(() => null)
     ]);
     if (version !== loadVersion) return;
     window.budgetDate.configure(bootstrap.budget_timezone);
-    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular };
+    state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts };
+    window.accountsUi?.render(state);
     render();
     window.applyCashflowSettings?.(cashflowSettings);
     window.applyCashflow?.(cashflow);
@@ -189,7 +191,9 @@ function renderTransactionRow(t) {
     ? `<button class="tiny" onclick="editBillPayment(${t.id})">Изменить</button>`
     : `<button class="tiny" onclick="editTransaction(${t.id})">Изменить</button>`;
   const source = !isExpense && t.income_source ? ` · ${escapeHtml(t.income_source)}` : '';
-  return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}${source}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
+  const account = window.accountsUi?.accountLabel(t);
+  const accountText = account ? ` · ${account}` : '';
+  return `<div class="list-row"><div class="row-main"><div class="emoji">${escapeHtml(t.category_emoji) || (isExpense ? '💳':'💰')}</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(t.tx_date)}${t.category_title ? ` · ${escapeHtml(t.category_title)}`:''}${source}${accountText}</div></div></div><div><div class="amount ${t.type}">${isExpense?'-':'+'}${money(t.amount)}</div><div class="actions">${editPayment}<button class="tiny danger" onclick="deleteTx(${t.id})">Удалить</button></div></div></div>`;
 }
 
 // Transfers between the card and the piggy bank change the day's money, so
@@ -341,7 +345,7 @@ function renderSettings() {
   $("vacationsList").innerHTML = state.vacations.length ? state.vacations.map(v => `
     <div class="list-row"><div class="row-text"><div class="row-title">Отпуск ${fmtDate(v.start_date)} — ${fmtDate(v.end_date)}</div><div class="row-sub">Выплата ${fmtDate(v.payment_date)}${v.note ? ` · ${escapeHtml(v.note)}` : ''}</div></div><div><div class="amount income">${money(v.amount)}</div><div class="actions"><button class="tiny" onclick="editVacation(${v.id})">Изм.</button><button class="tiny danger" onclick="deleteVacation(${v.id})">×</button></div></div></div>`).join("") : `<div class="empty">Отпуска пока не добавлены.</div>`;
 
-  $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title"><i class="status-dot ${r.active ? "on" : "off"}" title="${r.active ? "Включён" : "Выключен"}" aria-label="${r.active ? "Включён" : "Выключен"}"></i>${escapeHtml(r.title)} · ${r.day_of_month} числа</div><div class="row-sub">${r.active ? "ежемесячно" : "выключен · не учитывается в бюджете и аналитике"}</div></div><div><div class="amount ${r.active ? "expense" : "muted"}">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
+  $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title"><i class="status-dot ${r.active ? "on" : "off"}" title="${r.active ? "Включён" : "Выключен"}" aria-label="${r.active ? "Включён" : "Выключен"}"></i>${escapeHtml(r.title)} · ${r.once_date ? fmtDate(r.once_date) : `${r.day_of_month} числа`}</div><div class="row-sub">${!r.active ? "выключен · не учитывается в бюджете и аналитике" : r.once_date ? "разово · погашение кредитки" : "ежемесячно"}</div></div><div><div class="amount ${r.active ? "expense" : "muted"}">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
   renderCategories();
 }
 
@@ -591,11 +595,13 @@ $("refreshBtn").addEventListener("click", () => loadAll());
 let editingTransactionId = null;
 function openExpenseDialog() {
   editingTransactionId = null; $("expenseForm").reset(); $("expenseDate").value = todayISO();
+  window.accountsUi?.prepareExpense();
   $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50);
 }
 function openIncomeDialog() {
   if (isIrregular() && window.irregularUi) { window.irregularUi.openIncome(); return; }
   editingTransactionId = null; $("incomeTxForm").reset(); $("incomeTxDate").value = todayISO();
+  window.accountsUi?.prepareIncome("incomeTx");
   $("incomeTxDialog").showModal();
 }
 ["quickExpenseBtn", "navAddExpense"].forEach(id => $(id)?.addEventListener("click", openExpenseDialog));
@@ -631,12 +637,14 @@ window.editTransaction = id => {
     $("expenseDate").value = transaction.tx_date;
     $("expenseCategory").value = transaction.category_id || "";
     $("expenseNote").value = transaction.note || "";
+    window.accountsUi?.prepareExpense(transaction);
     $("expenseDialog").showModal();
   } else {
     $("incomeTxAmount").value = transaction.amount;
     $("incomeTxDate").value = transaction.tx_date;
     $("incomeTxDestination").value = transaction.income_destination || "daily";
     $("incomeTxNote").value = transaction.note || "";
+    window.accountsUi?.prepareIncome("incomeTx", transaction);
     $("incomeTxDialog").showModal();
   }
 };
@@ -645,7 +653,7 @@ $("expenseForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const path = editingTransactionId ? `/api/transactions/${editingTransactionId}` : "/api/transactions";
-    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"expense", amount:moneyValue("expenseAmount"), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:$("expenseNote").value }) });
+    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"expense", amount:moneyValue("expenseAmount"), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:$("expenseNote").value, ...(window.accountsUi?.expensePayload() || {}) }) });
     editingTransactionId = null;
     $("expenseDialog").close(); e.target.reset(); toast("Расход записан"); await loadAll();
   } catch(e2) { toast(e2.message); }
@@ -655,7 +663,7 @@ $("incomeTxForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const path = editingTransactionId ? `/api/transactions/${editingTransactionId}` : "/api/transactions";
-    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"income", amount:moneyValue("incomeTxAmount"), tx_date:$("incomeTxDate").value, category_id:null, note:$("incomeTxNote").value, income_destination:$("incomeTxDestination").value }) });
+    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"income", amount:moneyValue("incomeTxAmount"), tx_date:$("incomeTxDate").value, category_id:null, note:$("incomeTxNote").value, income_destination:$("incomeTxDestination").value, ...(window.accountsUi?.fieldPayload("incomeTx") || {}) }) });
     editingTransactionId = null;
     $("incomeTxDialog").close(); e.target.reset(); toast("Доход записан"); await loadAll();
   } catch(e2) { toast(e2.message); }
