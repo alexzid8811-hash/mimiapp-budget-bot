@@ -143,15 +143,26 @@ def transaction_account(con, uid: int, payload: TransactionIn, current: int | No
 
     if "account_id" not in payload.model_fields_set:
         return current
-    accounts_app.check_account(con, uid, payload.account_id, operation=payload.type, current=current)
+    operation = "credit_expense" if payload.type == "expense" else payload.type
+    accounts_app.check_account(con, uid, payload.account_id, operation=operation, current=current)
     return payload.account_id
 
 
-def expense_funding(con, uid: int, payload: TransactionIn, current: str | None = None) -> str | None:
+def on_credit_card(con, uid: int, account_id: int | None) -> bool:
+    return bool(account_id) and bool(con.execute(
+        "SELECT 1 FROM accounts WHERE id=? AND user_id=? AND kind='credit'", (account_id, uid)
+    ).fetchone())
+
+
+def expense_funding(con, uid: int, payload: TransactionIn, current: str | None = None,
+                    account_id: int | None = None) -> str | None:
     """«Из чего» of an expense, validated; the stored value when the request
-    does not mention it."""
+    does not mention it.  A credit card purchase is outside the budget: only
+    the debt grows."""
     if payload.type != "expense":
         return None
+    if on_credit_card(con, uid, account_id):
+        return "none"
     if "funding_envelope" not in payload.model_fields_set:
         return current
     funding = payload.funding_envelope
@@ -181,6 +192,12 @@ def sync_expense_links(con, uid: int, tx_id: int, payload: TransactionIn, fundin
         )
     else:
         accounts_engine.sync_reserve_expense(con, uid, tx_id, funding if expense else None, value, day, payload.note)
+
+
+def linked_reason(con, uid: int, tx_id: int) -> str | None:
+    from . import accounts_engine  # local import: optional feature
+
+    return accounts_engine.locked_transaction(con, uid, tx_id)
 
 
 def check_reserve(con, uid: int) -> None:
@@ -280,7 +297,7 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
         require_category(con, uid, payload.category_id)
         destination, percent = income_fields(uid, payload, con)
         account_id = transaction_account(con, uid, payload)
-        funding = expense_funding(con, uid, payload)
+        funding = expense_funding(con, uid, payload, account_id=account_id)
         cur = con.execute(
             "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,income_destination,reserve_percent,"
             "account_id,funding_envelope) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -325,9 +342,16 @@ def update_transaction(
                 raise HTTPException(404, "Операция не найдена")
             if current["bill_rule_id"] is not None:
                 raise HTTPException(422, "Обязательный платёж изменяется через его отдельную форму")
+            locked = linked_reason(con, uid, tx_id)
+            if locked:
+                raise HTTPException(422, locked)
             destination, percent = income_fields(uid, payload, con)
             account_id = transaction_account(con, uid, payload, current["account_id"])
-            funding = expense_funding(con, uid, payload, current["funding_envelope"])
+            funding = expense_funding(con, uid, payload, current["funding_envelope"], account_id)
+            if (current["funding_envelope"] == "none" and on_credit_card(con, uid, current["account_id"])
+                    and not on_credit_card(con, uid, account_id) and "funding_envelope" not in payload.model_fields_set):
+                # Moved off the credit card without a choice: the daily budget, as usual.
+                funding = None
             con.execute(
                 "UPDATE transactions SET type=?,amount=?,tx_date=?,category_id=?,note=?,income_destination=?,"
                 "reserve_percent=CASE WHEN ?='income' THEN COALESCE(reserve_percent,?) ELSE NULL END,"
@@ -362,6 +386,9 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            locked = linked_reason(con, uid, tx_id)
+            if locked:
+                raise HTTPException(422, locked)
             con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=?", (uid, tx_id))
             cur = con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (tx_id, uid))
             if cur.rowcount == 0:
@@ -439,6 +466,9 @@ def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(
         with connect() as con:
             require_category(con, uid, event.get("category_id"))
             account_id = bill_account(con, uid, payload)
+            rule = con.execute(
+                "SELECT title,credit_account_id FROM bill_rules WHERE id=? AND user_id=?", (bill_id, uid)
+            ).fetchone()
             cur = con.execute(
                 "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,"
                 "bill_planned_amount,account_id) VALUES(?, 'expense', ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -448,6 +478,11 @@ def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(
                 ),
             )
             tx_id = cur.lastrowid
+            if rule and rule["credit_account_id"]:
+                from . import accounts_app  # local import: optional feature
+
+                accounts_app.pay_credit_bill(con, uid, dict(rule), tx_id, account_id, event["amount"],
+                                             clock.today().isoformat())
     except sqlite3.IntegrityError as exc:
         raise HTTPException(409, "This bill occurrence is already marked paid") from exc
     invalidate_current_auto_reserve(uid)
@@ -485,6 +520,11 @@ def edit_bill_payment(
             con.execute(
                 "UPDATE transactions SET amount=?,bill_planned_amount=? WHERE id=? AND user_id=?",
                 (money_amount(actual_cents), money_amount(planned_cents), payment_id, uid),
+            )
+            # A planned credit card repayment: the repayment follows the amount.
+            con.execute(
+                "UPDATE account_transfers SET amount=? WHERE user_id=? AND transaction_id=? AND kind='credit_payment'",
+                (money_amount(actual_cents), uid, payment_id),
             )
             existing = con.execute(
                 "SELECT id FROM piggy_bank_movements WHERE user_id=? AND bill_payment_id=?",

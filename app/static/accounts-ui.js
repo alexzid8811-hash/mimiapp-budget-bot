@@ -62,11 +62,33 @@
         </button>${breakdownLines(a)}
       </div>`).join("") || `<div class="empty">Добавьте карты и счета в настройках.</div>`;
     $("accCredit").innerHTML = credit.map(a => `
-      <button class="acc-row credit" type="button" data-account-id="${a.id}">
-        <span class="acc-name">${accountName(a)}</span>
-        <small class="num">${creditLine(a)}</small>
-      </button>`).join("");
+      <div class="acc-item">
+        <button class="acc-row credit" type="button" data-account-id="${a.id}">
+          <span class="acc-name">${accountName(a)}</span>
+          <small class="num">${creditLine(a)}</small>
+        </button>${scheduledLine(a)}
+      </div>`).join("");
     show("accCredit", credit.length > 0);
+    renderDebt();
+  }
+
+  const dayMonth = iso => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(`${iso}T12:00:00`));
+
+  // The debt reminder: always there while a credit card has a debt.
+  function renderDebt() {
+    const debt = Number(snap?.credit_debt) || 0;
+    show("accDebt", enabled() && debt >= 0.005);
+    if (!(debt >= 0.005)) return;
+    const due = snap.credit_due_date ? ` · до ${dayMonth(snap.credit_due_date)}` : "";
+    $("accDebtText").textContent = `💳 Долг по кредитке: ${money(debt)}${due}`;
+  }
+
+  function scheduledLine(a) {
+    const plan = a.scheduled;
+    if (!plan) return "";
+    const text = `Запланировано ${money(plan.amount)} на ${dayMonth(plan.due_date)}`;
+    if (!plan.outdated) return `<div class="acc-split">${text}</div>`;
+    return `<div class="acc-diff minus"><span>${text}, а долг ${money(a.debt)}</span><button class="tiny" type="button" data-schedule-update="${a.id}">Обновить сумму</button></div>`;
   }
 
   // How a card's money divides between the envelopes lying on it, and what is
@@ -536,7 +558,7 @@
   }
 
   function prepareExpense(transaction = null) {
-    prepareField("expense", { transaction, fallback: envelopeAccountId("spending") });
+    prepareField("expense", { transaction, fallback: envelopeAccountId("spending"), credit: true });
     const current = transaction ? (transaction.funding_envelope || "spending") : undefined;
     fillFunding(current);
   }
@@ -618,6 +640,10 @@
     if (!state.archived && !credit) {
       actions.push('<button class="secondary" type="button" data-history-action="transfer">Перевести</button>');
       actions.push('<button class="secondary" type="button" data-history-action="expense">Записать трату с этого счёта</button>');
+    }
+    if (!state.archived && credit) {
+      actions.push('<button class="secondary" type="button" data-history-action="repay">Погасить</button>');
+      actions.push('<button class="secondary" type="button" data-history-action="schedule">Запланировать погашение</button>');
     }
     actions.push(`<button class="secondary" type="button" data-history-action="adjust">${credit ? "Исправить долг" : "Исправить остаток"}</button>`);
     $("accountHistoryActions").innerHTML = actions.join("");
@@ -718,12 +744,88 @@
     if (!account) return;
     if (action === "transfer") return openTransfer({ from: account.id });
     if (action === "adjust") return openAdjust(account.id);
+    if (action === "repay") return openRepay(account.id);
+    if (action === "schedule") return openSchedule(account.id);
     if (action === "expense") {
       $("accountHistoryDialog").close();
       if (typeof openExpenseDialog === "function") openExpenseDialog();
       const select = $("expenseAccount");
       if (select) { select.value = String(account.id); updateHint("expense"); }
     }
+  }
+
+  // ---------- Credit card: repay and plan ----------
+
+  function fillRepayFunding() {
+    const select = $("repayFunding");
+    if (!select) return;
+    const { options } = fundingChoice($("repayFrom")?.value);
+    select.innerHTML = options.map(k => `<option value="${k}">${FUNDING_LABELS[k]}</option>`).join("");
+    select.value = "spending";
+  }
+
+  function syncRepay() {
+    const credit = byId($("repayCredit")?.value);
+    if (!credit) return;
+    $("repayCaption").textContent = `Долг ${money(credit.debt)}${credit.due_date ? ` · до ${dayMonth(credit.due_date)}` : ""}`;
+    $("repayAmount").value = fmtInput(credit.debt || 0);
+  }
+
+  function openRepay(id = null) {
+    if (!$("repayDialog")) return;
+    const credits = active().filter(a => a.kind === "credit");
+    if (!credits.length) return notify("Кредиток нет");
+    const chosen = byId(id) || credits.find(a => (a.debt || 0) > 0) || credits[0];
+    $("repayCredit").innerHTML = credits.map(a => `<option value="${a.id}">${accountName(a)} · долг ${money(a.debt)}</option>`).join("");
+    $("repayCredit").value = String(chosen.id);
+    show("repayCreditField", credits.length > 1);
+    const regular = active().filter(a => a.kind !== "credit");
+    $("repayFrom").innerHTML = regular.map(a => `<option value="${a.id}">${accountName(a)} · ${money(a.balance)}</option>`).join("");
+    $("repayFrom").value = String(envelopeAccountId("spending") ?? regular[0]?.id ?? "");
+    fillRepayFunding();
+    syncRepay();
+    $("repayInterest").value = "";
+    $("repayDate").value = window.budgetDate?.today?.() || "";
+    $("repayDialog").showModal();
+  }
+
+  async function saveRepay(event) {
+    event?.preventDefault?.();
+    const id = $("repayCredit").value;
+    const interest = String($("repayInterest").value || "").trim();
+    try {
+      await request(`/api/accounts/${id}/repay`, { method: "POST", body: JSON.stringify({
+        from_account_id: Number($("repayFrom").value), amount: parseMoney($("repayAmount").value),
+        interest: interest ? parseMoney(interest) : 0, funding: $("repayFunding").value || "spending",
+        date: $("repayDate").value,
+      }) });
+      $("repayDialog").close();
+      notify("Кредитка погашена");
+      await afterChange();
+    } catch (error) { notify(error.message); }
+  }
+
+  function openSchedule(id) {
+    const credit = byId(id);
+    if (!credit || !$("scheduleDialog")) return;
+    const plan = credit.scheduled;
+    $("scheduleCredit").value = credit.id;
+    $("scheduleCaption").textContent = `${credit.emoji} ${credit.title}: долг ${money(credit.debt)}`;
+    $("scheduleDate").value = plan?.due_date || credit.next_payment_date || window.budgetDate?.today?.() || "";
+    $("scheduleAmount").value = fmtInput(credit.debt || plan?.amount || 0);
+    $("scheduleDialog").showModal();
+  }
+
+  async function saveSchedule(event, id = null, body = null) {
+    event?.preventDefault?.();
+    const credit = id ?? $("scheduleCredit").value;
+    const payload = body ?? { due_date: $("scheduleDate").value, amount: parseMoney($("scheduleAmount").value) };
+    try {
+      await request(`/api/accounts/${credit}/schedule`, { method: "POST", body: JSON.stringify(payload) });
+      $("scheduleDialog")?.close?.();
+      notify("Погашение запланировано");
+      await afterChange();
+    } catch (error) { notify(error.message); }
   }
 
   // ---------- «Нужно перевести» ----------
@@ -924,6 +1026,11 @@
       $(`${prefix}Date`)?.addEventListener("change", () => updateHint(prefix));
     }
     $("transferForm")?.addEventListener("submit", saveTransfer);
+    $("repayForm")?.addEventListener("submit", saveRepay);
+    $("repayFrom")?.addEventListener("change", fillRepayFunding);
+    $("repayCredit")?.addEventListener("change", syncRepay);
+    $("scheduleForm")?.addEventListener("submit", event => saveSchedule(event));
+    $("accDebtBtn")?.addEventListener("click", () => openRepay());
     $("adjustForm")?.addEventListener("submit", saveAdjust);
     $("adjustAccountBtn")?.addEventListener("click", () => { $("accountDialog")?.close(); openAdjust($("accountId").value); });
     $("accountHistoryActions")?.addEventListener("click", event => {
@@ -935,6 +1042,11 @@
       if (button) deleteFromHistory(button.dataset.historyDelete);
     });
     const openFromHome = event => {
+      const update = event.target?.closest?.("[data-schedule-update]");
+      if (update) {
+        const credit = byId(update.dataset.scheduleUpdate);
+        return saveSchedule(null, credit.id, { due_date: credit.scheduled.due_date, amount: credit.debt });
+      }
       const add = event.target?.closest?.("[data-add-to]");
       if (add) return addToEnvelope(add.dataset.addTo, Number(add.dataset.amount));
       const send = event.target?.closest?.("[data-transfer-to]");
@@ -986,7 +1098,7 @@
   window.accountsUi = {
     render, prepareExpense, expensePayload, prepareIncome, fieldPayload, prepareField, openAccount, openWizard,
     preparePiggy, prepareReserve,
-    openHistory, openTransfer, openAdjust, mainAccountId: () => snap?.main_account_id ?? null,
+    openHistory, openTransfer, openAdjust, openRepay, openSchedule, mainAccountId: () => snap?.main_account_id ?? null,
     accountLabel(t) {
       if (!t?.account_title) return "";
       return `${esc(t.account_emoji)} ${esc(t.account_title)}${t.account_archived ? " (архив)" : ""}`;

@@ -119,14 +119,21 @@ test('settings list: drag handles for active accounts, a collapsed archive below
   assert.match(archive, /На архивном счёте не ноль[\s\S]*Верните счёт или исправьте остаток/);
 });
 
-test('expense form: the spending envelope card by default, no credit card, a backdated hint', async () => {
+test('expense form: the spending envelope card by default, a credit card without «Из чего», a backdated hint', async () => {
   const {get, requests} = setup();
   await get('refreshBtn').listeners.click();
   get('quickExpenseBtn').listeners.click();
   assert.equal(get('expenseAccountField').classList.contains('hidden'), false);
   const options = get('expenseAccount').innerHTML;
-  assert.match(options, /Карта 1/);
-  assert.doesNotMatch(options, /Кредитка|Старая/);
+  assert.match(options, /Карта 1[\s\S]*Кредитка/);
+  assert.doesNotMatch(options, /Старая/);
+  // A credit card purchase is outside the budget: no «Из чего».
+  get('expenseAccount').value = '3';
+  get('expenseAccount').listeners.change();
+  assert.equal(get('expenseFundingField').classList.contains('hidden'), true);
+  get('expenseAccount').value = '2';
+  get('expenseAccount').listeners.change();
+  assert.equal(get('expenseFundingField').classList.contains('hidden'), false);
   assert.equal(get('expenseAccount').value, '2');
   get('expenseDate').value = '2026-10-05';
   get('expenseDate').listeners.change();
@@ -470,4 +477,53 @@ test('piggy bank: outside money comes from outside or a card; a withdrawal goes 
   // The day's remainder moves between the envelopes' cards on its own.
   get('piggyTransferBtn').listeners.click();
   assert.equal(get('piggyAccountField').classList.contains('hidden'), true);
+});
+
+test('credit card: a permanent debt reminder with «Погасить», repayment with «Из чего» and interest', async () => {
+  const data = JSON.parse(JSON.stringify(ACCOUNTS));
+  Object.assign(data.accounts[2], {balance: -3000, debt: 3000, available: 47000, due_date: '2026-10-25', next_payment_date: '2026-10-25',
+    scheduled: {bill_id: 9, due_date: '2026-10-25', amount: 2500, outdated: true}});
+  data.credit_debt = 3000;
+  data.credit_due_date = '2026-10-25';
+  const {get, requests} = setup(data);
+  await get('refreshBtn').listeners.click();
+  assert.equal(get('accDebt').classList.contains('hidden'), false);
+  assert.match(get('accDebtText').textContent, /Долг по кредитке: 3.000,00.₽ · до 25 октября/);
+  assert.match(get('accCredit').innerHTML, /долг 3.000,00.₽ · доступно 47.000,00.₽/);
+  assert.match(get('accCredit').innerHTML, /Запланировано 2.500,00.₽ на 25 октября, а долг 3.000,00.₽[\s\S]*Обновить сумму/);
+  await get('accCredit').listeners.click(hit('[data-schedule-update]', {scheduleUpdate: '3'}));
+  assert.deepEqual(body(requests, '/api/accounts/3/schedule'), {due_date: '2026-10-25', amount: 3000});
+
+  get('accDebtBtn').listeners.click();
+  assert.equal(get('repayDialog').open, true);
+  assert.equal(get('repayCredit').value, '3');
+  assert.equal(get('repayFrom').value, '2');               // the spending envelope's card
+  assert.match(get('repayAmount').value, /3.000,00/);
+  assert.equal(get('repayFunding').value, 'spending');
+  assert.match(get('repayFunding').innerHTML, /Из бюджета на траты[\s\S]*Из копилки[\s\S]*Вне бюджета/);
+  get('repayInterest').value = '500';
+  get('repayDate').value = '2026-10-15';
+  await get('repayForm').listeners.submit({preventDefault() {}});
+  assert.deepEqual(body(requests, '/api/accounts/3/repay'), {from_account_id: 2, amount: 3000, interest: 500, funding: 'spending', date: '2026-10-15'});
+});
+
+test('no debt: no reminder', async () => {
+  const {get} = setup();
+  await get('refreshBtn').listeners.click();
+  assert.equal(get('accDebt').classList.contains('hidden'), true);
+});
+
+test('a credit card history offers repay, plan and debt correction', async () => {
+  const data = JSON.parse(JSON.stringify(ACCOUNTS));
+  Object.assign(data.accounts[2], {debt: 1000, next_payment_date: '2026-10-25'});
+  const {get, requests, responses} = setup(data);
+  responses['/api/accounts/3/history'] = {account: data.accounts[2], items: []};
+  await get('refreshBtn').listeners.click();
+  await get('accCredit').listeners.click(hit('[data-account-id]', {accountId: '3'}));
+  assert.match(get('accountHistoryActions').innerHTML, /Погасить[\s\S]*Запланировать погашение[\s\S]*Исправить долг/);
+  get('accountHistoryActions').listeners.click(hit('[data-history-action]', {historyAction: 'schedule'}));
+  assert.equal(get('scheduleDate').value, '2026-10-25');
+  assert.match(get('scheduleAmount').value, /1.000,00/);
+  await get('scheduleForm').listeners.submit({preventDefault() {}});
+  assert.deepEqual(body(requests, '/api/accounts/3/schedule'), {due_date: '2026-10-25', amount: 1000});
 });

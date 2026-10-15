@@ -58,6 +58,7 @@
         </div>
         <div class="card home-accounts hidden" id="homeAccounts">
           <div class="section-head"><h3>Карты и счета</h3><button class="link-btn" type="button" data-go="settings" data-accounts-settings>Настроить</button></div>
+          <div id="accDebt" class="acc-debt hidden"><span id="accDebtText"></span><button class="tiny" type="button" id="accDebtBtn">Погасить</button></div>
           <div class="acc-total"><span>Всего</span><strong class="num" id="accTotal">—</strong></div>
           <div id="accList" class="acc-list"></div>
           <div id="accCredit" class="acc-list acc-credit"></div>
@@ -555,6 +556,33 @@
     </form>
   </dialog>
 
+  <dialog id="repayDialog">
+    <form method="dialog" id="repayForm" class="dialog-card">
+      <div class="section-head"><h2>Погасить кредитку</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <label id="repayCreditField">Кредитка<select id="repayCredit"></select></label>
+      <p class="muted" id="repayCaption"></p>
+      <label>С какой карты<select id="repayFrom"></select></label>
+      <label>Сумма<input id="repayAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label>Из чего<select id="repayFunding"></select></label>
+      <label>Из них проценты или комиссия банка<input id="repayInterest" data-money type="text" inputmode="decimal" autocomplete="off" placeholder="необязательно" /></label>
+      <label>Дата<input id="repayDate" type="date" required /></label>
+      <p class="muted">Покупки по кредитке уже учтены в аналитике. Погашение уменьшает долг и списывается с выбранного конверта, проценты — расход «Проценты банка».</p>
+      <button class="primary big" value="default" id="saveRepayBtn">Погасить</button>
+    </form>
+  </dialog>
+
+  <dialog id="scheduleDialog">
+    <form method="dialog" id="scheduleForm" class="dialog-card">
+      <div class="section-head"><h2>Запланировать погашение</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <input id="scheduleCredit" type="hidden" />
+      <p class="muted" id="scheduleCaption"></p>
+      <label>Дата платежа<input id="scheduleDate" type="date" required /></label>
+      <label>Сумма<input id="scheduleAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <p class="muted">Появится обязательный платёж «Кредитка»: буфер отложит на него деньги. Отметка «Оплачено» погасит кредитку из буфера.</p>
+      <button class="primary big" value="default" id="saveScheduleBtn">Запланировать</button>
+    </form>
+  </dialog>
+
   <dialog id="accountsWizard">
     <form method="dialog" id="accountsWizardForm" class="dialog-card">
       <div class="section-head"><h2 id="accountsWizardTitle">Карты и счета</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
@@ -637,14 +665,14 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261015-accounts-3"></script>
+  <script src="/static/app.js?v=20261015-accounts-4"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20261015-accounts-3"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261009-average-text"></script>
   <script src="/static/irregular-ui.js?v=20261015-accounts-3"></script>
-  <script src="/static/accounts-ui.js?v=20261015-accounts-3"></script>
+  <script src="/static/accounts-ui.js?v=20261015-accounts-4"></script>
   <script src="/static/home-layout.js?v=20261012-masonry"></script>
 </body>
 </html>

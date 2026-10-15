@@ -350,6 +350,11 @@ def delete_piggy_bank_movement(
             raise HTTPException(422, "Это остаток обязательного платежа: измените сумму в самом платеже")
         if movement["expense_transaction_id"] is not None:
             raise HTTPException(422, "Это трата из копилки: измените или удалите саму трату")
+        if con.execute(
+            "SELECT 1 FROM account_transfers WHERE user_id=? AND piggy_movement_id=? AND kind='credit_payment'",
+            (uid, movement_id),
+        ).fetchone():
+            raise HTTPException(422, "Это погашение кредитки: удалите его в истории кредитки")
         con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
         try:
             check_piggy_history(con, uid)

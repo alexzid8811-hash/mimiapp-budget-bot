@@ -368,6 +368,11 @@ def delete_reserve_movement(movement_id: int, user: TelegramUser = Depends(curre
                 raise HTTPException(404, "Операция резерва не найдена")
             if row["expense_transaction_id"] is not None:
                 raise HTTPException(422, "Это оплата расхода из резерва: удалите сам расход")
+            if con.execute(
+                "SELECT 1 FROM account_transfers WHERE user_id=? AND reserve_movement_id=? AND kind='credit_payment'",
+                (uid, movement_id),
+            ).fetchone():
+                raise HTTPException(422, "Это погашение кредитки: удалите его в истории кредитки")
             con.execute("DELETE FROM emergency_reserve_movements WHERE id=? AND user_id=?", (movement_id, uid))
             engine.check_reserve(con, uid)
     except ValueError as exc:

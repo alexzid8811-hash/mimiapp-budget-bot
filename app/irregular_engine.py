@@ -195,6 +195,13 @@ def build_input(uid: int, today: date | None = None) -> tuple[IrregularInput, di
             window,
         ):
             _add(spent, date.fromisoformat(r["tx_date"]), cents(r["amount"]))
+        # Cards and accounts: a credit card repaid from free money.
+        for r in con.execute(
+            "SELECT amount,date FROM account_transfers WHERE user_id=? AND kind='credit_payment' "
+            "AND funding_envelope='spending' AND transaction_id IS NULL AND date BETWEEN ? AND ?",
+            window,
+        ):
+            _add(spent, date.fromisoformat(r["date"]), cents(r["amount"]))
         for r in con.execute(
             "SELECT direction,amount,movement_date,COALESCE(purpose,'') AS purpose "
             "FROM piggy_bank_movements WHERE user_id=? AND source='daily_budget' "

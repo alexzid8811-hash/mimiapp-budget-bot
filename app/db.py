@@ -529,6 +529,13 @@ def _ensure_accounts_schema(con: sqlite3.Connection) -> None:
         "ON account_incomes(user_id, payroll_period_start) WHERE payroll_period_start IS NOT NULL"
     )
 
+    bill_columns = {row[1] for row in con.execute("PRAGMA table_info(bill_rules)")}
+    if "once_date" not in bill_columns:
+        # A one-off obligatory payment (the planned repayment of a credit card).
+        con.execute("ALTER TABLE bill_rules ADD COLUMN once_date TEXT")
+    if "credit_account_id" not in bill_columns:
+        # Paying this bill repays the credit card instead of being an expense.
+        con.execute("ALTER TABLE bill_rules ADD COLUMN credit_account_id INTEGER REFERENCES accounts(id)")
     envelope_columns = {row[1] for row in con.execute("PRAGMA table_info(envelope_accounts)")}
     if "assigned_at" not in envelope_columns:
         con.execute("ALTER TABLE envelope_accounts ADD COLUMN assigned_at TEXT")

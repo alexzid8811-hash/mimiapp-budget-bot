@@ -87,6 +87,22 @@ class EnvelopeIn(APIModel):
     move_money: bool = False
 
 
+class RepayIn(APIModel):
+    from_account_id: int
+    amount: float = Field(gt=0)
+    # Bank interest or a fee inside the amount: it does not reduce the debt.
+    interest: float = Field(default=0, ge=0)
+    # What pays for it in the budget.
+    funding: Literal["spending", "piggy", "reserve", "none"] = "spending"
+    date: Date = Field(default_factory=lambda: clock.today())
+    note: str = Field(default="", max_length=160)
+
+
+class ScheduleIn(APIModel):
+    due_date: Date | None = None   # the next payment day by default
+    amount: float | None = Field(default=None, gt=0)   # the current debt by default
+
+
 class PayrollIncomeIn(APIModel):
     period_start: Date
     account_id: int | None = None
@@ -508,6 +524,8 @@ def delete_transfer(transfer_id: int, user: TelegramUser = Depends(current_user)
     with connect() as con:
         con.execute("BEGIN IMMEDIATE")
         row = _own_transfer(con, uid, transfer_id)
+        if row["kind"] == "credit_payment" and row["transaction_id"] is not None:
+            raise HTTPException(422, "Это оплата запланированного погашения: удалите отметку оплаты платежа")
         engine.delete_transfer(con, uid, row)
     return engine.snapshot(uid)
 
@@ -569,3 +587,93 @@ def record_payroll_income(payload: PayrollIncomeIn, user: TelegramUser = Depends
         engine.write_payroll_income(con, uid, payload.period_start.isoformat(), hint["payday"],
                                     hint["amount"], account_id)
     return engine.snapshot(uid)
+
+
+# ---------- Credit cards ----------
+
+
+def _credit(con, uid: int, account_id: int) -> dict:
+    account = _account(con, uid, account_id)
+    if account["kind"] != "credit":
+        raise HTTPException(422, "Это не кредитка")
+    return account
+
+
+@router.post("/accounts/{account_id}/repay")
+def repay_credit(account_id: int, payload: RepayIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """«Погасить»: money from a non-credit card to the credit card.  The
+    chosen envelope pays the whole amount now; the bank interest in it is an
+    expense «Проценты банка» and does not reduce the debt."""
+    uid = _ready(user)
+    _future(payload.date)
+    if payload.interest > payload.amount:
+        raise HTTPException(422, "Проценты не могут быть больше суммы погашения")
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        credit = _credit(con, uid, account_id)
+        if credit["archived"]:
+            raise HTTPException(422, "Кредитка в архиве")
+        check_transfer(con, uid, payload.from_account_id, account_id)
+        if payload.funding == "reserve" and engine.settings_for(con, uid)["mode"] != "irregular":
+            raise HTTPException(422, "Резерв есть только в режиме подработок")
+        engine.repay(con, uid, credit_id=account_id, source_id=payload.from_account_id, value=payload.amount,
+                     interest=payload.interest, funding=payload.funding, day=payload.date.isoformat(),
+                     note=payload.note.strip(), title=credit["title"])
+        try:
+            from .savings import check_piggy_history
+
+            check_piggy_history(con, uid)
+            legacy.check_reserve(con, uid)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    return engine.snapshot(uid)
+
+
+@router.post("/accounts/{account_id}/schedule")
+def schedule_repayment(account_id: int, payload: ScheduleIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """«Запланировать погашение»: a one-off obligatory payment «Кредитка» on
+    the chosen day; the buffer puts the money aside like for any bill.  An
+    unpaid planned repayment is updated instead of adding a second one."""
+    from . import planning
+
+    uid = _ready(user)
+    today = clock.today()
+    with connect() as con:
+        credit = _credit(con, uid, account_id)
+        debt = engine.account_state(con, uid, account_id).debt / 100
+        existing = engine.scheduled_repayments(con, uid).get(account_id)
+    due = payload.due_date or engine.next_payment_date(credit["payment_day"], today) or today
+    if due < today:
+        raise HTTPException(422, "Дата погашения не может быть в прошлом")
+    value = payload.amount if payload.amount is not None else debt
+    if value <= 0:
+        raise HTTPException(422, "Долга нет: погашать нечего")
+    title = f"Кредитка {credit['title']}"
+    if existing:
+        with planning.change_conditions(uid, table="bill_rules", record_id=existing["bill_id"]) as con:
+            con.execute(
+                "UPDATE bill_rules SET amount=?,day_of_month=?,once_date=? WHERE id=? AND user_id=?",
+                (value, due.day, due.isoformat(), existing["bill_id"], uid),
+            )
+    else:
+        with planning.change_conditions(uid) as con:
+            con.execute(
+                "INSERT INTO bill_rules(user_id,title,amount,day_of_month,once_date,credit_account_id,active) "
+                "VALUES(?,?,?,?,?,?,1)",
+                (uid, title, value, due.day, due.isoformat(), account_id),
+            )
+    legacy.invalidate_current_auto_reserve(uid)
+    return engine.snapshot(uid)
+
+
+def pay_credit_bill(con, uid: int, rule: dict, tx_id: int, source_id: int | None, value: float, day: str) -> None:
+    """Marking the planned repayment paid repays the credit card from the
+    buffer's card: the bill itself becomes a transfer, not an expense."""
+    con.execute("UPDATE transactions SET account_id=NULL WHERE id=? AND user_id=?", (tx_id, uid))
+    if source_id is None:
+        source_id = engine.placement(con, uid)[0].get("buffer")
+    if source_id is None:
+        return
+    title = rule["title"].removeprefix("Кредитка ").strip()
+    engine.repay(con, uid, credit_id=int(rule["credit_account_id"]), source_id=source_id, value=value,
+                 interest=0, funding="buffer", day=day, transaction_id=tx_id, title=title)

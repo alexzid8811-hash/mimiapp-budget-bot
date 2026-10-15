@@ -2,7 +2,7 @@
 the API snapshot.  The budget is only read here, never changed."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from . import clock
 from .accounts import (
@@ -236,8 +236,10 @@ def budget_ops(uid: int, mode: str) -> list[BudgetOp]:
             "AND date<=?",
             (uid, today.isoformat()))]
         credit_payments = [dict(r) for r in con.execute(
-            "SELECT from_account_id,amount,date,funding_envelope,transaction_id,created_at FROM account_transfers "
-            "WHERE user_id=? AND kind='credit_payment' AND date<=?", (uid, today.isoformat()))]
+            "SELECT p.from_account_id,p.amount,p.date,p.funding_envelope,p.transaction_id,p.created_at,"
+            "t.bill_planned_amount AS planned FROM account_transfers p "
+            "LEFT JOIN transactions t ON t.id=p.transaction_id AND t.user_id=p.user_id "
+            "WHERE p.user_id=? AND p.kind='credit_payment' AND p.date<=?", (uid, today.isoformat()))]
 
     for r in payroll_incomes:
         value = cents(r["amount"])
@@ -286,10 +288,18 @@ def budget_ops(uid: int, mode: str) -> list[BudgetOp]:
 
     for r in credit_payments:
         envelope = r["funding_envelope"]
+        value = cents(r["amount"])
         if envelope in ("spending", "piggy", "reserve") and r["transaction_id"] is None:
-            value = cents(r["amount"])
-            ops.append(BudgetOp(date.fromisoformat(r["date"]), {envelope: -value},
-                                {int(r["from_account_id"]): -value}, r["created_at"]))
+            envelopes = {envelope: -value}
+        elif envelope == "buffer" and r["transaction_id"] is not None:
+            # The planned repayment: the buffer releases what it put aside,
+            # the difference belongs to the daily money (like any bill).
+            planned = cents(r["planned"]) if r["planned"] is not None else value
+            envelopes = {"buffer": -planned, "spending": planned - value}
+        else:
+            continue
+        ops.append(BudgetOp(date.fromisoformat(r["date"]), envelopes, {int(r["from_account_id"]): -value},
+                            r["created_at"]))
 
     if mode == "payroll":
         from . import engine
@@ -344,6 +354,7 @@ def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
         places, assigned_on = placement(con, uid)
         transfers = plain_transfers(con, uid)
         operations = {int(r["id"]): has_operations(con, uid, int(r["id"])) for r in rows}
+        scheduled = scheduled_repayments(con, uid)
         pending = (operations_without_account(con, uid, settings["disabled_at"])
                    if settings["disabled_at"] else 0)
     mode = settings["mode"]
@@ -380,7 +391,10 @@ def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
             "has_operations": operations[int(row["id"])],
             "envelopes": [e["key"] for e in envelopes if e["account_id"] == int(row["id"])],
             "breakdown": _breakdown_dict(parts.get(int(row["id"])), mode),
+            **(_credit_dict(row, state, scheduled.get(int(row["id"]))) if row["kind"] == "credit" else {}),
         })
+    debts = [a for a in accounts if a["kind"] == "credit" and (a["debt"] or 0) > 0]
+    due_dates = sorted(a["due_date"] for a in debts if a.get("due_date"))
     return {
         "enabled": settings["enabled"],
         "today": clock.today().isoformat(),
@@ -389,10 +403,25 @@ def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
         "budget_configured": amounts is not None,
         "total": amount(result.total),
         "credit_debt": amount(result.credit_debt),
+        # The nearest repayment date of a card with a debt.
+        "credit_due_date": due_dates[0] if due_dates else None,
         "accounts": accounts,
         "envelopes": envelopes,
         "operations_without_account": pending,
         "hints": (payroll_income_hints(uid) + hints) if settings["enabled"] else [],
+    }
+
+
+def _credit_dict(row: dict, state, scheduled: dict | None) -> dict:
+    """Repayment date and the planned repayment (with a warning when the debt
+    changed after it was planned)."""
+    payment = next_payment_date(row["payment_day"], clock.today())
+    due = scheduled["due_date"] if scheduled else (payment.isoformat() if payment else None)
+    debt = amount(state.debt)
+    return {
+        "next_payment_date": payment.isoformat() if payment else None,
+        "due_date": due,
+        "scheduled": {**scheduled, "outdated": abs(scheduled["amount"] - debt) >= 0.005} if scheduled else None,
     }
 
 
@@ -428,17 +457,26 @@ def add_adjustment(con, uid: int, account: dict, target: float, day: date, note:
 
         raise HTTPException(422, "Сумма уже совпадает: исправлять нечего")
     reason = ("interest" if difference < 0 else "cashback") if credit else "correction"
+    # Bank interest is an expense in the analytics («Проценты банка»); the
+    # budget is not touched either way.
+    tx_id = (interest_expense(con, uid, amount(-difference), day.isoformat(),
+                              f"Проценты по кредитке {account['title']}") if reason == "interest" else None)
     return con.execute(
-        "INSERT INTO account_adjustments(user_id,account_id,amount,date,reason,note) VALUES(?,?,?,?,?,?)",
-        (uid, account["id"], amount(difference), day.isoformat(), reason, note),
+        "INSERT INTO account_adjustments(user_id,account_id,amount,date,reason,note,transaction_id) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (uid, account["id"], amount(difference), day.isoformat(), reason, note, tx_id),
     ).lastrowid
 
 
 def delete_adjustment(con, uid: int, row: dict) -> None:
     con.execute("DELETE FROM account_adjustments WHERE id=? AND user_id=?", (row["id"], uid))
+    if row.get("transaction_id"):
+        con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (row["transaction_id"], uid))
 
 
 def delete_transfer(con, uid: int, row: dict) -> None:
+    if row["kind"] == "credit_payment":
+        return delete_credit_payment(con, uid, row)
     con.execute("DELETE FROM account_transfers WHERE id=? AND user_id=?", (row["id"], uid))
 
 
@@ -500,7 +538,8 @@ def history(con, uid: int, account: dict) -> list[dict]:
         items.append({
             "type": "transfer", "id": r["id"], "date": r["date"], "amount": signed, "title": title,
             "sub": " · ".join(x for x in (sub, r["note"]) if x), "emoji": "↔️", "kind": r["kind"],
-            "deletable": r["kind"] in ("manual", "hint", "reassign"),
+            "deletable": r["kind"] in ("manual", "hint", "reassign")
+            or (r["kind"] == "credit_payment" and r["transaction_id"] is None),
         })
     for r in con.execute("SELECT * FROM account_adjustments WHERE user_id=? AND account_id=?", (uid, account_id)):
         items.append({
@@ -734,3 +773,120 @@ def sync_reserve_expense(con, uid: int, tx_id: int, funding: str | None, value: 
     else:
         con.execute("DELETE FROM emergency_reserve_movements WHERE user_id=? AND expense_transaction_id=?",
                     (uid, tx_id))
+
+
+# ---------- Credit cards ----------
+
+INTEREST_CATEGORY = ("Проценты банка", "🏦")
+
+
+def interest_category(con, uid: int) -> int:
+    """The category of bank interest and fees, created on first use."""
+    title, emoji = INTEREST_CATEGORY
+    row = con.execute("SELECT id FROM categories WHERE user_id=? AND title=?", (uid, title)).fetchone()
+    if row:
+        return int(row["id"])
+    order = con.execute("SELECT COALESCE(MAX(sort_order),0)+1 FROM categories WHERE user_id=?", (uid,)).fetchone()[0]
+    return con.execute(
+        "INSERT INTO categories(user_id,title,emoji,sort_order) VALUES(?,?,?,?)", (uid, title, emoji, order)
+    ).lastrowid
+
+
+def interest_expense(con, uid: int, value: float, day: str, note: str) -> int:
+    """Bank interest as an expense for analytics only: outside the budget
+    (funding 'none') and on no account (the repayment carries the money)."""
+    return con.execute(
+        "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,funding_envelope) "
+        "VALUES(?, 'expense', ?, ?, ?, ?, 'none')",
+        (uid, value, day, interest_category(con, uid), note[:200]),
+    ).lastrowid
+
+
+def locked_transaction(con, uid: int, tx_id: int) -> str | None:
+    """Why an expense cannot be edited on its own, or None."""
+    if con.execute(
+        "SELECT 1 FROM account_transfers WHERE user_id=? AND interest_transaction_id=?", (uid, tx_id)
+    ).fetchone():
+        return "Это проценты по погашению кредитки: измените погашение в истории кредитки"
+    if con.execute(
+        "SELECT 1 FROM account_adjustments WHERE user_id=? AND transaction_id=?", (uid, tx_id)
+    ).fetchone():
+        return "Это проценты из исправления долга: удалите исправление в истории кредитки"
+    return None
+
+
+def repay(con, uid: int, *, credit_id: int, source_id: int, value: float, interest: float, funding: str,
+          day: str, note: str = "", transaction_id: int | None = None, title: str = "") -> int:
+    """Repayment of a credit card: the money leaves ``source_id``, the debt
+    falls by ``value - interest``, the envelope ``funding`` pays ``value``
+    (the daily budget reads it from the transfer; the piggy bank and the
+    reserve get a withdrawal of their own; the buffer pays through the bill)."""
+    piggy_id = reserve_id = None
+    reason = f"Погашение кредитки {title}".strip()
+    if funding == "piggy":
+        piggy_id = con.execute(
+            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source) "
+            "VALUES(?, 'withdraw', ?, ?, ?, 'external')",
+            (uid, value, day, reason[:160]),
+        ).lastrowid
+    elif funding == "reserve":
+        reserve_id = con.execute(
+            "INSERT INTO emergency_reserve_movements(user_id,direction,amount,movement_date,reason,kind) "
+            "VALUES(?, 'withdraw', ?, ?, ?, 'pay_expense')",
+            (uid, value, day, reason[:160]),
+        ).lastrowid
+    interest_id = interest_expense(con, uid, interest, day, f"Проценты по кредитке {title}".strip()) if interest else None
+    return con.execute(
+        "INSERT INTO account_transfers(user_id,from_account_id,to_account_id,amount,date,note,kind,funding_envelope,"
+        "interest_amount,piggy_movement_id,reserve_movement_id,transaction_id,interest_transaction_id) "
+        "VALUES(?,?,?,?,?,?,'credit_payment',?,?,?,?,?,?)",
+        (uid, source_id, credit_id, value, day, note, funding, interest, piggy_id, reserve_id, transaction_id,
+         interest_id),
+    ).lastrowid
+
+
+def delete_credit_payment(con, uid: int, row: dict) -> None:
+    if row["interest_transaction_id"]:
+        con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (row["interest_transaction_id"], uid))
+    # The envelope withdrawals go first; the transfer follows them (cascade).
+    con.execute("DELETE FROM account_transfers WHERE id=? AND user_id=?", (row["id"], uid))
+    if row["piggy_movement_id"]:
+        con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (row["piggy_movement_id"], uid))
+    if row["reserve_movement_id"]:
+        con.execute("DELETE FROM emergency_reserve_movements WHERE id=? AND user_id=?",
+                    (row["reserve_movement_id"], uid))
+
+
+def next_payment_date(payment_day: int | None, today: date) -> date | None:
+    if not payment_day:
+        return None
+    from .budget import add_months, month_date
+
+    this_month = month_date(today.year, today.month, int(payment_day))
+    if this_month >= today:
+        return this_month
+    following = add_months(today.replace(day=1), 1)
+    return month_date(following.year, following.month, int(payment_day))
+
+
+def scheduled_repayments(con, uid: int) -> dict[int, dict]:
+    """The planned, still unpaid repayment of every credit card."""
+    today = clock.today()
+    rules = [dict(r) for r in con.execute(
+        "SELECT id,amount,once_date,credit_account_id FROM bill_rules WHERE user_id=? AND archived=0 AND active=1 "
+        "AND credit_account_id IS NOT NULL AND once_date IS NOT NULL", (uid,))]
+    result = {}
+    for rule in rules:
+        due = date.fromisoformat(rule["once_date"])
+        paid = con.execute(
+            "SELECT 1 FROM transactions WHERE user_id=? AND bill_rule_id=? AND bill_due_date=?",
+            (uid, rule["id"], rule["once_date"]),
+        ).fetchone()
+        if paid or due < today - timedelta(days=62):
+            continue
+        current = result.get(int(rule["credit_account_id"]))
+        if current is None or rule["once_date"] < current["due_date"]:
+            result[int(rule["credit_account_id"])] = {
+                "bill_id": int(rule["id"]), "due_date": rule["once_date"], "amount": float(rule["amount"]),
+            }
+    return result

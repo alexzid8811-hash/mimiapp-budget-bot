@@ -57,7 +57,11 @@ def _expenses(con, uid: int, start: date, end: date) -> list[dict]:
         "SELECT t.id,t.amount,t.tx_date,t.note,t.category_id,t.bill_rule_id,"
         "c.title AS category_title,c.emoji AS category_emoji,c.sort_order AS category_order "
         "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id "
-        "WHERE t.user_id=? AND t.type='expense' AND t.tx_date BETWEEN ? AND ? ORDER BY t.tx_date,t.id",
+        "WHERE t.user_id=? AND t.type='expense' AND t.tx_date BETWEEN ? AND ? "
+        # A planned credit card repayment is a transfer: the purchases are
+        # already counted on their own dates.
+        "AND NOT EXISTS(SELECT 1 FROM bill_rules b WHERE b.id=t.bill_rule_id AND b.credit_account_id IS NOT NULL) "
+        "ORDER BY t.tx_date,t.id",
         (uid, start.isoformat(), end.isoformat()),
     ).fetchall()]
 
@@ -171,11 +175,21 @@ def _open_since(uid: int, today: date) -> date:
         return today.replace(day=1)
 
 
+def _credit_bills(uid: int) -> set[int]:
+    """Planned credit card repayments: transfers, not obligatory spending."""
+    with connect() as con:
+        return {int(r[0]) for r in con.execute(
+            "SELECT id FROM bill_rules WHERE user_id=? AND credit_account_id IS NOT NULL", (uid,))}
+
+
 def _bills(uid: int, start: date, end: date, today: date) -> list[dict]:
     open_since = _open_since(uid, today).isoformat()
     groups: dict = {}
+    credit = _credit_bills(uid)
     for event in planning.bill_events(uid, start, end):
         if not event.get("paid") and event["due_date"] < open_since:
+            continue
+        if event["id"] in credit:
             continue
         group = groups.setdefault(event["id"], {
             "title": event.get("title") or "Платёж", "paid": 0, "due": 0,
@@ -199,7 +213,7 @@ def _bills(uid: int, start: date, end: date, today: date) -> list[dict]:
         }
         for g in sorted(groups.values(), key=lambda g: -(g["paid"] + g["due"]))
     ]
-    return rows + _upcoming_bills(uid, start, end, today, set(groups))
+    return rows + _upcoming_bills(uid, start, end, today, set(groups) | credit)
 
 
 def _upcoming_bills(uid: int, start: date, end: date, today: date, shown: set) -> list[dict]:

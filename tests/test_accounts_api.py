@@ -678,3 +678,196 @@ def test_envelope_amounts_do_not_depend_on_cards(client):
     ok(client.put("/api/accounts/envelopes/buffer", json={"account_id": by_title(ok(client.get("/api/accounts")), "Карта 2")["id"],
                                                           "move_money": True}))
     assert amounts(client) == after
+
+
+# ---------- Stage 4: credit cards ----------
+
+
+def categories_spent(client):
+    data = ok(client.get("/api/analytics", params={"mode": "month", "anchor": TODAY.isoformat()}))
+    return {c["title"]: c["amount"] for c in data["categories"]}, data
+
+
+def test_example_1_balances_total_and_credit_card_through_the_api(client, monkeypatch):
+    snap = setup(client)
+    c1, c2, credit = (by_title(snap, t)["id"] for t in ("Карта 1", "Карта 2", "Кредитка"))
+    budget = lambda: ok(client.get("/api/cashflow"))["available_today"]  # noqa: E731
+    start = budget()
+    # 1. 2 000 from card 1 out of the daily budget.
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 2000, "account_id": c1,
+                                              "funding_envelope": "spending"}))
+    snap, cards = state(client)
+    assert (cards["Карта 1"]["balance"], snap["total"], budget()) == (38000, 153000, start - 2000)
+    # 2. 3 000 with the credit card: only the debt grows.
+    tx = ok(client.post("/api/transactions", json={"type": "expense", "amount": 3000, "account_id": credit,
+                                                   "category_id": 1}))
+    assert tx["funding_envelope"] == "none"
+    snap, cards = state(client)
+    assert (snap["total"], cards["Кредитка"]["debt"], cards["Кредитка"]["available"]) == (153000, 3000, 47000)
+    assert budget() == start - 2000 and snap["credit_debt"] == 3000
+    assert categories_spent(client)[0]["Продукты"] == 3000
+    # 3. Card 1 -> card 2.
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": c2, "amount": 10000}))
+    snap, cards = state(client)
+    assert (cards["Карта 1"]["balance"], cards["Карта 2"]["balance"], snap["total"]) == (28000, 25000, 153000)
+    # 4. Repay 3 000 from card 1 out of the daily budget.
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 3000}))
+    snap, cards = state(client)
+    assert (cards["Карта 1"]["balance"], snap["total"], cards["Кредитка"]["debt"]) == (25000, 150000, 0)
+    assert (cards["Кредитка"]["available"], snap["credit_debt"]) == (50000, 0)
+    assert budget() == start - 5000
+    # The repayment is no expense in the analytics: the purchase already is.
+    assert categories_spent(client)[0] == {"Продукты": 3000, "Без категории": 2000}
+    # 5. Salary 60 000 confirmed on the main card.
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 22))
+    ok(client.put(f"/api/cashflow/income-overrides/{advance_key(client)}", json={"amount": 60000, "confirmed": True}))
+    snap, cards = state(client)
+    assert (cards["Карта 1"]["balance"], snap["total"]) == (85000, 210000)
+
+
+def test_example_5_bank_interest_in_a_repayment(client):
+    snap = setup(client)
+    c1, credit = by_title(snap, "Карта 1")["id"], by_title(snap, "Кредитка")["id"]
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 3000, "account_id": credit}))
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 3000, "interest": 500}))
+    snap, cards = state(client)
+    assert (cards["Кредитка"]["debt"], cards["Кредитка"]["available"]) == (500, 49500)
+    assert cards["Карта 1"]["balance"] == 37000 and snap["credit_debt"] == 500
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget - 3000
+    spent, _ = categories_spent(client)
+    assert spent["Проценты банка"] == 500
+    # The interest expense belongs to the repayment.
+    interest = next(t for t in ok(client.get("/api/transactions")) if t["category_title"] == "Проценты банка")
+    assert client.delete(f"/api/transactions/{interest['id']}").status_code == 422
+    assert client.put(f"/api/transactions/{interest['id']}", json={"type": "expense", "amount": 1}).status_code == 422
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 500}))
+    snap, cards = state(client)
+    assert cards["Кредитка"]["debt"] == 0 and snap["credit_debt"] == 0
+
+
+def test_the_same_through_correct_debt_with_interest(client):
+    snap = setup(client)
+    c1, credit = by_title(snap, "Карта 1")["id"], by_title(snap, "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 3000, "account_id": credit}))
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 3000}))
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    ok(client.post(f"/api/accounts/{credit}/adjust", json={"target": 500}))
+    snap, cards = state(client)
+    assert cards["Кредитка"]["debt"] == 500 and categories_spent(client)[0]["Проценты банка"] == 500
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget
+    item = ok(client.get(f"/api/accounts/{credit}/history"))["items"][0]
+    ok(client.delete(f"/api/accounts/adjustments/{item['id']}"))
+    assert "Проценты банка" not in categories_spent(client)[0]
+
+
+def test_repayment_from_the_piggy_bank_or_outside_the_budget(client):
+    c1, c2 = two_cards(client, {"piggy": 1})
+    credit = by_title(ok(client.get("/api/accounts")), "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 900, "account_id": credit}))
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    piggy = ok(client.get("/api/piggy-bank"))["balance"]
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c2, "amount": 600, "funding": "piggy"}))
+    assert ok(client.get("/api/piggy-bank"))["balance"] == piggy - 600
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    movement = next(m for m in ok(client.get("/api/piggy-bank"))["movements"] if m["note"].startswith("Погашение"))
+    assert client.delete(f"/api/piggy-bank/movements/{movement['id']}").status_code == 422
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 300, "funding": "none"}))
+    assert differences(client)["Карта 1"] == -300
+    snap, cards = state(client)
+    assert cards["Кредитка"]["debt"] == 0
+    # Deleting a repayment brings the debt and the piggy bank back.
+    item = next(i for i in ok(client.get(f"/api/accounts/{credit}/history"))["items"] if i["amount"] == 600)
+    ok(client.delete(f"/api/accounts/transfers/{item['id']}"))
+    assert ok(client.get("/api/piggy-bank"))["balance"] == piggy
+    assert state(client)[1]["Кредитка"]["debt"] == 600
+
+
+def test_repayment_validation(client):
+    snap = setup(client)
+    c1, credit = by_title(snap, "Карта 1")["id"], by_title(snap, "Кредитка")["id"]
+    assert client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 100, "interest": 101}).status_code == 422
+    assert client.post(f"/api/accounts/{c1}/repay", json={"from_account_id": credit, "amount": 100}).status_code == 422
+    assert client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 100, "funding": "reserve"}).status_code == 422
+    # A plain transfer to a credit card is not a repayment.
+    assert client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": credit, "amount": 1}).status_code == 422
+
+
+def test_planned_repayment_is_a_bill_the_buffer_puts_aside(client, monkeypatch):
+    snap = setup(client)
+    credit = by_title(snap, "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 3000, "account_id": credit}))
+    snap = ok(client.post(f"/api/accounts/{credit}/schedule", json={}))
+    card = by_title(snap, "Кредитка")
+    assert card["scheduled"] == {"bill_id": card["scheduled"]["bill_id"], "due_date": "2026-09-25",
+                                 "amount": 3000.0, "outdated": False}
+    assert card["due_date"] == "2026-09-25" and snap["credit_due_date"] == "2026-09-25"
+    bills = client.get("/api/bootstrap").json()["bill_rules"]
+    assert [(b["title"], b["once_date"]) for b in bills] == [("Кредитка Кредитка", "2026-09-25")]
+    # A one-off payment: only in September.
+    with user_scope(1):
+        from app import planning
+        events = planning.bill_events(1, date(2026, 9, 1), date(2026, 12, 31))
+    assert [e["due_date"] for e in events] == ["2026-09-25"]
+    # The debt grows: the plan is out of date and can be updated in place.
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 500, "account_id": credit}))
+    assert by_title(ok(client.get("/api/accounts")), "Кредитка")["scheduled"]["outdated"] is True
+    snap = ok(client.post(f"/api/accounts/{credit}/schedule", json={}))
+    assert by_title(snap, "Кредитка")["scheduled"]["amount"] == 3500
+    assert len(client.get("/api/bootstrap").json()["bill_rules"]) == 1
+    # Paid on the day: the buffer pays, the debt goes, no expense in analytics.
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 25))
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    bill = next(b for b in client.get("/api/plan").json() if b["title"].startswith("Кредитка"))
+    payment = ok(client.post(f"/api/bills/{bill['id']}/pay", json={"due_date": bill["due_date"]}))
+    assert payment["account_id"] is None
+    snap, cards = state(client)
+    assert cards["Кредитка"]["debt"] == 0 and cards["Кредитка"]["scheduled"] is None
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget
+    _, data = categories_spent(client)
+    assert data["totals"]["bills"] == 0
+    assert all(not b["title"].startswith("Кредитка") for b in data["bills"])
+    item = next(i for i in ok(client.get(f"/api/accounts/{credit}/history"))["items"] if i["type"] == "transfer")
+    assert item["deletable"] is False
+    assert client.delete(f"/api/accounts/transfers/{item['id']}").status_code == 422
+    # Unmarking the payment brings the debt back.
+    ok(client.delete(f"/api/transactions/{payment['id']}"))
+    assert state(client)[1]["Кредитка"]["debt"] == 3500
+
+
+def test_credit_card_with_a_debt_stays_until_repaid(client):
+    snap = setup(client)
+    credit = by_title(snap, "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 10, "account_id": credit}))
+    response = client.post(f"/api/accounts/{credit}/archive")
+    assert response.status_code == 422 and "долг" in response.json()["detail"]
+    # A credit card holds no envelope.
+    assert client.put("/api/accounts/envelopes/spending", json={"account_id": credit}).status_code == 422
+
+
+def test_moving_a_purchase_off_the_credit_card_returns_it_to_the_budget(client):
+    snap = setup(client)
+    c1, credit = by_title(snap, "Карта 1")["id"], by_title(snap, "Кредитка")["id"]
+    budget = ok(client.get("/api/cashflow"))["available_today"]
+    tx = ok(client.post("/api/transactions", json={"type": "expense", "amount": 400, "account_id": credit}))
+    ok(client.put(f"/api/transactions/{tx['id']}", json={"type": "expense", "amount": 400, "account_id": c1}))
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget - 400
+    ok(client.put(f"/api/transactions/{tx['id']}", json={"type": "expense", "amount": 400, "account_id": credit}))
+    assert ok(client.get("/api/cashflow"))["available_today"] == budget
+
+
+def test_irregular_repayment_from_free_money_or_the_reserve(client):
+    irregular(client)
+    c1, c2 = two_cards(client, {"reserve": 1})
+    credit = by_title(ok(client.get("/api/accounts")), "Кредитка")["id"]
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 1000, "account_id": credit}))
+    flow = ok(client.get("/api/irregular"))
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c1, "amount": 400}))
+    assert ok(client.get("/api/irregular"))["free_balance"] == flow["free_balance"] - 400
+    ok(client.post(f"/api/accounts/{credit}/repay", json={"from_account_id": c2, "amount": 600, "funding": "reserve"}))
+    after = ok(client.get("/api/irregular"))
+    assert after["reserve_balance"] == flow["reserve_balance"] - 600
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    assert state(client)[1]["Кредитка"]["debt"] == 0

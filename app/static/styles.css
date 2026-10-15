@@ -1065,3 +1065,5 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .acc-diff.minus span{color:var(--expense)}
 .acc-diff .tiny{min-height:28px;padding:5px 9px;font-size:12px}
 #envelopePlacesBlock{margin-top:14px}
+.acc-debt{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-text);border-radius:12px;padding:8px 10px;margin:4px 0 8px;font-size:13.5px;font-weight:600}
+.acc-credit .acc-item{border-bottom:0}

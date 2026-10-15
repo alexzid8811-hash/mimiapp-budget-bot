@@ -12,7 +12,7 @@ from .payroll import PayrollConfig, payroll_events_between
 
 PAYROLL_COLUMNS = ('payroll_enabled', 'salary_gross', 'bonus_gross', 'tax_rate', 'salary_day', 'advance_day')
 INCOME_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'kind', 'is_payday', 'active')
-BILL_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'category_id', 'active')
+BILL_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'category_id', 'active', 'once_date', 'credit_account_id')
 
 
 def live_conditions(con, uid):
@@ -210,7 +210,11 @@ def bill_events(uid, start, end):
     for left, right, conditions in condition_segments(uid, start, end):
         for rule in conditions['bill_rules']:
             if rule['active']:
-                for day in occurrences([rule['day_of_month']], left, right):
+                # A one-off payment (a planned credit card repayment) is due on
+                # its date only; older plan versions have no such field.
+                once = date.fromisoformat(rule['once_date']) if rule.get('once_date') else None
+                days = ([once] if left <= once <= right else []) if once else occurrences([rule['day_of_month']], left, right)
+                for day in days:
                     events[(rule['id'], day.isoformat())] = {
                         **rule,
                         'due_date': day.isoformat(),
