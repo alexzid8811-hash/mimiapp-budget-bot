@@ -70,6 +70,8 @@ class ReserveWithdrawIn(APIModel):
     purpose: Literal["pay_expense", "to_free", "cover_overspend"]
     reason: str = Field(min_length=1, max_length=160)
     category_id: int | None = None
+    # Cards and accounts: the card an expense is paid from (the reserve's by default).
+    account_id: int | None = None
 
 
 class ReserveDepositIn(APIModel):
@@ -77,6 +79,10 @@ class ReserveDepositIn(APIModel):
     movement_date: date = Field(default_factory=lambda: clock.today())
     kind: Literal["deposit", "from_free"] = "deposit"
     reason: str = Field(default="", max_length=160)
+    # Cards and accounts, outside money: the card it came from (None: from outside).
+    account_id: int | None = None
+    # False: the money already lies on the reserve's card («Добавить в резерв»).
+    account_move: bool = True
 
 
 def _ready(user: TelegramUser) -> int:
@@ -271,10 +277,14 @@ def get_reserve(user: TelegramUser = Depends(current_user)) -> dict:
 
 
 def _insert_move(uid: int, direction: str, payload_amount: float, day: date, reason: str, kind: str,
-                 expense: dict | None = None) -> None:
+                 expense: dict | None = None, *, account_id: int | None = None, account_move: bool = True) -> None:
+    from . import accounts_engine
+    from .accounts_app import check_account
+
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            check_account(con, uid, account_id, operation="reserve")
             expense_id = None
             if expense is not None:
                 expense_id = con.execute(
@@ -282,10 +292,15 @@ def _insert_move(uid: int, direction: str, payload_amount: float, day: date, rea
                     "VALUES(?, 'expense', ?, ?, ?, ?)",
                     (uid, payload_amount, day.isoformat(), expense["category_id"], expense["note"]),
                 ).lastrowid
-            con.execute(
+            movement_id = con.execute(
                 "INSERT INTO emergency_reserve_movements"
                 "(user_id,direction,amount,movement_date,reason,kind,expense_transaction_id) VALUES(?,?,?,?,?,?,?)",
                 (uid, direction, payload_amount, day.isoformat(), reason, kind, expense_id),
+            ).lastrowid
+            # Cards and accounts: the money moves between the envelopes' cards.
+            accounts_engine.link_reserve(
+                con, uid, movement_id, kind=kind, value=payload_amount, day=day.isoformat(),
+                account_id=account_id, account_move=account_move, expense_id=expense_id,
             )
             engine.check_reserve(con, uid)
     except ValueError as exc:
@@ -315,7 +330,7 @@ def withdraw_reserve(payload: ReserveWithdrawIn, user: TelegramUser = Depends(cu
                 raise HTTPException(422, "Категория не найдена")
         expense = {"category_id": payload.category_id, "note": payload.reason}
     _insert_move(uid, "withdraw", payload.amount, payload.movement_date, payload.reason,
-                 payload.purpose, expense)
+                 payload.purpose, expense, account_id=payload.account_id if expense else None)
     return engine.reserve_snapshot(uid)
 
 
@@ -333,7 +348,9 @@ def deposit_reserve(payload: ReserveDepositIn, user: TelegramUser = Depends(curr
         if cents(payload.amount) > max(0, cents(flow.get("free_balance") or 0)):
             raise HTTPException(422, "Нельзя вернуть больше свободных денег")
         reason = reason or "Возврат из свободных денег"
-    _insert_move(uid, "deposit", payload.amount, payload.movement_date, reason, payload.kind)
+    _insert_move(uid, "deposit", payload.amount, payload.movement_date, reason, payload.kind,
+                 account_id=payload.account_id if payload.kind == "deposit" else None,
+                 account_move=payload.account_move)
     return engine.reserve_snapshot(uid)
 
 

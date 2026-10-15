@@ -284,6 +284,7 @@
     }
     const reason = $("irrReserveReason");
     if (reason) reason.required = withdraw;
+    window.accountsUi?.prepareReserve?.(mode, purpose);
     const flow = current.flow || {};
     setText("irrReserveHint", !withdraw
       ? (mode === "return" ? `Свободных денег сейчас ${money(flow.free_balance)}.` : "Деньги извне сразу попадают в резерв.")
@@ -305,10 +306,12 @@
         await request("/api/irregular/reserve/withdraw", { method: "POST", body: JSON.stringify({
           amount, movement_date, purpose, reason,
           category_id: purpose === "pay_expense" ? Number($("irrReserveCategory").value) : null,
+          ...(purpose === "pay_expense" ? (window.accountsUi?.fieldPayload?.("irrReserve") || {}) : {}),
         }) });
       } else {
         await request("/api/irregular/reserve/deposit", { method: "POST", body: JSON.stringify({
           amount, movement_date, reason, kind: mode === "return" ? "from_free" : "deposit",
+          ...(mode === "deposit" ? (window.accountsUi?.fieldPayload?.("irrReserve") || {}) : {}),
         }) });
       }
       $("irrReserveDialog").close();

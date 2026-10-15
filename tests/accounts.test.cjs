@@ -72,6 +72,8 @@ function setup(accounts = ACCOUNTS) {
   return {sandbox, get, requests, responses};
 }
 
+// A click on an element matching ``selector`` with the given data attributes.
+const hit = (selector, dataset) => ({target: {closest: sel => (sel === selector ? {dataset} : null)}});
 const body = (requests, url) => JSON.parse(requests.filter(r => r.url === url && r.body).at(-1).body);
 
 test('home shows «Всего», the accounts in order and credit cards apart', async () => {
@@ -260,7 +262,7 @@ test('an account opens its history with transfer, expense and correction actions
     {type: 'expense', id: 3, date: '2026-09-30', amount: -50, title: 'Кофе', sub: '', emoji: '☕', counted: false},
   ]};
   await get('refreshBtn').listeners.click();
-  await get('accList').listeners.click({target: {closest: () => ({dataset: {accountId: '1'}})}});
+  await get('accList').listeners.click(hit('[data-account-id]', {accountId: '1'}));
   assert.equal(get('accountHistoryDialog').open, true);
   assert.match(get('accountHistoryBalance').textContent, /55.000,00/);
   assert.match(get('accountHistoryActions').innerHTML, /Перевести[\s\S]*Записать трату с этого счёта[\s\S]*Исправить остаток/);
@@ -270,7 +272,7 @@ test('an account opens its history with transfer, expense and correction actions
   assert.match(list, /data-history-delete="transfer:5"/);
 
   // «Перевести» opens the transfer form from this account.
-  get('accountHistoryActions').listeners.click({target: {closest: () => ({dataset: {historyAction: 'transfer'}})}});
+  get('accountHistoryActions').listeners.click(hit('[data-history-action]', {historyAction: 'transfer'}));
   assert.equal(get('transferDialog').open, true);
   assert.equal(get('transferFrom').value, '1');
   assert.doesNotMatch(get('transferTo').innerHTML, /Кредитка/);
@@ -281,7 +283,7 @@ test('an account opens its history with transfer, expense and correction actions
   assert.deepEqual(body(requests, '/api/accounts/transfers'), {from_account_id: 1, to_account_id: 2, amount: 10000, date: '2026-10-15', note: '', kind: 'manual'});
 
   // «Исправить остаток» sends the real amount.
-  get('accountHistoryActions').listeners.click({target: {closest: () => ({dataset: {historyAction: 'adjust'}})}});
+  get('accountHistoryActions').listeners.click(hit('[data-history-action]', {historyAction: 'adjust'}));
   assert.equal(get('adjustDialog').open, true);
   assert.match(get('adjustTarget').value, /55.000,00/);
   get('adjustTarget').value = '55 500';
@@ -293,7 +295,7 @@ test('a credit card history offers to correct the debt', async () => {
   const {get, responses} = setup();
   responses['/api/accounts/3/history'] = {account: ACCOUNTS.accounts[2], items: []};
   await get('refreshBtn').listeners.click();
-  await get('accCredit').listeners.click({target: {closest: () => ({dataset: {accountId: '3'}})}});
+  await get('accCredit').listeners.click(hit('[data-account-id]', {accountId: '3'}));
   assert.equal(get('accountHistoryCaption').textContent, 'Долг');
   assert.match(get('accountHistoryNote').textContent, /Доступно 50.000,00/);
   assert.match(get('accountHistoryActions').innerHTML, /Исправить долг/);
@@ -321,7 +323,7 @@ test('a payday counted without confirmation is offered in «Нужно пере�
   const hints = get('accHints').innerHTML;
   assert.match(hints, /Нужно перевести \(1\)/);
   assert.match(hints, /Аванс 22\.09 не отмечена полученной — записать приход 25.000,00.₽ на 💳 Карта 1/);
-  await get('accHints').listeners.click({target: {closest: () => ({dataset: {hintIncome: '2026-09-23'}})}});
+  await get('accHints').listeners.click(hit('[data-hint-income]', {hintIncome: '2026-09-23'}));
   assert.deepEqual(body(requests, '/api/accounts/payroll-income'), {period_start: '2026-09-23'});
 });
 
@@ -340,4 +342,132 @@ test('confirming a payout lets the user pick the card', async () => {
   // Editing the amount does not ask for a card.
   sandbox.window.editCashflowIncome('2026-10-08');
   assert.equal(get('cashflowIncomeAccountField').classList.contains('hidden'), true);
+});
+
+const SPLIT = (() => {
+  const data = JSON.parse(JSON.stringify(ACCOUNTS));
+  data.accounts[0].breakdown = {envelopes: [{key: 'buffer', label: 'буфер', amount: 30000}], envelopes_total: 30000, outgoing_hints: 0, difference: 25000};
+  data.accounts[1].breakdown = {envelopes: [{key: 'spending', label: 'на траты', amount: 25000}, {key: 'piggy', label: 'копилка', amount: 80000}], envelopes_total: 105000, outgoing_hints: 0, difference: -5000};
+  data.accounts[0].envelopes = ['buffer'];
+  data.hints = [{type: 'transfer', from_account_id: 1, to_account_id: 2, amount: 15000}];
+  return data;
+})();
+
+test('home: each card shows how its money divides between envelopes and what is off', async () => {
+  const {get} = setup(SPLIT);
+  await get('refreshBtn').listeners.click();
+  const list = get('accList').innerHTML;
+  assert.match(list, /<div class="acc-split num">буфер 30.000<\/div>/);
+  assert.match(list, /на траты 25.000 · копилка 80.000/);
+  assert.match(list, /вне бюджета 25.000,00.₽/);
+  // No envelope to add to on card 1 (only the buffer lies there).
+  assert.doesNotMatch(list, /data-add-to/);
+  assert.match(list, /не хватает 5.000,00.₽[\s\S]*data-transfer-to="2"[\s\S]*Исправить остаток/);
+  assert.doesNotMatch(get('accCredit').innerHTML, /acc-split/);
+});
+
+test('«вне бюджета» on a card with the piggy bank adds it there without moving money', async () => {
+  const data = JSON.parse(JSON.stringify(SPLIT));
+  data.accounts[1].breakdown.difference = 500;
+  const {get, requests} = setup(data);
+  await get('refreshBtn').listeners.click();
+  assert.match(get('accList').innerHTML, /data-add-to="piggy" data-amount="500">Добавить в копилку/);
+  await get('accList').listeners.click(hit('[data-add-to]', {addTo: 'piggy', amount: '500'}));
+  const sent = body(requests, '/api/piggy-bank/deposit');
+  assert.equal(sent.amount, 500);
+  assert.equal(sent.account_move, false);
+});
+
+test('«не хватает» offers a transfer from the card with money outside the budget', async () => {
+  const {get} = setup(SPLIT);
+  await get('refreshBtn').listeners.click();
+  get('accList').listeners.click(hit('[data-transfer-to]', {transferTo: '2', amount: '5000'}));
+  assert.equal(get('transferDialog').open, true);
+  assert.equal(get('transferFrom').value, '1');
+  assert.equal(get('transferTo').value, '2');
+  assert.match(get('transferAmount').value, /5.000,00/);
+});
+
+test('«Нужно перевести» lists the transfer and «Перевёл» records it', async () => {
+  const {get, requests} = setup(SPLIT);
+  await get('refreshBtn').listeners.click();
+  assert.match(get('accHints').innerHTML, /Нужно перевести \(1\)[\s\S]*Переведи 15.000,00.₽ с 💳 Карта 1 на 🏦 Карта 2[\s\S]*Перевёл/);
+  await get('accHints').listeners.click(hit('[data-hint-transfer]', {hintTransfer: '1:2:15000'}));
+  const sent = body(requests, '/api/accounts/transfers');
+  assert.deepEqual([sent.from_account_id, sent.to_account_id, sent.amount, sent.kind], [1, 2, 15000, 'hint']);
+});
+
+test('«Где лежат деньги»: every envelope on a non-credit card, moving one offers to move its money', async () => {
+  const {get, requests} = setup();
+  await get('refreshBtn').listeners.click();
+  assert.equal(get('envelopePlacesBlock').classList.contains('hidden'), false);
+  const places = get('envelopePlaces').innerHTML;
+  assert.match(places, /на траты · 25.000,00.₽<select id="envelopePlace-spending" data-envelope="spending">/);
+  assert.match(places, /копилка/);
+  assert.doesNotMatch(places, /Кредитка|Старая/);
+  await get('envelopePlaces').listeners.change({target: {dataset: {envelope: 'buffer'}, value: '2'}});
+  assert.deepEqual(body(requests, '/api/accounts/envelopes/buffer'), {account_id: 2, move_money: true});
+});
+
+test('«Из чего»: the default follows the envelopes on the chosen card', async () => {
+  const data = JSON.parse(JSON.stringify(ACCOUNTS));
+  data.mode = 'irregular';
+  data.envelopes = [
+    {key: 'spending', label: 'свободные', account_id: 1, amount: 1},
+    {key: 'buffer', label: 'на обязательные', account_id: 1, amount: 1},
+    {key: 'piggy', label: 'копилка', account_id: 2, amount: 1},
+    {key: 'reserve', label: 'резерв', account_id: 6, amount: 1},
+  ];
+  data.accounts.push({id: 6, title: 'Резервный', emoji: '🛟', kind: 'savings', balance: 1, is_main: false, archived: false, opening_date: '2026-10-01', envelopes: ['reserve']});
+  data.accounts.push({id: 7, title: 'Общий', emoji: '🧺', kind: 'savings', balance: 1, is_main: false, archived: false, opening_date: '2026-10-01', envelopes: []});
+  const {get, requests} = setup(data);
+  await get('refreshBtn').listeners.click();
+  get('quickExpenseBtn').listeners.click();
+  const choose = id => { get('expenseAccount').value = String(id); get('expenseAccount').listeners.change(); return get('expenseFunding'); };
+  assert.equal(get('expenseAccount').value, '1');
+  assert.equal(get('expenseFunding').value, 'spending');
+  assert.doesNotMatch(get('expenseFunding').innerHTML, /Из копилки|Из резерва/);
+  assert.equal(choose(2).value, 'piggy');
+  assert.match(get('expenseFunding').innerHTML, /Из бюджета на траты[\s\S]*Из копилки[\s\S]*Вне бюджета/);
+  assert.equal(choose(6).value, 'reserve');
+  assert.equal(choose(7).value, 'none');
+  // Piggy bank and reserve on one card: the choice is required.
+  data.envelopes[3].account_id = 2;
+  const again = setup(data);
+  await again.get('refreshBtn').listeners.click();
+  again.get('quickExpenseBtn').listeners.click();
+  again.get('expenseAccount').value = '2';
+  again.get('expenseAccount').listeners.change();
+  assert.equal(again.get('expenseFunding').value, '');
+  again.get('expenseAmount').value = '100';
+  again.get('expenseCategory').value = '7';
+  await again.get('expenseForm').listeners.submit({preventDefault() {}, target: again.get('expenseForm')});
+  assert.equal(again.requests.filter(r => r.url === '/api/transactions' && r.method === 'POST').length, 0);
+  again.get('expenseFunding').value = 'reserve';
+  await again.get('expenseForm').listeners.submit({preventDefault() {}, target: again.get('expenseForm')});
+  const sent = body(again.requests, '/api/transactions');
+  assert.deepEqual([sent.account_id, sent.funding_envelope], [2, 'reserve']);
+  assert.equal(requests.length > 0, true);
+});
+
+test('piggy bank: outside money comes from outside or a card; a withdrawal goes to a card or outside', async () => {
+  const {get, requests} = setup();
+  await get('refreshBtn').listeners.click();
+  get('piggyDepositBtn').listeners.click();
+  assert.equal(get('piggyAccountField').classList.contains('hidden'), false);
+  assert.equal(get('piggyAccountLabel').textContent, 'Откуда');
+  assert.match(get('piggyAccount').innerHTML, /<option value="">Извне — не с моих карт<\/option>/);
+  assert.equal(get('piggyAccount').value, '');
+  get('piggyAmount').value = '100';
+  await get('piggyForm').listeners.submit({preventDefault() {}});
+  assert.equal(body(requests, '/api/piggy-bank/deposit').account_id, null);
+  get('piggyWithdrawBtn').listeners.click();
+  assert.equal(get('piggyAccountLabel').textContent, 'Куда');
+  assert.equal(get('piggyAccount').value, '2');
+  get('piggyAmount').value = '50';
+  await get('piggyForm').listeners.submit({preventDefault() {}});
+  assert.equal(body(requests, '/api/piggy-bank/withdraw').account_id, 2);
+  // The day's remainder moves between the envelopes' cards on its own.
+  get('piggyTransferBtn').listeners.click();
+  assert.equal(get('piggyAccountField').classList.contains('hidden'), true);
 });

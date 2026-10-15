@@ -34,6 +34,11 @@ class PiggyBankMovementIn(APIModel):
     movement_date: date = Field(default_factory=lambda: clock.today())
     note: str = Field(default="", max_length=160)
     source: Literal["external", "daily_budget"] = "external"
+    # Cards and accounts, outside money only: the card it came from (a
+    # deposit) or went to (a withdrawal); None: from or to outside.
+    account_id: int | None = None
+    # False: the money already lies on the piggy bank's card («Добавить в копилку»).
+    account_move: bool = True
 
 
 class PiggyToCardIn(APIModel):
@@ -90,7 +95,7 @@ def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
 def piggy_bank_snapshot(user_id: int, limit: int = 80) -> dict:
     movements = legacy.rows(
         "SELECT id,direction,amount,movement_date,note,source,purpose,bill_payment_id,"
-        "income_transaction_id,created_at FROM piggy_bank_movements "
+        "income_transaction_id,expense_transaction_id,created_at FROM piggy_bank_movements "
         "WHERE user_id=? ORDER BY movement_date DESC,id DESC LIMIT ?",
         (user_id, min(max(limit, 1), 300)),
     )
@@ -239,14 +244,24 @@ def get_piggy_bank(user: TelegramUser = Depends(current_user)) -> dict:
 
 
 def _insert_piggy(user_id: int, direction: str, amount: float, day: date, note: str,
-                  source: str, purpose: str | None = None) -> dict:
+                  source: str, purpose: str | None = None, *, account_id: int | None = None,
+                  account_move: bool = True) -> dict:
+    from . import accounts_engine
+    from .accounts_app import check_account
+
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
+        check_account(con, user_id, account_id, operation="piggy")
         movement_id = con.execute(
             "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
             "VALUES(?,?,?,?,?,?,?)",
             (user_id, direction, amount, day.isoformat(), note, source, purpose),
         ).lastrowid
+        # Cards and accounts: the money moves between the envelopes' cards.
+        accounts_engine.link_piggy(
+            con, user_id, movement_id, direction=direction, source=source, value=amount,
+            day=day.isoformat(), account_id=account_id, account_move=account_move,
+        )
         try:
             check_piggy_history(con, user_id)
         except ValueError as exc:
@@ -272,7 +287,8 @@ def add_piggy_bank_movement(
         if cents(payload.amount) > max(0, cents(flow.get("available_today") or 0)):
             raise HTTPException(422, "Нельзя перенести больше неизрасходованного остатка за день")
     return _insert_piggy(user_id, direction, payload.amount, payload.movement_date,
-                         payload.note, payload.source)
+                         payload.note, payload.source, account_id=payload.account_id,
+                         account_move=payload.account_move)
 
 
 @app.post("/api/piggy-bank/deposit")
@@ -320,7 +336,8 @@ def delete_piggy_bank_movement(
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         movement = con.execute(
-            "SELECT income_transaction_id,bill_payment_id FROM piggy_bank_movements WHERE id=? AND user_id=?",
+            "SELECT income_transaction_id,bill_payment_id,expense_transaction_id FROM piggy_bank_movements "
+            "WHERE id=? AND user_id=?",
             (movement_id, uid),
         ).fetchone()
         if movement is None:
@@ -331,6 +348,8 @@ def delete_piggy_bank_movement(
             raise HTTPException(422, "Это пополнение создано доходом: измените или удалите сам доход")
         if movement["bill_payment_id"] is not None:
             raise HTTPException(422, "Это остаток обязательного платежа: измените сумму в самом платеже")
+        if movement["expense_transaction_id"] is not None:
+            raise HTTPException(422, "Это трата из копилки: измените или удалите саму трату")
         con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
         try:
             check_piggy_history(con, uid)

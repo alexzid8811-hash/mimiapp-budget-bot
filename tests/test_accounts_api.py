@@ -407,3 +407,274 @@ def test_irregular_income_keeps_its_card(client):
     assert balances(client)[0]["Карта 2"] == 17000
     listed = ok(client.get("/api/irregular/incomes"))[0]
     assert listed["account_id"] == c2
+
+
+# ---------- Stage 3: envelopes on cards, linked transfers, hints ----------
+
+
+def amounts(client):
+    return {e["key"]: e["amount"] for e in ok(client.get("/api/accounts", params={"with_amounts": True}))["envelopes"]}
+
+
+def two_cards(client, envelopes):
+    """Card 1 (main) and card 2, their balances equal to their envelopes."""
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 8000}))
+    env = amounts(client)
+    cards = {0: 0, 1: 0}
+    for key, value in env.items():
+        cards[envelopes.get(key, 0)] += value
+    snap = setup(client, accounts=[
+        {"title": "Карта 1", "balance": cards[0], "is_main": True},
+        {"title": "Карта 2", "balance": cards[1]},
+        {"title": "Кредитка", "kind": "credit", "credit_limit": 50000},
+    ], envelopes=envelopes)
+    return by_title(snap, "Карта 1")["id"], by_title(snap, "Карта 2")["id"]
+
+
+def state(client):
+    snap = ok(client.get("/api/accounts"))
+    cards = {a["title"]: a for a in snap["accounts"]}
+    return snap, cards
+
+
+def differences(client):
+    _, cards = state(client)
+    return {t: a["breakdown"]["difference"] for t, a in cards.items() if a["breakdown"] is not None}
+
+
+def linked(client):
+    with connect() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT from_account_id,to_account_id,amount,kind,piggy_movement_id,reserve_movement_id "
+            "FROM account_transfers WHERE kind='linked' ORDER BY id")]
+
+
+def test_breakdown_after_setup_is_balanced_and_several_envelopes_share_a_card(client):
+    two_cards(client, {"piggy": 1})
+    snap, cards = state(client)
+    assert cards["Карта 1"]["envelopes"] == ["spending", "buffer"]
+    labels = [e["label"] for e in cards["Карта 1"]["breakdown"]["envelopes"]]
+    assert labels == ["на траты", "буфер"]
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    assert cards["Кредитка"]["breakdown"] is None
+
+
+def test_piggy_from_the_day_creates_a_transfer_only_between_different_cards(client):
+    c1, c2 = two_cards(client, {"piggy": 1})
+    movement = ok(client.post("/api/piggy-bank/deposit", json={"amount": 50, "source": "daily_budget"}))["movement"]
+    assert linked(client) == [{"from_account_id": c1, "to_account_id": c2, "amount": 50, "kind": "linked",
+                               "piggy_movement_id": movement["id"], "reserve_movement_id": None}]
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    # «Копилка → карта» goes back.
+    ok(client.post("/api/piggy-bank/to-card", json={"amount": 20, "purpose": "today"}))
+    assert linked(client)[-1]["from_account_id"] == c2 and linked(client)[-1]["to_account_id"] == c1
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    # Deleting the operation deletes its transfer.
+    ok(client.delete(f"/api/piggy-bank/movements/{movement['id']}"))
+    assert [t["amount"] for t in linked(client)] == [20]
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+
+
+def test_piggy_on_the_same_card_needs_no_transfer(client):
+    two_cards(client, {})
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 50, "source": "daily_budget"}))
+    assert linked(client) == []
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+
+
+def test_piggy_outside_money_from_outside_from_a_card_or_already_there(client):
+    c1, c2 = two_cards(client, {"piggy": 1})
+    before = state(client)[1]
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 100}))                              # from outside
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 30, "account_id": c1}))            # from card 1
+    _, cards = state(client)
+    assert cards["Карта 2"]["balance"] == before["Карта 2"]["balance"] + 130
+    assert cards["Карта 1"]["balance"] == before["Карта 1"]["balance"] - 30
+    # Outside money taken from card 1 was not outside the budget there.
+    assert differences(client) == {"Карта 1": -30, "Карта 2": 0}
+    # «Исправить остаток» +500 (interest), then «Добавить в копилку»: no money moves.
+    ok(client.post(f"/api/accounts/{c2}/adjust", json={"target": cards["Карта 2"]["balance"] + 500}))
+    assert differences(client)["Карта 2"] == 500
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 500, "account_move": False}))
+    assert differences(client) == {"Карта 1": -30, "Карта 2": 0}
+    assert state(client)[1]["Карта 2"]["balance"] == cards["Карта 2"]["balance"] + 500
+
+
+def test_piggy_withdrawal_to_a_card_or_outside(client):
+    c1, c2 = two_cards(client, {"piggy": 1})
+    before = state(client)[1]
+    ok(client.post("/api/piggy-bank/withdraw", json={"amount": 100, "account_id": c1}))
+    ok(client.post("/api/piggy-bank/withdraw", json={"amount": 40}))
+    _, cards = state(client)
+    assert cards["Карта 2"]["balance"] == before["Карта 2"]["balance"] - 140
+    assert cards["Карта 1"]["balance"] == before["Карта 1"]["balance"] + 100
+    assert linked(client)[-1]["to_account_id"] is None
+    # Money withdrawn to card 1 is outside the budget there.
+    assert differences(client) == {"Карта 1": 100, "Карта 2": 0}
+
+
+def test_expense_from_the_piggy_bank_keeps_the_daily_budget(client):
+    c1, c2 = two_cards(client, {"piggy": 1})
+    flow = ok(client.get("/api/cashflow"))
+    piggy = ok(client.get("/api/piggy-bank"))["balance"]
+    tx = ok(client.post("/api/transactions", json={"type": "expense", "amount": 2000, "account_id": c2,
+                                                   "funding_envelope": "piggy", "category_id": 1}))
+    assert tx["funding_envelope"] == "piggy"
+    assert ok(client.get("/api/cashflow"))["available_today"] == flow["available_today"]
+    assert ok(client.get("/api/piggy-bank"))["balance"] == piggy - 2000
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    assert ok(client.get("/api/transactions"))[0]["category_id"] == 1
+    movement = next(m for m in ok(client.get("/api/piggy-bank"))["movements"] if m["expense_transaction_id"])
+    assert client.delete(f"/api/piggy-bank/movements/{movement['id']}").status_code == 422
+    # Editing follows; switching to «из бюджета» moves it back to the day.
+    ok(client.put(f"/api/transactions/{tx['id']}", json={"type": "expense", "amount": 1500}))
+    assert ok(client.get("/api/piggy-bank"))["balance"] == piggy - 1500
+    ok(client.put(f"/api/transactions/{tx['id']}", json={"type": "expense", "amount": 1500,
+                                                         "funding_envelope": "spending"}))
+    assert ok(client.get("/api/piggy-bank"))["balance"] == piggy
+    assert ok(client.get("/api/cashflow"))["available_today"] == flow["available_today"] - 1500
+    # More than the piggy bank holds is refused.
+    response = client.post("/api/transactions", json={"type": "expense", "amount": piggy + 1, "account_id": c2,
+                                                      "funding_envelope": "piggy"})
+    assert response.status_code == 422
+
+
+def test_expense_outside_the_budget_changes_only_the_card(client):
+    c1, _ = two_cards(client, {})
+    flow = ok(client.get("/api/cashflow"))
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 700, "account_id": c1,
+                                              "funding_envelope": "none"}))
+    assert ok(client.get("/api/cashflow"))["available_today"] == flow["available_today"]
+    assert differences(client)["Карта 1"] == -700
+    assert client.post("/api/transactions", json={"type": "expense", "amount": 1, "funding_envelope": "reserve"}).status_code == 422
+
+
+def test_expense_from_spending_on_another_card_asks_for_a_transfer(client):
+    c1, c2 = two_cards(client, {"piggy": 1})
+    ok(client.post("/api/transactions", json={"type": "expense", "amount": 300, "account_id": c2,
+                                              "funding_envelope": "spending"}))
+    snap, _ = state(client)
+    hints = [h for h in snap["hints"] if h["type"] == "transfer"]
+    assert hints == [{"type": "transfer", "from_account_id": c1, "to_account_id": c2, "amount": 300}]
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": c2,
+                                                    "amount": 300, "kind": "hint"}))
+    assert [h for h in state(client)[0]["hints"] if h["type"] == "transfer"] == []
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+
+
+def test_bill_remainder_to_the_piggy_bank_moves_between_cards(client):
+    with connect() as con:
+        con.execute("INSERT INTO bill_rules(user_id,title,amount,day_of_month) VALUES(1,'Интернет',1000,14)")
+    c1, c2 = two_cards(client, {"piggy": 1})
+    bill = client.get("/api/plan").json()[0]
+    payment = ok(client.post(f"/api/bills/{bill['id']}/pay", json={"due_date": bill["due_date"]}))
+    assert payment["account_id"] == c1                      # the buffer's card by default
+    ok(client.put(f"/api/bill-payments/{payment['id']}", json={"amount": 800, "remainder_destination": "piggy"}))
+    assert [(t["from_account_id"], t["to_account_id"], t["amount"]) for t in linked(client)] == [(c1, c2, 200)]
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    ok(client.put(f"/api/bill-payments/{payment['id']}", json={"amount": 700, "remainder_destination": "piggy"}))
+    assert [t["amount"] for t in linked(client)] == [300]
+    ok(client.put(f"/api/bill-payments/{payment['id']}", json={"amount": 700, "remainder_destination": "budget"}))
+    assert linked(client) == []
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+
+
+def test_moving_an_envelope_with_its_money(client):
+    c1, c2 = two_cards(client, {})
+    snap = ok(client.put("/api/accounts/envelopes/piggy", json={"account_id": c2, "move_money": True}))
+    assert by_title(snap, "Карта 2")["envelopes"] == ["piggy"]
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    with connect() as con:
+        assert con.execute("SELECT kind,amount FROM account_transfers").fetchall()[0]["kind"] == "reassign"
+    # Without the money: the old card has it outside the budget, the new one misses it.
+    ok(client.put("/api/accounts/envelopes/piggy", json={"account_id": c1}))
+    diff = differences(client)
+    assert diff["Карта 2"] == -diff["Карта 1"] > 0
+    credit = by_title(snap, "Кредитка")["id"]
+    assert client.put("/api/accounts/envelopes/piggy", json={"account_id": credit}).status_code == 422
+    assert client.put("/api/accounts/envelopes/reserve", json={"account_id": c1}).status_code == 422
+
+
+def test_payday_hint_when_buffer_and_spending_lie_apart(client, monkeypatch):
+    c1, c2 = two_cards(client, {"spending": 1})
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 22))
+    rows = ok(client.get("/api/cashflow"))["periods"]
+    key = next(r for r in rows if r["payday"] == "2026-09-22")["override_key"]
+    ok(client.put(f"/api/cashflow/income-overrides/{key}", json={"amount": 100000, "confirmed": True}))
+    snap, cards = state(client)
+    hint = next(h for h in snap["hints"] if h["type"] == "transfer")
+    assert (hint["from_account_id"], hint["to_account_id"]) == (c1, c2)
+    assert differences(client) == {"Карта 1": 0, "Карта 2": -hint["amount"]}
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": c2,
+                                                    "amount": hint["amount"], "kind": "hint"}))
+    assert [h for h in state(client)[0]["hints"] if h["type"] == "transfer"] == []
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+
+
+def irregular(client, reserve_total=20000):
+    ok(client.put("/api/budget-mode", json={"budget_mode": "irregular", "start_date": TODAY.isoformat(),
+                                             "start_total": 30000, "start_reserve": reserve_total}))
+
+
+def test_irregular_income_reserve_share_is_a_hint_and_reserve_moves_are_linked(client):
+    irregular(client)
+    c1, c2 = two_cards(client, {"piggy": 1, "reserve": 1})
+    ok(client.post("/api/irregular/incomes", json={"amount": 20000, "account_id": c1}))
+    snap, _ = state(client)
+    hint = next(h for h in snap["hints"] if h["type"] == "transfer")
+    assert (hint["from_account_id"], hint["to_account_id"], hint["amount"]) == (c1, c2, 2000)
+    assert differences(client) == {"Карта 1": 0, "Карта 2": -2000}
+    ok(client.post("/api/accounts/transfers", json={"from_account_id": c1, "to_account_id": c2,
+                                                    "amount": 2000, "kind": "hint"}))
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    # Reserve -> free money: a linked transfer back to card 1.
+    ok(client.post("/api/irregular/reserve/withdraw", json={"amount": 4000, "purpose": "to_free", "reason": "нужно"}))
+    assert linked(client)[-1]["from_account_id"] == c2 and linked(client)[-1]["reserve_movement_id"]
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    # An expense paid from the reserve is paid from its card; the day does not change.
+    flow = ok(client.get("/api/irregular"))
+    ok(client.post("/api/irregular/reserve/withdraw", json={"amount": 5000, "purpose": "pay_expense",
+                                                           "reason": "телефон", "category_id": 1}))
+    tx = ok(client.get("/api/transactions"))[0]
+    assert (tx["account_id"], tx["funding_envelope"]) == (c2, "reserve")
+    assert ok(client.get("/api/irregular"))["available_today"] == flow["available_today"]
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    # Free money back to the reserve, outside money into the reserve from card 1.
+    ok(client.post("/api/irregular/reserve/deposit", json={"amount": 300, "kind": "from_free"}))
+    ok(client.post("/api/irregular/reserve/deposit", json={"amount": 100, "account_id": c1}))
+    assert differences(client) == {"Карта 1": -100, "Карта 2": 0}
+    movement = next(m for m in ok(client.get("/api/irregular/reserve"))["movements"]
+                    if m["kind"] == "deposit" and m["amount"] == 100)
+    ok(client.delete(f"/api/irregular/reserve/movements/{movement['id']}"))
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+
+
+def test_expense_from_the_reserve_with_the_expense_form(client):
+    irregular(client)
+    _, c2 = two_cards(client, {"reserve": 1})
+    reserve = ok(client.get("/api/irregular"))["reserve_balance"]
+    flow = ok(client.get("/api/irregular"))["available_today"]
+    tx = ok(client.post("/api/transactions", json={"type": "expense", "amount": 500, "account_id": c2,
+                                                   "funding_envelope": "reserve", "category_id": 2}))
+    snap = ok(client.get("/api/irregular"))
+    assert (snap["reserve_balance"], snap["available_today"]) == (reserve - 500, flow)
+    assert differences(client) == {"Карта 1": 0, "Карта 2": 0}
+    ok(client.delete(f"/api/transactions/{tx['id']}"))
+    assert ok(client.get("/api/irregular"))["reserve_balance"] == reserve
+
+
+def test_linked_transfers_are_not_created_while_the_feature_is_off(client):
+    two_cards(client, {"piggy": 1})
+    ok(client.put("/api/accounts/settings", json={"enabled": False}))
+    ok(client.post("/api/piggy-bank/deposit", json={"amount": 50, "source": "daily_budget"}))
+    assert linked(client) == []
+
+
+def test_envelope_amounts_do_not_depend_on_cards(client):
+    before = amounts(client)
+    two_cards(client, {"piggy": 1})
+    after = amounts(client)
+    assert after["spending"] == before["spending"] and after["buffer"] == before["buffer"]
+    ok(client.put("/api/accounts/envelopes/buffer", json={"account_id": by_title(ok(client.get("/api/accounts")), "Карта 2")["id"],
+                                                          "move_money": True}))
+    assert amounts(client) == after

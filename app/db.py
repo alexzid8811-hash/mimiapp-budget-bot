@@ -467,6 +467,7 @@ def _ensure_accounts_schema(con: sqlite3.Connection) -> None:
         "envelope TEXT NOT NULL CHECK(envelope IN ('spending','buffer','piggy','reserve')), "
         "account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, "
         "assigned_on TEXT NOT NULL, "
+        "assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
         "PRIMARY KEY(user_id, envelope))"
     )
     con.execute(
@@ -528,6 +529,9 @@ def _ensure_accounts_schema(con: sqlite3.Connection) -> None:
         "ON account_incomes(user_id, payroll_period_start) WHERE payroll_period_start IS NOT NULL"
     )
 
+    envelope_columns = {row[1] for row in con.execute("PRAGMA table_info(envelope_accounts)")}
+    if "assigned_at" not in envelope_columns:
+        con.execute("ALTER TABLE envelope_accounts ADD COLUMN assigned_at TEXT")
     transaction_columns = {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
     if "account_id" not in transaction_columns:
         con.execute("ALTER TABLE transactions ADD COLUMN account_id INTEGER REFERENCES accounts(id)")

@@ -300,6 +300,8 @@
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
+    // Cards and accounts: outside money comes from / goes to a card or outside.
+    window.accountsUi?.preparePiggy?.(mode);
     document.getElementById("piggyDialog").showModal();
   }
 
@@ -315,6 +317,7 @@
     document.getElementById("piggyAmount").value = "";
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
+    window.accountsUi?.preparePiggy?.("dailyToPiggy");
     document.getElementById("piggyDialog").showModal();
   });
   document.getElementById("piggyToCardBtn")?.addEventListener("click", () => openMovement("toCard"));
@@ -337,7 +340,8 @@
       : `/api/piggy-bank/${document.getElementById("piggyDirection").value}`;
     const body = isToCard
       ? { amount, movement_date, note, purpose }
-      : { amount, movement_date, note, source: document.getElementById("piggySource").value };
+      : { amount, movement_date, note, source: document.getElementById("piggySource").value,
+          ...(window.accountsUi?.fieldPayload?.("piggy") || {}) };
     try {
       await request(path, { method: "POST", body: JSON.stringify(body) });
       document.getElementById("piggyDialog").close();

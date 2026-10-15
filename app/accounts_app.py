@@ -81,6 +81,12 @@ class AdjustIn(APIModel):
     note: str = Field(default="", max_length=160)
 
 
+class EnvelopeIn(APIModel):
+    account_id: int
+    # Move the envelope's current amount from the old card to the new one.
+    move_money: bool = False
+
+
 class PayrollIncomeIn(APIModel):
     period_start: Date
     account_id: int | None = None
@@ -278,13 +284,49 @@ def setup_accounts(payload: SetupIn, user: TelegramUser = Depends(current_user))
             con.execute(
                 "INSERT INTO envelope_accounts(user_id,envelope,account_id,assigned_on) VALUES(?,?,?,?) "
                 "ON CONFLICT(user_id,envelope) DO UPDATE SET account_id=excluded.account_id,"
-                "assigned_on=excluded.assigned_on",
+                "assigned_on=excluded.assigned_on,assigned_at=CURRENT_TIMESTAMP",
                 (uid, key, account_id, today),
             )
         con.execute(
             "UPDATE settings SET main_account_id=?,accounts_enabled=1,accounts_disabled_at=NULL WHERE user_id=?",
             (ids[mains[0]], uid),
         )
+    return engine.snapshot(uid)
+
+
+@router.put("/accounts/envelopes/{envelope}")
+def place_envelope(envelope: Envelope, payload: EnvelopeIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """«Где лежат деньги»: put an envelope on another card.  Optionally its
+    current amount moves with it in one transfer."""
+    uid = _ready(user)
+    with connect() as con:
+        settings = engine.settings_for(con, uid)
+        if envelope not in engine.ENVELOPES[settings["mode"]]:
+            raise HTTPException(422, "Этого конверта нет в текущем режиме")
+        target = _account(con, uid, payload.account_id)
+        if target["kind"] == "credit":
+            raise HTTPException(422, "Конверт нельзя положить на кредитку")
+        if target["archived"]:
+            raise HTTPException(422, "Счёт в архиве: выберите другой")
+        old = engine.placement(con, uid)[0].get(envelope)
+    amounts = engine.envelope_amounts(uid, settings["mode"]) if payload.move_money else None
+    today = clock.today().isoformat()
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(
+            "INSERT INTO envelope_accounts(user_id,envelope,account_id,assigned_on) VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id,envelope) DO UPDATE SET account_id=excluded.account_id,"
+            "assigned_on=excluded.assigned_on,assigned_at=CURRENT_TIMESTAMP",
+            (uid, envelope, payload.account_id, today),
+        )
+        value = amounts.get(envelope, 0) if amounts else 0
+        if old is not None and old != payload.account_id and value > 0:
+            con.execute(
+                "INSERT INTO account_transfers(user_id,from_account_id,to_account_id,amount,date,kind,note) "
+                "VALUES(?,?,?,?,?,'reassign',?)",
+                (uid, old, payload.account_id, value / 100, today,
+                 engine.ENVELOPE_LABELS[settings["mode"]][envelope]),
+            )
     return engine.snapshot(uid)
 
 

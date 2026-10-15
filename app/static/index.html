@@ -224,6 +224,11 @@
             <p class="muted category-order-help">Нажмите на счёт, чтобы изменить его. Зажмите ручку ☰ и перетащите на нужное место.</p>
             <div id="accountsList" class="category-order-list"></div>
             <div id="accountsArchive"></div>
+            <div id="envelopePlacesBlock" class="hidden">
+              <h4>Где лежат деньги</h4>
+              <p class="muted">На какой карте лежит каждый конверт бюджета. Несколько конвертов могут лежать на одной карте.</p>
+              <div id="envelopePlaces"></div>
+            </div>
           </div>
         </div>
 
@@ -354,6 +359,7 @@
       </div>
       <label>Дата<input id="expenseDate" type="date" required /></label>
       <label id="expenseAccountField" class="hidden">С какой карты<select id="expenseAccount"></select></label>
+      <label id="expenseFundingField" class="hidden">Из чего<select id="expenseFunding"></select></label>
       <p class="muted hidden" id="expenseAccountHint"></p>
       <label>Комментарий<input id="expenseNote" maxlength="200" placeholder="Например, продукты" /></label>
       <button class="primary big" value="default" id="saveExpenseBtn">Записать расход</button>
@@ -428,6 +434,7 @@
       <label>Сумма<input id="irrReserveAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label id="irrCategoryField">Категория расхода<select id="irrReserveCategory"></select></label>
       <label>Дата<input id="irrReserveDate" type="date" required /></label>
+      <label id="irrReserveAccountField" class="hidden"><span id="irrReserveAccountLabel">Откуда</span><select id="irrReserveAccount"></select></label>
       <label>Причина<input id="irrReserveReason" maxlength="160" placeholder="Например, сломался телефон" /></label>
       <p class="muted" id="irrReserveHint"></p>
       <button class="primary big" value="default" id="saveIrrReserveBtn">Сохранить</button>
@@ -592,6 +599,7 @@
       </select></label>
       <label>Сумма<input id="piggyAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="piggyDate" type="date" required /></label>
+      <label id="piggyAccountField" class="hidden"><span id="piggyAccountLabel">Откуда</span><select id="piggyAccount"></select></label>
       <label>Комментарий<input id="piggyNote" maxlength="160" placeholder="Необязательно" /></label>
       <button class="primary big" value="default" id="savePiggyBtn">Сохранить</button>
     </form>
@@ -629,14 +637,14 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261015-accounts-2"></script>
+  <script src="/static/app.js?v=20261015-accounts-3"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
-  <script src="/static/buffer-ui.js?v=20261015-accounts"></script>
+  <script src="/static/buffer-ui.js?v=20261015-accounts-3"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261009-average-text"></script>
-  <script src="/static/irregular-ui.js?v=20261015-accounts"></script>
-  <script src="/static/accounts-ui.js?v=20261015-accounts-2"></script>
+  <script src="/static/irregular-ui.js?v=20261015-accounts-3"></script>
+  <script src="/static/accounts-ui.js?v=20261015-accounts-3"></script>
   <script src="/static/home-layout.js?v=20261012-masonry"></script>
 </body>
 </html>

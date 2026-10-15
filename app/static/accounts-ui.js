@@ -9,6 +9,12 @@
   }).format(Number(v || 0));
   const esc = s => String(s ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
   const parseMoney = v => window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(String(v ?? "")) : Number(v) || 0;
+  // «25 000» in the breakdown lines: no currency, kopecks only when there are some.
+  const short = v => {
+    const n = Number(v || 0);
+    const digits = Number.isInteger(Math.round(n * 100) / 100) ? 0 : 2;
+    return new Intl.NumberFormat("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
+  };
   const fmtDay = iso => (iso ? new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" }).format(new Date(`${iso}T12:00:00`)) : "");
   const fmtInput = v => (window.ruMoneyInput?.formatMoney ? window.ruMoneyInput.formatMoney(String(v)) : String(v));
   const notify = message => { if (typeof toast === "function") toast(message); };
@@ -49,16 +55,62 @@
     const regular = active().filter(a => a.kind !== "credit");
     const credit = active().filter(a => a.kind === "credit");
     $("accList").innerHTML = regular.map(a => `
-      <button class="acc-row" type="button" data-account-id="${a.id}">
-        <span class="acc-name">${accountName(a)}${a.is_main ? ' <i class="acc-main" title="Основной счёт">⭐</i>' : ""}</span>
-        <b class="num">${money(a.balance)}</b>
-      </button>`).join("") || `<div class="empty">Добавьте карты и счета в настройках.</div>`;
+      <div class="acc-item">
+        <button class="acc-row" type="button" data-account-id="${a.id}">
+          <span class="acc-name">${accountName(a)}${a.is_main ? ' <i class="acc-main" title="Основной счёт">⭐</i>' : ""}</span>
+          <b class="num">${money(a.balance)}</b>
+        </button>${breakdownLines(a)}
+      </div>`).join("") || `<div class="empty">Добавьте карты и счета в настройках.</div>`;
     $("accCredit").innerHTML = credit.map(a => `
       <button class="acc-row credit" type="button" data-account-id="${a.id}">
         <span class="acc-name">${accountName(a)}</span>
         <small class="num">${creditLine(a)}</small>
       </button>`).join("");
     show("accCredit", credit.length > 0);
+  }
+
+  // How a card's money divides between the envelopes lying on it, and what is
+  // outside the budget there or missing.
+  function breakdownLines(a) {
+    const part = a.breakdown;
+    if (!part) return "";
+    const lines = [];
+    if (part.envelopes.length) {
+      lines.push(`<div class="acc-split num">${part.envelopes.map(e => `${esc(e.label)} ${short(e.amount)}`).join(" · ")}</div>`);
+    }
+    const diff = Number(part.difference) || 0;
+    if (diff >= 0.005) {
+      const target = ["piggy", "reserve"].find(key => a.envelopes.includes(key));
+      const label = target === "piggy" ? "Добавить в копилку" : "Добавить в резерв";
+      const add = target ? `<button class="tiny" type="button" data-add-to="${target}" data-amount="${diff}">${label}</button>` : "";
+      lines.push(`<div class="acc-diff plus"><span>вне бюджета ${money(diff)}</span>${add}</div>`);
+    } else if (diff <= -0.005) {
+      lines.push(`<div class="acc-diff minus"><span>не хватает ${money(-diff)}</span><button class="tiny" type="button" data-transfer-to="${a.id}" data-amount="${-diff}">Перевести</button><button class="tiny" type="button" data-adjust-account="${a.id}">Исправить остаток</button></div>`);
+    }
+    return lines.join("");
+  }
+
+  async function addToEnvelope(key, value) {
+    try {
+      if (key === "piggy") {
+        await request("/api/piggy-bank/deposit", { method: "POST", body: JSON.stringify({
+          amount: value, source: "external", account_move: false, note: "Было на карте вне бюджета",
+        }) });
+      } else {
+        await request("/api/irregular/reserve/deposit", { method: "POST", body: JSON.stringify({
+          amount: value, kind: "deposit", account_move: false, reason: "Было на карте вне бюджета",
+        }) });
+      }
+      notify(key === "piggy" ? "Добавлено в копилку" : "Добавлено в резерв");
+      await reload();
+    } catch (error) { notify(error.message); }
+  }
+
+  // «Не хватает»: the money most likely comes from a card with money outside the budget.
+  function transferTo(id, value) {
+    const donors = active().filter(a => a.kind !== "credit" && a.id !== Number(id))
+      .sort((x, y) => (Number(y.breakdown?.difference) || 0) - (Number(x.breakdown?.difference) || 0));
+    openTransfer({ from: donors[0]?.id ?? null, to: Number(id), amount: value });
   }
 
   // ---------- Settings ----------
@@ -96,6 +148,13 @@
     }
     const list = $("accountsList");
     if (list) list.innerHTML = active().map(settingsRow).join("");
+    const places = $("envelopePlaces");
+    show("envelopePlacesBlock", enabled());
+    if (places) {
+      const regular = active().filter(a => a.kind !== "credit");
+      places.innerHTML = enabled() ? (snap.envelopes || []).map(e => `
+        <label>${esc(e.label)}${e.amount !== null && e.amount !== undefined ? ` · ${money(e.amount)}` : ""}<select id="envelopePlace-${e.key}" data-envelope="${e.key}">${regular.map(a => `<option value="${a.id}"${a.id === e.account_id ? " selected" : ""}>${accountName(a)}</option>`).join("")}</select></label>`).join("") : "";
+    }
     const box = $("accountsArchive");
     if (box) {
       const items = archived();
@@ -448,9 +507,81 @@
     return { account_id: value ? Number(value) : null };
   }
 
-  const prepareExpense = (transaction = null) =>
+  // «Из чего»: the daily budget always; the piggy bank or the reserve when it
+  // lies on the chosen card; «Вне бюджета» always.
+  const FUNDING_LABELS = { spending: "Из бюджета на траты", piggy: "Из копилки", reserve: "Из резерва", none: "Вне бюджета" };
+
+  function fundingChoice(accountId) {
+    const here = (snap?.envelopes || []).filter(e => e.account_id === Number(accountId)).map(e => e.key);
+    const options = ["spending", ...["piggy", "reserve"].filter(k => here.includes(k)), "none"];
+    const fallback = here.includes("spending") ? "spending"
+      : here.includes("piggy") && here.includes("reserve") ? ""
+        : here.includes("piggy") ? "piggy" : here.includes("reserve") ? "reserve" : "none";
+    return { options, fallback };
+  }
+
+  function fillFunding(current) {
+    const field = $("expenseFundingField");
+    const select = $("expenseFunding");
+    if (!field || !select) return;
+    const account = byId($("expenseAccount")?.value);
+    const on = enabled() && !$("expenseAccountField")?.classList.contains("hidden") && account && account.kind !== "credit";
+    field.classList.toggle("hidden", !on);
+    if (!on) return;
+    const { options, fallback } = fundingChoice(account.id);
+    const value = current && options.includes(current) ? current : fallback;
+    select.innerHTML = (value === "" ? '<option value="">Выберите…</option>' : "")
+      + options.map(k => `<option value="${k}">${FUNDING_LABELS[k]}</option>`).join("");
+    select.value = value;
+  }
+
+  function prepareExpense(transaction = null) {
     prepareField("expense", { transaction, fallback: envelopeAccountId("spending") });
-  const expensePayload = () => fieldPayload("expense");
+    const current = transaction ? (transaction.funding_envelope || "spending") : undefined;
+    fillFunding(current);
+  }
+
+  function expensePayload() {
+    const payload = fieldPayload("expense");
+    if (!("account_id" in payload)) return payload;
+    if (!$("expenseFundingField")?.classList.contains("hidden")) {
+      const funding = $("expenseFunding")?.value;
+      if (!funding) throw new Error("Выберите, из чего оплачена трата");
+      payload.funding_envelope = funding;
+    }
+    return payload;
+  }
+
+  // Piggy bank and reserve: where outside money came from or went to.
+  function prepareMove(prefix, { label, outside, fallback = "", visible = true }) {
+    const field = $(`${prefix}AccountField`);
+    const select = $(`${prefix}Account`);
+    if (!field || !select) return;
+    const on = enabled() && visible;
+    field.classList.toggle("hidden", !on);
+    if (!on) return;
+    $(`${prefix}AccountLabel`).textContent = label;
+    const cards = active().filter(a => a.kind !== "credit").map(a => `<option value="${a.id}">${accountName(a)}</option>`);
+    select.innerHTML = (outside ? `<option value="">${outside}</option>` : "") + cards.join("");
+    select.value = String(fallback ?? "");
+  }
+
+  function preparePiggy(mode) {
+    const deposit = mode === "deposit";
+    prepareMove("piggy", {
+      label: deposit ? "Откуда" : "Куда", visible: deposit || mode === "withdraw",
+      outside: deposit ? "Извне — не с моих карт" : "Наружу — потратил или отдал",
+      fallback: deposit ? "" : (envelopeAccountId("spending") ?? ""),
+    });
+  }
+
+  function prepareReserve(mode, purpose) {
+    const deposit = mode === "deposit";
+    const expense = mode === "withdraw" && purpose === "pay_expense";
+    prepareMove("irrReserve", deposit
+      ? { label: "Откуда", outside: "Извне — не с моих карт", fallback: "" }
+      : { label: "С какой карты", outside: "", fallback: envelopeAccountId("reserve") ?? "", visible: expense });
+  }
   // Income arrives on the main account by default.
   const prepareIncome = (prefix, transaction = null) =>
     prepareField(prefix, { transaction, fallback: snap?.main_account_id ?? null });
@@ -604,7 +735,39 @@
       const date = `${hint.payday.slice(8, 10)}.${hint.payday.slice(5, 7)}`;
       return `<div class="acc-hint"><span>${esc(hint.title)} ${date} ${what} — записать приход ${money(hint.amount)} на ${main ? accountName(main) : "основной счёт"}?</span><button class="tiny" type="button" data-hint-income="${hint.period_start}">Записать приход</button></div>`;
     }
+    if (hint.type === "transfer") {
+      const from = byId(hint.from_account_id), to = byId(hint.to_account_id);
+      return `<div class="acc-hint"><span>Переведи ${money(hint.amount)} с ${from ? accountName(from) : "счёта"} на ${to ? accountName(to) : "счёт"}</span><button class="tiny" type="button" data-hint-transfer="${hint.from_account_id}:${hint.to_account_id}:${hint.amount}">Перевёл</button></div>`;
+    }
     return "";
+  }
+
+  async function confirmHintTransfer(key) {
+    const [from, to, value] = key.split(":");
+    try {
+      await request("/api/accounts/transfers", { method: "POST", body: JSON.stringify({
+        from_account_id: Number(from), to_account_id: Number(to), amount: Number(value),
+        date: window.budgetDate?.today?.(), kind: "hint",
+      }) });
+      notify("Перевод записан");
+      await reload();
+    } catch (error) { notify(error.message); }
+  }
+
+  async function placeEnvelope(key, accountId) {
+    const envelope = (snap?.envelopes || []).find(e => e.key === key);
+    if (!envelope || Number(accountId) === envelope.account_id) return;
+    const from = byId(envelope.account_id), to = byId(accountId);
+    const amount = Number(envelope.amount) || 0;
+    const move = amount > 0 && from && to
+      && confirm(`Перевести ${money(amount)} (${envelope.label}) с «${from.title}» на «${to.title}» одним переводом?`);
+    try {
+      await request(`/api/accounts/envelopes/${key}`, { method: "PUT", body: JSON.stringify({
+        account_id: Number(accountId), move_money: Boolean(move),
+      }) });
+      notify(move ? "Конверт и его деньги перенесены" : "Конверт перенесён");
+      await reload();
+    } catch (error) { notify(error.message); }
   }
 
   function renderHints() {
@@ -772,6 +935,12 @@
       if (button) deleteFromHistory(button.dataset.historyDelete);
     });
     const openFromHome = event => {
+      const add = event.target?.closest?.("[data-add-to]");
+      if (add) return addToEnvelope(add.dataset.addTo, Number(add.dataset.amount));
+      const send = event.target?.closest?.("[data-transfer-to]");
+      if (send) return transferTo(send.dataset.transferTo, Number(send.dataset.amount));
+      const fix = event.target?.closest?.("[data-adjust-account]");
+      if (fix) return openAdjust(fix.dataset.adjustAccount);
       const row = event.target?.closest?.("[data-account-id]");
       return row ? openHistory(row.dataset.accountId) : null;
     };
@@ -779,8 +948,15 @@
     $("accCredit")?.addEventListener("click", openFromHome);
     $("accHints")?.addEventListener("click", event => {
       const income = event.target?.closest?.("[data-hint-income]");
-      return income ? recordPayrollIncome(income.dataset.hintIncome) : null;
+      if (income) return recordPayrollIncome(income.dataset.hintIncome);
+      const moved = event.target?.closest?.("[data-hint-transfer]");
+      return moved ? confirmHintTransfer(moved.dataset.hintTransfer) : null;
     });
+    $("envelopePlaces")?.addEventListener("change", event => {
+      const key = event.target?.dataset?.envelope;
+      return key ? placeEnvelope(key, event.target.value) : null;
+    });
+    $("expenseAccount")?.addEventListener("change", () => fillFunding());
     const list = $("accountsList");
     if (list) {
       list.addEventListener("click", event => {
@@ -809,6 +985,7 @@
   bind();
   window.accountsUi = {
     render, prepareExpense, expensePayload, prepareIncome, fieldPayload, prepareField, openAccount, openWizard,
+    preparePiggy, prepareReserve,
     openHistory, openTransfer, openAdjust, mainAccountId: () => snap?.main_account_id ?? null,
     accountLabel(t) {
       if (!t?.account_title) return "";

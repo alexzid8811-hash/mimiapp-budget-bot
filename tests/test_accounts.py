@@ -128,3 +128,153 @@ def test_example_1_balances_total_and_credit_card():
     flows.append(income(1, 60000))
     r = state()
     assert (rub(r, 1), r.total) == (85000, 210000 * RUB)
+
+
+# ---------- Envelopes on accounts: breakdown and transfer hints ----------
+
+from app.accounts import BudgetOp, breakdown, transfer_hints  # noqa: E402
+
+PAYROLL = ("spending", "buffer", "piggy")
+IRREGULAR = ("spending", "buffer", "piggy", "reserve")
+CREATED = "2026-10-01 10:00:00"
+
+
+def acc(id, balance, kind="debit"):
+    return Account(id, kind, balance * RUB, D0, None, False, CREATED)
+
+
+def kop(values):
+    return {k: v * RUB for k, v in values.items()}
+
+
+def split_of(accounts, flows, transfers, placement, amounts, hints=(), order=PAYROLL):
+    result = calculate(AccountsInput(accounts, flows, transfers))
+    parts = breakdown(result.states, placement, kop(amounts), list(hints), order)
+    return result, {a: (p.envelopes_total / RUB, p.difference / RUB) for a, p in parts.items()}
+
+
+def test_example_2_cards_split_between_envelopes():
+    """Example 2: card 1 (main) holds spending and buffer, card 2 the piggy bank."""
+    accounts = [acc(1, 50000), acc(2, 80000), acc(9, 0, "credit")]
+    placement = {"spending": 1, "buffer": 1, "piggy": 2}
+    flows, transfers = [], []
+    env = {"spending": 20000, "buffer": 30000, "piggy": 80000}
+
+    def check(expected):
+        result, parts = split_of(accounts, flows, transfers, placement, env)
+        assert {a: rub(result, a) for a in (1, 2)} == expected
+        assert parts[1][1] == 0 and parts[2][1] == 0
+        return result, parts
+
+    check({1: 50000, 2: 80000})
+    flows.append(expense(1, 1500)); env["spending"] -= 1500                          # 1
+    check({1: 48500, 2: 80000})
+    flows.append(expense(9, 3000))                                                     # 2
+    check({1: 48500, 2: 80000})
+    transfers.append(transfer(1, 2, 500)); env["spending"] -= 500; env["piggy"] += 500  # 3
+    result, parts = check({1: 48000, 2: 80500})
+    assert result.total == 128500 * RUB
+    flows.append(income(1, 60000)); env["buffer"] += 60000 - 35000; env["spending"] += 35000  # 4, 5
+    result, _ = check({1: 108000, 2: 80500})
+    assert result.total == 188500 * RUB
+    transfers.append(transfer(1, 9, 3000)); env["spending"] -= 3000                     # 6
+    result, _ = check({1: 105000, 2: 80500})
+    assert result.states[9].debt == 0 and result.total == 185500 * RUB
+    flows.append(expense(2, 2000)); env["piggy"] -= 2000                                # 7
+    result, _ = check({1: 105000, 2: 78500})
+    assert result.total == 183500 * RUB
+    flows.append(expense(1, 800)); transfers.append(transfer(1, 2, 200))                 # 8
+    env["buffer"] -= 1000; env["piggy"] += 200
+    result, parts = check({1: 104000, 2: 78700})
+    assert (env["spending"], env["buffer"]) == (50000, 54000) and result.total == 182700 * RUB
+    flows.append(Flow(2, D0, 500 * RUB))                                                # 9: interest
+    _, parts = split_of(accounts, flows, transfers, placement, env)
+    assert parts[2][1] == 500                                                           # «вне бюджета»
+    env["piggy"] += 500                                                                 # «Добавить в копилку»
+    check({1: 104000, 2: 79200})
+    env["buffer"] += 25000                                                              # 10: auto-counted
+    _, parts = split_of(accounts, flows, transfers, placement, env)
+    assert parts[1][1] == -25000                                                        # «не хватает»
+    flows.append(income(1, 25000))                                                      # «Записать приход»
+    check({1: 129000, 2: 79200})
+
+
+def test_example_3_payday_hint_between_buffer_and_spending_cards():
+    accounts = [acc(1, 30000), acc(3, 25000)]
+    placement = {"buffer": 1, "spending": 3, "piggy": 1}
+    payday = date(2026, 10, 7)
+    ops = [BudgetOp(payday, {"buffer": -15000 * RUB, "spending": 15000 * RUB}, {})]
+    hints = transfer_hints(accounts, placement, {}, ops, [])
+    assert [(h.from_id, h.to_id, h.amount / RUB) for h in hints] == [(1, 3, 15000)]
+    env = {"buffer": 15000, "spending": 40000, "piggy": 0}
+    _, parts = split_of(accounts, [], [], placement, env, hints)
+    assert parts[3][1] == -15000          # «не хватает 15 000»
+    assert parts[1][1] == 0               # no «вне бюджета» on the source
+    done = [transfer(1, 3, 15000, payday)]
+    assert transfer_hints(accounts, placement, {}, ops, done) == []
+    _, parts = split_of(accounts, [], done, placement, env)
+    assert parts[3][1] == 0 and parts[1][1] == 0
+
+
+def test_example_4_irregular_income_split_between_two_cards():
+    accounts = [acc(1, 18000), acc(2, 70000)]
+    placement = {"spending": 1, "buffer": 1, "piggy": 2, "reserve": 2}
+    env = {"spending": 10000, "buffer": 8000, "piggy": 50000, "reserve": 20000}
+    flows, transfers = [], []
+    day = date(2026, 10, 5)
+    op = BudgetOp(day, kop({"reserve": 2000, "buffer": 3000, "spending": 15000}), {1: 20000 * RUB}, "2026-10-05 09:00:00")
+    flows.append(income(1, 20000, day))
+    env.update(reserve=22000, buffer=11000, spending=25000)
+    hints = transfer_hints(accounts, placement, {}, [op], [])
+    assert [(h.from_id, h.to_id, h.amount / RUB) for h in hints] == [(1, 2, 2000)]
+    result, parts = split_of(accounts, flows, transfers, placement, env, hints, IRREGULAR)
+    assert rub(result, 1) == 38000 and parts[2][1] == -2000 and parts[1][1] == 0
+    transfers.append(Transfer(1, 2, day, 2000 * RUB, created="2026-10-05 09:01:00"))      # 2: «Перевёл»
+    assert transfer_hints(accounts, placement, {}, [op], transfers) == []
+    result, parts = split_of(accounts, flows, transfers, placement, env, (), IRREGULAR)
+    assert (rub(result, 1), rub(result, 2)) == (36000, 72000) and parts[1][1] == parts[2][1] == 0
+    transfers.append(transfer(2, 1, 4000)); env.update(reserve=18000, spending=29000)     # 3: linked
+    result, parts = split_of(accounts, flows, transfers, placement, env, (), IRREGULAR)
+    assert (rub(result, 1), rub(result, 2)) == (40000, 68000) and parts[1][1] == parts[2][1] == 0
+    flows.append(expense(2, 5000)); env["reserve"] -= 5000                                # 4: from reserve
+    transfers.append(transfer(1, 2, 400)); env.update(spending=28600, piggy=50400)        # 5: linked
+    result, parts = split_of(accounts, flows, transfers, placement, env, (), IRREGULAR)
+    assert (rub(result, 1), rub(result, 2)) == (39600, 63400) and parts[1][1] == parts[2][1] == 0
+
+
+def test_same_card_envelopes_need_no_transfer():
+    accounts = [acc(1, 100)]
+    ops = [BudgetOp(date(2026, 10, 7), {"buffer": -50 * RUB, "spending": 50 * RUB}, {})]
+    assert transfer_hints(accounts, {"buffer": 1, "spending": 1}, {}, ops, []) == []
+
+
+def test_a_transfer_never_creates_a_hint_on_its_own():
+    accounts = [acc(1, 100), acc(2, 100)]
+    placement = {"spending": 1, "buffer": 1, "piggy": 1}
+    assert transfer_hints(accounts, placement, {}, [], [transfer(1, 2, 50)]) == []
+    # Paying more than needed does not turn the hint around either.
+    ops = [BudgetOp(date(2026, 10, 7), {"spending": -30 * RUB}, {2: -30 * RUB}, CREATED)]
+    assert [(h.from_id, h.to_id, h.amount) for h in transfer_hints(accounts, placement, {}, ops, [])] == [(1, 2, 3000)]
+    assert transfer_hints(accounts, placement, {}, ops, [transfer(1, 2, 50, date(2026, 10, 8))]) == []
+
+
+def test_window_starts_at_the_latest_assignment():
+    accounts = [acc(1, 100), acc(3, 0)]
+    placement = {"buffer": 1, "spending": 3}
+    moved = date(2026, 10, 10)
+    assigned = {"spending": (moved, "2026-10-10 12:00:00")}
+    ops = [
+        BudgetOp(date(2026, 10, 7), {"buffer": -10 * RUB, "spending": 10 * RUB}, {}),       # before the move
+        BudgetOp(moved, {"buffer": -20 * RUB, "spending": 20 * RUB}, {}),                   # in the opening balance
+        BudgetOp(moved, {"spending": -5 * RUB}, {1: -5 * RUB}, "2026-10-10 11:00:00"),      # recorded earlier that day
+        BudgetOp(moved, {"spending": -7 * RUB}, {1: -7 * RUB}, "2026-10-10 13:00:00"),      # recorded after
+        BudgetOp(date(2026, 10, 22), {"buffer": -40 * RUB, "spending": 40 * RUB}, {}),
+    ]
+    hints = transfer_hints(accounts, placement, assigned, ops, [])
+    assert [(h.from_id, h.to_id, h.amount / RUB) for h in hints] == [(1, 3, 33)]
+
+
+def test_credit_cards_take_no_part_in_hints():
+    accounts = [acc(1, 100), acc(9, 0, "credit")]
+    ops = [BudgetOp(date(2026, 10, 7), {"spending": -30 * RUB}, {1: -30 * RUB, 9: 27 * RUB}, CREATED)]
+    assert transfer_hints(accounts, {"spending": 1}, {}, ops, []) == []

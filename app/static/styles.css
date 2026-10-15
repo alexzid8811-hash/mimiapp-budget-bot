@@ -1055,3 +1055,13 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .acc-hint{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line)}
 .acc-hint:last-child{border-bottom:0}
 .list-row.not-counted{opacity:.55}
+.acc-item{border-bottom:1px solid var(--line);padding-bottom:6px}
+.acc-list .acc-item:last-child{border-bottom:0}
+.acc-item .acc-row{border-bottom:0;padding-bottom:2px}
+.acc-split{color:var(--muted);font-size:12.5px;padding:0 0 2px 26px}
+.acc-diff{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;padding:2px 0 2px 26px}
+.acc-diff span{margin-right:auto}
+.acc-diff.plus span{color:var(--income)}
+.acc-diff.minus span{color:var(--expense)}
+.acc-diff .tiny{min-height:28px;padding:5px 9px;font-size:12px}
+#envelopePlacesBlock{margin-top:14px}

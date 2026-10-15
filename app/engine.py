@@ -130,7 +130,10 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
     with connect() as con:
         for row in con.execute(
             "SELECT type,amount,tx_date,COALESCE(income_destination,'daily') AS destination "
-            "FROM transactions WHERE user_id=? AND bill_rule_id IS NULL AND tx_date BETWEEN ? AND ?",
+            "FROM transactions WHERE user_id=? AND bill_rule_id IS NULL AND tx_date BETWEEN ? AND ? "
+            # Cards and accounts: an expense paid from the piggy bank, the
+            # reserve or outside the budget (a credit card) is not daily money.
+            "AND (type<>'expense' OR COALESCE(funding_envelope,'spending')='spending')",
             window,
         ):
             day = date.fromisoformat(row["tx_date"])
@@ -348,7 +351,8 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     with connect() as con:
         spent_period = con.execute(
             "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=? AND type='expense' "
-            "AND bill_rule_id IS NULL AND tx_date BETWEEN ? AND ?",
+            "AND bill_rule_id IS NULL AND tx_date BETWEEN ? AND ? "
+            "AND COALESCE(funding_envelope,'spending')='spending'",
             (uid, max(current.start, start).isoformat(), today.isoformat()),
         ).fetchone()[0]
     # Obligations of the current card period that are still to be paid.

@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import date
 
 from . import clock
-from .accounts import Account, AccountsInput, Flow, Transfer, calculate
+from .accounts import (
+    Account, AccountsInput, BudgetOp, Flow, Transfer, breakdown, calculate, transfer_hints,
+)
 from .db import connect
 from .money import amount, cents
 
@@ -58,6 +60,7 @@ def _account(row: dict) -> Account:
         opening_date=date.fromisoformat(row["opening_date"]),
         credit_limit=cents(row["credit_limit"]) if row["credit_limit"] is not None else None,
         archived=bool(row["archived"]),
+        created=row["created_at"] or "",
     )
 
 
@@ -91,6 +94,25 @@ def envelope_accounts(con, uid: int) -> dict[str, int]:
     return {r["envelope"]: int(r["account_id"]) for r in con.execute(
         "SELECT envelope,account_id FROM envelope_accounts WHERE user_id=?", (uid,)
     )}
+
+
+def placement(con, uid: int, mode: str | None = None) -> tuple[dict[str, int], dict[str, tuple]]:
+    """Account of every envelope of the mode (the main account when not set)
+    and when each explicit assignment was made: (day, UTC timestamp)."""
+    settings = settings_for(con, uid)
+    mode = mode or settings["mode"]
+    rows = {r["envelope"]: r for r in con.execute(
+        "SELECT envelope,account_id,assigned_on,assigned_at FROM envelope_accounts WHERE user_id=?", (uid,))}
+    main_id = settings["main_account_id"]
+    places, since = {}, {}
+    for key in ENVELOPES[mode]:
+        row = rows.get(key)
+        if row is not None:
+            places[key] = int(row["account_id"])
+            since[key] = (date.fromisoformat(row["assigned_on"]), row["assigned_at"] or "")
+        elif main_id is not None:
+            places[key] = int(main_id)
+    return places, since
 
 
 def envelope_amounts(uid: int, mode: str) -> dict[str, int] | None:
@@ -150,14 +172,177 @@ def operations_without_account(con, uid: int, since: str) -> int:
     return total
 
 
+def _payroll_actual(uid: int):
+    """The ledger of today's actual balances, as engine.compute builds it
+    (without an unconfirmed payday)."""
+    from dataclasses import replace
+
+    from . import engine
+    from .ledger import run_ledger
+
+    inp, extras, _today, _start, _settings, _enabled = engine._run(uid)
+    actual = run_ledger(inp)
+    waiting = extras["waiting"]
+    if waiting:
+        without = dict(inp.buffer_in)
+        without[waiting] = without.get(waiting, 0) - extras["payday_amount"].get(waiting, 0)
+        actual = run_ledger(replace(inp, buffer_in=without, unconfirmed_payday=waiting))
+    return inp, actual
+
+
+def _expense_envelope(row) -> str | None:
+    funding = row["funding_envelope"]
+    if funding:
+        return None if funding == "none" else funding
+    if row["reserve_linked"]:
+        return "reserve"
+    if row["piggy_linked"]:
+        return "piggy"
+    return "spending"
+
+
+def budget_ops(uid: int, mode: str) -> list[BudgetOp]:
+    """What the budget did to the envelopes, with what happened on the
+    accounts at the same time.  Explicit operations of the piggy bank and the
+    reserve are left out: they create their own transfers at once."""
+    today = clock.today()
+    ops: list[BudgetOp] = []
+    splits: dict = {}
+    irregular_input = None
+    if mode == "irregular":
+        from . import irregular_engine
+
+        ran = irregular_engine.run(uid)
+        if ran is None:
+            return []
+        irregular_input, result, _settings = ran
+        splits = result.splits
+    with connect() as con:
+        remainders = {r["bill_payment_id"]: r for r in con.execute(
+            "SELECT p.id,p.amount,p.bill_payment_id,t.from_account_id,t.to_account_id,t.amount AS moved "
+            "FROM piggy_bank_movements p LEFT JOIN account_transfers t ON t.piggy_movement_id=p.id "
+            "AND t.user_id=p.user_id WHERE p.user_id=? AND p.bill_payment_id IS NOT NULL", (uid,))}
+        rows = [dict(r) for r in con.execute(
+            "SELECT t.id,t.type,t.amount,t.tx_date,t.account_id,t.bill_rule_id,t.bill_due_date,t.created_at,"
+            "t.bill_planned_amount,t.income_destination,t.funding_envelope,a.kind AS account_kind,"
+            "EXISTS(SELECT 1 FROM emergency_reserve_movements m WHERE m.user_id=t.user_id "
+            "AND m.expense_transaction_id=t.id) AS reserve_linked,"
+            "EXISTS(SELECT 1 FROM piggy_bank_movements m WHERE m.user_id=t.user_id "
+            "AND m.expense_transaction_id=t.id) AS piggy_linked "
+            "FROM transactions t JOIN accounts a ON a.id=t.account_id AND a.user_id=t.user_id "
+            "WHERE t.user_id=? AND t.tx_date<=?", (uid, today.isoformat()))]
+        payroll_incomes = [] if mode != "payroll" else [dict(r) for r in con.execute(
+            "SELECT account_id,amount,date,created_at FROM account_incomes WHERE user_id=? AND source='payroll' "
+            "AND date<=?",
+            (uid, today.isoformat()))]
+        credit_payments = [dict(r) for r in con.execute(
+            "SELECT from_account_id,amount,date,funding_envelope,transaction_id,created_at FROM account_transfers "
+            "WHERE user_id=? AND kind='credit_payment' AND date<=?", (uid, today.isoformat()))]
+
+    for r in payroll_incomes:
+        value = cents(r["amount"])
+        ops.append(BudgetOp(date.fromisoformat(r["date"]), {"buffer": value}, {int(r["account_id"]): value},
+                            r["created_at"]))
+    bill_payments = {}
+    for r in rows:
+        day = date.fromisoformat(r["tx_date"])
+        value = cents(r["amount"])
+        account_id = int(r["account_id"])
+        if r["type"] == "income":
+            if mode == "irregular":
+                split = splits.get(r["id"])
+                if split is None:
+                    continue
+                envelopes = {"reserve": split.reserve, "buffer": split.bills, "spending": split.free,
+                             "piggy": split.piggy}
+            else:
+                destination = r["income_destination"] or "daily"
+                key = ("buffer" if destination in ("buffer", "reserve")
+                       else "piggy" if destination == "piggy" else "spending")
+                envelopes = {key: value}
+            ops.append(BudgetOp(day, envelopes, {account_id: value}, r["created_at"]))
+        elif r["bill_rule_id"] is not None:
+            bill_payments[r["id"]] = r
+        elif r["account_kind"] != "credit":
+            envelope = _expense_envelope(r)
+            if envelope is not None:
+                ops.append(BudgetOp(day, {envelope: -value}, {account_id: -value}, r["created_at"]))
+
+    put_aside = _irregular_put_aside(irregular_input, bill_payments) if mode == "irregular" else {}
+    for payment_id, r in bill_payments.items():
+        day = date.fromisoformat(r["tx_date"])
+        paid = cents(r["amount"])
+        planned = cents(r["bill_planned_amount"]) if r["bill_planned_amount"] is not None else paid
+        released = put_aside.get(payment_id, planned) if mode == "irregular" else planned
+        remainder = remainders.get(payment_id)
+        to_piggy = cents(remainder["amount"]) if remainder else 0
+        physical = {int(r["account_id"]): -paid}
+        if remainder and remainder["from_account_id"] is not None:
+            moved = cents(remainder["moved"])
+            physical[int(remainder["from_account_id"])] = physical.get(int(remainder["from_account_id"]), 0) - moved
+            physical[int(remainder["to_account_id"])] = physical.get(int(remainder["to_account_id"]), 0) + moved
+        envelopes = {"buffer": -released, "spending": released - paid - to_piggy, "piggy": to_piggy}
+        ops.append(BudgetOp(day, envelopes, physical, r["created_at"]))
+
+    for r in credit_payments:
+        envelope = r["funding_envelope"]
+        if envelope in ("spending", "piggy", "reserve") and r["transaction_id"] is None:
+            value = cents(r["amount"])
+            ops.append(BudgetOp(date.fromisoformat(r["date"]), {envelope: -value},
+                                {int(r["from_account_id"]): -value}, r["created_at"]))
+
+    if mode == "payroll":
+        from . import engine
+
+        if engine.settings_for(uid)["cashflow_enabled"]:
+            inp, actual = _payroll_actual(uid)
+            for period in actual.periods:
+                value = actual.allocations.get(period.start, 0)
+                if period.funded_on <= today and value:
+                    ops.append(BudgetOp(period.funded_on, {"buffer": -value, "spending": value}, {}))
+    return ops
+
+
+def _irregular_put_aside(inp, payments: dict) -> dict[int, int]:
+    """Money released from «На обязательные» by every bill payment: what was
+    put aside for that occurrence on the morning of the payment."""
+    if inp is None or not payments:
+        return {}
+    from dataclasses import replace
+
+    from .irregular import replay
+
+    result = {}
+    for bill in inp.bills:
+        if bill.payment_id not in payments or bill.paid_on is None or bill.paid_on < inp.start:
+            continue
+        unpaid = [b if b.key != bill.key else replace(b, paid_on=None, actual=0, to_piggy=0, payment_id=None)
+                  for b in inp.bills]
+        before = replay(replace(inp, today=bill.paid_on, bills=unpaid))
+        result[bill.payment_id] = before.bills_fund.get(bill.key, 0)
+    return result
+
+
+def plain_transfers(con, uid: int) -> list[Transfer]:
+    return [
+        Transfer(int(r["from_account_id"]), r["to_account_id"], date.fromisoformat(r["date"]), cents(r["amount"]),
+                 created=r["created_at"])
+        for r in con.execute(
+            "SELECT from_account_id,to_account_id,amount,date,created_at FROM account_transfers "
+            "WHERE user_id=? AND kind IN ('manual','hint')", (uid,))
+    ]
+
+
 def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
     """``with_amounts`` reads the envelopes even while the feature is off
     (the setup wizard fills the opening balances with them)."""
     with connect() as con:
         settings = settings_for(con, uid)
         rows = account_rows(con, uid)
-        result = calculate(build_input(con, uid, rows))
-        assigned = envelope_accounts(con, uid)
+        accounts_input = build_input(con, uid, rows)
+        result = calculate(accounts_input)
+        places, assigned_on = placement(con, uid)
+        transfers = plain_transfers(con, uid)
         operations = {int(r["id"]): has_operations(con, uid, int(r["id"])) for r in rows}
         pending = (operations_without_account(con, uid, settings["disabled_at"])
                    if settings["disabled_at"] else 0)
@@ -169,11 +354,18 @@ def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
         {
             "key": key,
             "label": ENVELOPE_LABELS[mode][key],
-            "account_id": assigned.get(key, main_id),
+            "account_id": places.get(key),
+            "assigned_on": assigned_on[key][0].isoformat() if key in assigned_on else None,
             "amount": amount(amounts[key]) if amounts is not None else None,
         }
         for key in keys
     ]
+    hints, parts = [], {}
+    if settings["enabled"] and amounts is not None:
+        found = transfer_hints(accounts_input.accounts, places, assigned_on, budget_ops(uid, mode), transfers)
+        hints = [{"type": "transfer", "from_account_id": h.from_id, "to_account_id": h.to_id,
+                  "amount": amount(h.amount)} for h in found]
+        parts = breakdown(result.states, places, amounts, found, keys)
     accounts = []
     for row in rows:
         state = result.states[int(row["id"])]
@@ -187,6 +379,7 @@ def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
             "available": amount(state.available) if state.available is not None else None,
             "has_operations": operations[int(row["id"])],
             "envelopes": [e["key"] for e in envelopes if e["account_id"] == int(row["id"])],
+            "breakdown": _breakdown_dict(parts.get(int(row["id"])), mode),
         })
     return {
         "enabled": settings["enabled"],
@@ -199,7 +392,19 @@ def snapshot(uid: int, *, with_amounts: bool = False) -> dict:
         "accounts": accounts,
         "envelopes": envelopes,
         "operations_without_account": pending,
-        "hints": payroll_income_hints(uid) if settings["enabled"] else [],
+        "hints": (payroll_income_hints(uid) + hints) if settings["enabled"] else [],
+    }
+
+
+def _breakdown_dict(part, mode: str) -> dict | None:
+    if part is None:
+        return None
+    return {
+        "envelopes": [{"key": k, "label": ENVELOPE_LABELS[mode][k], "amount": amount(v)}
+                      for k, v in part.envelopes.items()],
+        "envelopes_total": amount(part.envelopes_total),
+        "outgoing_hints": amount(part.outgoing_hints),
+        "difference": amount(part.difference),
     }
 
 
@@ -395,3 +600,137 @@ def payroll_income_hints(uid: int) -> list[dict]:
             "account_id": main_id,
         })
     return hints
+
+
+# ---------- Transfers linked to explicit envelope operations ----------
+
+
+def _linked(con, uid: int, source: int | None, target: int | None, value: float, day: str, *,
+            piggy: int | None = None, reserve: int | None = None, outside: bool = False) -> None:
+    """A transfer created together with an operation of the piggy bank or the
+    reserve and deleted with it.  Nothing when both envelopes share an account."""
+    if source is None or (target is None and not outside) or source == target or not value:
+        return
+    con.execute(
+        "INSERT INTO account_transfers(user_id,from_account_id,to_account_id,amount,date,kind,"
+        "piggy_movement_id,reserve_movement_id) VALUES(?,?,?,?,?,'linked',?,?)",
+        (uid, source, target, value, day, piggy, reserve),
+    )
+
+
+def link_piggy(con, uid: int, movement_id: int, *, direction: str, source: str, value: float, day: str,
+               account_id: int | None = None, account_move: bool = True) -> None:
+    """Accounts side of a piggy bank operation.  ``account_id``: where outside
+    money came from (None: from outside the accounts) or where withdrawn money
+    went (None: it left the accounts); ``account_move`` False: the money is
+    already on the piggy bank's account («Добавить в копилку»)."""
+    if not settings_for(con, uid)["enabled"]:
+        return
+    places, _ = placement(con, uid)
+    piggy, spending = places.get("piggy"), places.get("spending")
+    if source == "daily_budget":
+        if direction == "deposit":
+            _linked(con, uid, spending, piggy, value, day, piggy=movement_id)
+        else:
+            _linked(con, uid, piggy, spending, value, day, piggy=movement_id)
+        return
+    if not account_move or piggy is None:
+        return
+    if direction == "deposit":
+        if account_id is None:
+            con.execute(
+                "INSERT INTO account_incomes(user_id,account_id,amount,date,source,piggy_movement_id) "
+                "VALUES(?,?,?,?,'piggy_external',?)",
+                (uid, piggy, value, day, movement_id),
+            )
+        else:
+            _linked(con, uid, account_id, piggy, value, day, piggy=movement_id)
+    else:
+        _linked(con, uid, piggy, account_id, value, day, piggy=movement_id, outside=account_id is None)
+
+
+def link_reserve(con, uid: int, movement_id: int, *, kind: str, value: float, day: str,
+                 account_id: int | None = None, account_move: bool = True,
+                 expense_id: int | None = None) -> None:
+    """Accounts side of an operation of the emergency reserve."""
+    if not settings_for(con, uid)["enabled"]:
+        return
+    places, _ = placement(con, uid)
+    reserve, spending = places.get("reserve"), places.get("spending")
+    if kind == "from_free":
+        _linked(con, uid, spending, reserve, value, day, reserve=movement_id)
+    elif kind in ("to_free", "cover_overspend"):
+        _linked(con, uid, reserve, spending, value, day, reserve=movement_id)
+    elif kind == "pay_expense" and expense_id is not None:
+        con.execute(
+            "UPDATE transactions SET account_id=?,funding_envelope='reserve' WHERE id=? AND user_id=?",
+            (account_id or reserve, expense_id, uid),
+        )
+    elif kind == "deposit" and account_move and reserve is not None:
+        if account_id is None:
+            con.execute(
+                "INSERT INTO account_incomes(user_id,account_id,amount,date,source,reserve_movement_id) "
+                "VALUES(?,?,?,?,'reserve_external',?)",
+                (uid, reserve, value, day, movement_id),
+            )
+        else:
+            _linked(con, uid, account_id, reserve, value, day, reserve=movement_id)
+
+
+def sync_bill_remainder(con, uid: int, payment_id: int) -> None:
+    """The remainder of a paid bill moved to the piggy bank: from the account
+    the bill was paid from to the piggy bank's account."""
+    movement = con.execute(
+        "SELECT id,amount,movement_date FROM piggy_bank_movements WHERE user_id=? AND bill_payment_id=?",
+        (uid, payment_id),
+    ).fetchone()
+    if movement is None:
+        return
+    con.execute("DELETE FROM account_transfers WHERE user_id=? AND piggy_movement_id=?", (uid, movement["id"]))
+    if not settings_for(con, uid)["enabled"]:
+        return
+    places, _ = placement(con, uid)
+    paid_from = con.execute(
+        "SELECT account_id FROM transactions WHERE id=? AND user_id=?", (payment_id, uid)
+    ).fetchone()
+    source = paid_from["account_id"] if paid_from and paid_from["account_id"] else places.get("buffer")
+    _linked(con, uid, source, places.get("piggy"), movement["amount"], movement["movement_date"],
+            piggy=movement["id"])
+
+
+def sync_piggy_expense(con, uid: int, tx_id: int, funding: str | None, value: float, day: str, note: str) -> None:
+    """An expense paid from the piggy bank keeps a withdrawal of the same
+    amount and date (like an expense paid from the reserve)."""
+    if funding == "piggy":
+        updated = con.execute(
+            "UPDATE piggy_bank_movements SET amount=?,movement_date=?,note=? "
+            "WHERE user_id=? AND expense_transaction_id=?",
+            (value, day, note[:160], uid, tx_id),
+        )
+        if updated.rowcount == 0:
+            con.execute(
+                "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,"
+                "expense_transaction_id) VALUES(?, 'withdraw', ?, ?, ?, 'external', ?)",
+                (uid, value, day, note[:160], tx_id),
+            )
+    else:
+        con.execute("DELETE FROM piggy_bank_movements WHERE user_id=? AND expense_transaction_id=?", (uid, tx_id))
+
+
+def sync_reserve_expense(con, uid: int, tx_id: int, funding: str | None, value: float, day: str, note: str) -> None:
+    """An expense paid from the emergency reserve («Из резерва»)."""
+    if funding == "reserve":
+        updated = con.execute(
+            "UPDATE emergency_reserve_movements SET amount=?,movement_date=? "
+            "WHERE user_id=? AND expense_transaction_id=?",
+            (value, day, uid, tx_id),
+        )
+        if updated.rowcount == 0:
+            con.execute(
+                "INSERT INTO emergency_reserve_movements(user_id,direction,amount,movement_date,reason,kind,"
+                "expense_transaction_id) VALUES(?, 'withdraw', ?, ?, ?, 'pay_expense', ?)",
+                (uid, value, day, (note or "Трата из резерва")[:160], tx_id),
+            )
+    else:
+        con.execute("DELETE FROM emergency_reserve_movements WHERE user_id=? AND expense_transaction_id=?",
+                    (uid, tx_id))
