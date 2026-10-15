@@ -290,25 +290,28 @@ test('start row shows the start capital as its money and the horizon with a year
  assert.match(get('bufferHorizon').textContent,/2027/);
 });
 
-test('future received amount can be edited and sent for budget recalculation', async () => {
+test('received amount is edited only in the current period and sent for budget recalculation', async () => {
  const {sandbox,get,requests,responses}=setup();
  responses['/api/cashflow'].periods=[
-  {start:'2026-09-15',end:'2026-09-21',kind:'сейчас',days:7,payday:null,received:26246.45,planned_received:26246.45,received_editable:false,income_overridden:false,override_key:null,mandatory:0,free:26246.45,daily:1000,put_aside:0,take:0,buffer:10000,to_card:0},
+  {start:'2026-09-07',end:'2026-09-21',kind:'Зарплата',days:15,payday:'2026-09-07',received:26246.45,planned_received:26246.45,received_editable:true,income_overridden:false,override_key:'2026-09-08',payday_amount:26246.45,planned_payday_amount:26246.45,mandatory:0,free:26246.45,daily:1000,put_aside:0,take:0,buffer:10000,to_card:0},
   {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',days:15,payday:'2026-09-22',received:39395.22,planned_received:39395.22,received_editable:true,income_overridden:false,override_key:'2026-09-23',payday_amount:39395.22,planned_payday_amount:39395.22,mandatory:10000,free:29395.22,daily:1000,put_aside:10000,take:0,buffer:20000,to_card:10000}
  ];
  await get('refreshBtn').listeners.click();
- assert.match(get('planCards').innerHTML,/editCashflowIncome\('2026-09-23'\)/);
+ // Later paydays are corrected once their period comes.
+ assert.doesNotMatch(get('planCards').innerHTML,/editCashflowIncome\('2026-09-23'\)/);
+ assert.doesNotMatch(get('bufferPeriods').innerHTML,/editCashflowIncome\('2026-09-23'\)/);
+ assert.match(get('planCards').innerHTML,/editCashflowIncome\('2026-09-08'\)/);
 
- sandbox.window.editCashflowIncome('2026-09-23');
- assert.equal(get('cashflowIncomeAmount').value,39395.22);
- get('cashflowIncomeAmount').value='41000';
+ sandbox.window.editCashflowIncome('2026-09-08');
+ assert.equal(get('cashflowIncomeAmount').value,26246.45);
+ get('cashflowIncomeAmount').value='27000';
  await get('cashflowIncomeForm').listeners.submit({preventDefault(){}});
 
- const request=requests.find(row=>row.url==='/api/cashflow/income-overrides/2026-09-23');
- assert.deepEqual(JSON.parse(request.body),{amount:41000});
+ const request=requests.find(row=>row.url==='/api/cashflow/income-overrides/2026-09-08');
+ assert.deepEqual(JSON.parse(request.body),{amount:27000});
 });
 
-test('closed periods are hidden behind a toggle; the carry-over explains the daily amount', async () => {
+test('closed periods are hidden behind a toggle', async () => {
  const {get,responses}=setup();
  responses['/api/cashflow'].periods=[
   {start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',received:58124.16,mandatory:39900,free:18224.16,to_card:20880.45,carry_in:1124.66,daily:1467,put_aside:0,take:0,buffer:17908.09}
@@ -320,7 +323,7 @@ test('closed periods are hidden behind a toggle; the carry-over explains the dai
  assert.equal(get('bufPastToggle').hidden,false);
  assert.match(get('bufPastToggle').textContent,/Показать прошлые периоды \(1\)/);
  assert.doesNotMatch(get('bufferPeriods').innerHTML,/23 сент/);
- assert.match(get('bufferPeriods').innerHTML,/1.124,66.₽ остаток прошлого периода/);
+ assert.doesNotMatch(get('bufferPeriods').innerHTML,/остаток прошлого периода/);
  get('bufPastToggle').listeners.click();
  assert.match(get('bufferPeriods').innerHTML,/<tr class="past">[\s\S]*23 сент/);
  assert.match(get('planCards').innerHTML,/<article class="pc past">/);
