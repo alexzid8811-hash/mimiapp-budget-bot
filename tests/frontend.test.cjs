@@ -483,6 +483,49 @@ test('operations can be searched and filtered by type', async () => {
   assert.match(get('transactionsList').innerHTML, /Ничего не найдено/);
 });
 
+test('«Сегодня» narrows everyday operations to today and combines with the type chips', async () => {
+  const {sandbox,get,responses} = setup();
+  responses['/api/transactions'] = [
+    {id:1,type:'expense',amount:100,tx_date:'2026-09-15',note:'Кофе',category_title:'Кафе'},
+    {id:2,type:'income',amount:500,tx_date:'2026-09-15',note:'Возврат'},
+    {id:3,type:'expense',amount:250,tx_date:'2026-09-14',note:'Обед'},
+    {id:4,type:'expense',amount:900,tx_date:'2026-09-10',bill_rule_id:4,bill_title:'Интернет'},
+  ];
+  responses['/api/piggy-bank'] = {balance:300,movements:[
+    {id:7,direction:'deposit',amount:300,movement_date:'2026-09-15',source:'daily_budget'},
+  ]};
+  await get('refreshBtn').listeners.click();
+  sandbox.window.budgetDate.today = () => '2026-09-15';
+
+  get('txToday').listeners.click();
+  let html = get('transactionsList').innerHTML;
+  assert.match(html, /Сегодня, 15 сент\./);
+  assert.match(html, /Кофе/);
+  assert.match(html, /Возврат/);
+  assert.match(html, /Карта → копилка/);
+  assert.doesNotMatch(html, /Обед|Интернет/);
+  assert.match(html, /−100,00/);
+
+  vm.runInContext('transactionFilter="expense"; renderTransactions()', sandbox);
+  html = get('transactionsList').innerHTML;
+  assert.match(html, /Кофе/);
+  assert.doesNotMatch(html, /Возврат|копилка|Обед/);
+
+  // The mandatory tab has no chips, so «Сегодня» does not hide older bills there.
+  vm.runInContext('transactionView="bills"; renderTransactions()', sandbox);
+  assert.match(get('transactionsList').innerHTML, /Интернет/);
+
+  vm.runInContext('transactionView="daily"; transactionFilter="all"', sandbox);
+  sandbox.window.budgetDate.today = () => '2026-09-20';
+  vm.runInContext('renderTransactions()', sandbox);
+  assert.match(get('transactionsList').innerHTML, /Сегодня операций пока нет/);
+
+  get('txToday').listeners.click();
+  html = get('transactionsList').innerHTML;
+  assert.match(html, /Обед/);
+  assert.doesNotMatch(html, /Сегодня,/);
+});
+
 test('mandatory bill payments are kept in their own operations tab', async () => {
   const {sandbox,get,responses} = setup();
   responses['/api/transactions'] = [

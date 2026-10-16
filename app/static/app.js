@@ -217,6 +217,8 @@ function renderPiggyTransferRow(m) {
 // weekly totals) only holds day-to-day spending, income and piggy transfers.
 let transactionView = "daily";
 let transactionFilter = "all";
+// «Сегодня» combines with the type chips: «Сегодня» + «Расходы» is today's spending.
+let transactionTodayOnly = false;
 const TRANSACTION_FILTERS = {
   all: () => true,
   expense: t => !t.piggy && t.type === "expense",
@@ -239,18 +241,21 @@ function renderTransactions() {
   const el = $("transactionsList");
   const query = String($("txSearch")?.value || "").trim().toLowerCase();
   const all = [...state.transactions, ...cardPiggyTransfers()].filter(inTransactionView);
-  const items = all.filter(t => transactionMatches(t, query))
+  const today = transactionView !== "bills" && transactionTodayOnly ? todayISO() : null;
+  const items = all.filter(t => (!today || t.tx_date === today) && transactionMatches(t, query))
     .sort((a, b) => b.tx_date.localeCompare(a.tx_date) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
   if (!items.length) {
-    const message = all.length ? "Ничего не найдено."
-      : transactionView === "bills" ? "Оплаченных обязательных платежей пока нет." : "Пока нет операций.";
+    const message = !all.length
+      ? (transactionView === "bills" ? "Оплаченных обязательных платежей пока нет." : "Пока нет операций.")
+      : today && !query && transactionFilter === "all" ? "Сегодня операций пока нет." : "Ничего не найдено.";
     el.innerHTML = `<div class="empty">${message}</div>`;
     return;
   }
 
+  // With «Сегодня» on, the one group is today instead of its week.
   const weeks = new Map();
   items.forEach(t => {
-    const weekStart = transactionWeekStart(t.tx_date);
+    const weekStart = today ? "today" : transactionWeekStart(t.tx_date);
     if (!weeks.has(weekStart)) weeks.set(weekStart, []);
     weeks.get(weekStart).push(t);
   });
@@ -267,7 +272,7 @@ function renderTransactions() {
         : `${transactions.length} операций`;
       return `<section class="transaction-week ${collapsed ? "collapsed" : ""}">
         <button class="transaction-week-toggle" type="button" onclick="toggleTransactionWeek('${weekStart}')" aria-expanded="${!collapsed}">
-          <span><strong>${transactionWeekTitle(weekStart)}</strong><small>${countLabel}</small></span>
+          <span><strong>${today ? `Сегодня, ${fmtDate(today)}` : transactionWeekTitle(weekStart)}</strong><small>${countLabel}</small></span>
           <span class="transaction-week-summary">${expenseTotal ? `−${money(expenseTotal)}` : ""}<i aria-hidden="true">⌄</i></span>
         </button>
         <div class="transaction-week-rows">${transactions.map(t => t.piggy ? renderPiggyTransferRow(t) : renderTransactionRow(t)).join("")}</div>
@@ -682,6 +687,11 @@ document.querySelectorAll("[data-txf]").forEach(btn => btn.addEventListener("cli
   document.querySelectorAll("[data-txf]").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
   renderTransactions();
 }));
+$("txToday")?.addEventListener("click", () => {
+  transactionTodayOnly = !transactionTodayOnly;
+  $("txToday").setAttribute("aria-pressed", String(transactionTodayOnly));
+  renderTransactions();
+});
 document.querySelectorAll("[data-txview]").forEach(btn => btn.addEventListener("click", () => {
   transactionView = btn.dataset.txview;
   document.querySelectorAll("[data-txview]").forEach(b => b.setAttribute("aria-selected", String(b === btn)));
