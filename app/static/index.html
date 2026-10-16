@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261015-accounts" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261016-sum-parts" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -352,7 +352,8 @@
   <dialog id="expenseDialog">
     <form method="dialog" id="expenseForm" class="dialog-card">
       <div class="section-head"><h2>Новый расход</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
-      <label>Сумма<input id="expenseAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label>Сумма<span class="sum-field"><input id="expenseAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /><button class="sum-add" id="expenseAddPart" type="button" aria-label="Добавить ещё сумму">+</button></span></label>
+      <div class="sum-parts hidden" id="expenseParts" aria-live="polite"></div>
       <div class="cat-field">
         <span class="cat-field-label" id="expenseCatLabel">Категория</span>
         <div class="cat-grid" id="expenseCatGrid" role="group" aria-labelledby="expenseCatLabel"></div>
@@ -665,7 +666,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261015-accounts-4"></script>
+  <script src="/static/app.js?v=20261016-sum-parts"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20261015-accounts-3"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
