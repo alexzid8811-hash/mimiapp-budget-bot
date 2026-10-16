@@ -2,6 +2,8 @@
 
 Мини-приложение для Telegram под схему бюджета **карта / буфер / копилка**.
 
+**Инструкция для пользователей** — [docs/guide](docs/guide/README.md): как начать, что значат числа на экране и что делать в типичных ситуациях, со скриншотами.
+
 По умолчанию создаются две границы выплат:
 
 - зарплата — **7 число**;
@@ -182,6 +184,10 @@ Frontend отправляет `Telegram.WebApp.initData` в заголовке `
 pytest -q
 node --test tests/frontend.test.cjs
 ```
+
+## Скриншоты инструкции
+
+Картинки в `docs/guide/images/` пересоздаёт одна команда: `python scripts/make_guide_screenshots.py` (нужны Playwright с Chromium и Pillow). Скрипт поднимает приложение на временной базе с демо-данными и фиксированной датой. Подробности — в [docs/guide/HOWTO-UPDATE.md](docs/guide/HOWTO-UPDATE.md).
 
 ## Хранение данных
 
