@@ -124,6 +124,7 @@ def test_parallel_first_requests_create_one_working_database(tmp_path, monkeypat
     assert all_user_ids() == [7]
     assert not list(user_db_path(7).parent.glob(".*"))
 
+
 def test_backup_contains_only_own_data(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     dump_a = json.dumps(export_user_data(1), ensure_ascii=False)
