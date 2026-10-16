@@ -15,6 +15,8 @@
   let data = null;
   let loadId = 0;
   const open = new Set();
+  // Categories whose whole list of operations is shown, not just the largest.
+  const showAll = new Set();
 
   async function request(path) {
     // Reuse the authenticated helper from app.js.
@@ -87,13 +89,18 @@
       // Without any spending in the previous range there is nothing to compare with.
       const hadPrevious = data.previous_totals.daily > 0;
       const change = d === null ? (hadPrevious ? "новая" : "") : d === 0 ? "без изменений" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}%`;
-      const drill = expanded ? `<span class="analytics-drill">${c.top.map(op => `<span><span>${esc(op.note || "Без комментария")}, ${day(op.date)}</span><span class="num">${rub(op.amount)}</span></span>`).join("")}${c.count > c.top.length ? `<span><span>ещё ${c.count - c.top.length} опер.</span><span></span></span>` : ""}</span>` : "";
-      return `<button type="button" class="analytics-cat" aria-expanded="${expanded}" data-cat="${esc(key)}">
+      const all = c.operations || c.top, full = showAll.has(key);
+      const shown = full ? all : c.top;
+      const more = all.length > c.top.length
+        ? `<button type="button" class="analytics-more" data-more="${esc(key)}" aria-expanded="${full}">${full ? "Свернуть" : `Показать все операции (${all.length})`}</button>`
+        : "";
+      const drill = expanded ? `<div class="analytics-drill">${shown.map(op => `<span><span>${esc(op.note || "Без комментария")}, ${day(op.date)}</span><span class="num">${rub(op.amount)}</span></span>`).join("")}${more}</div>` : "";
+      return `<div class="analytics-cat-item${expanded ? " open" : ""}"><button type="button" class="analytics-cat" aria-expanded="${expanded}" data-cat="${esc(key)}">
         <span class="emoji">${esc(c.emoji)}</span>
         <span><span class="top"><span>${esc(c.title)}</span><strong class="num">${rub(c.amount)}</strong></span>
         <span class="bar" style="display:block"><b style="width:${Math.max(1, c.amount / max * 100)}%;background:${categoryColor(c.id)}"></b></span>
         <span class="meta num"><span>${Math.round(c.share * 100)}% трат</span><span class="${!d ? "" : d > 0 ? "up" : "down"}">${change}</span></span></span>
-        ${drill}</button>`;
+        </button>${drill}</div>`;
     }).join("");
   }
 
@@ -215,16 +222,23 @@
 
   document.querySelectorAll("[data-amode]").forEach(b => b.addEventListener("click", () => {
     view = {mode: b.dataset.amode, anchor: null};
-    open.clear();
+    open.clear(); showAll.clear();
     load();
   }));
-  $("analyticsPrev")?.addEventListener("click", () => { if (data) { view.anchor = data.previous_anchor; open.clear(); load(); } });
-  $("analyticsNext")?.addEventListener("click", () => { if (data?.next_anchor) { view.anchor = data.next_anchor; open.clear(); load(); } });
+  $("analyticsPrev")?.addEventListener("click", () => { if (data) { view.anchor = data.previous_anchor; open.clear(); showAll.clear(); load(); } });
+  $("analyticsNext")?.addEventListener("click", () => { if (data?.next_anchor) { view.anchor = data.next_anchor; open.clear(); showAll.clear(); load(); } });
   $("analyticsCategories")?.addEventListener("click", e => {
+    const more = e.target.closest?.("[data-more]");
+    if (more) {
+      const key = more.dataset.more;
+      if (showAll.has(key)) showAll.delete(key); else showAll.add(key);
+      renderCategories();
+      return;
+    }
     const el = e.target.closest?.("[data-cat]");
     if (!el) return;
     const key = el.dataset.cat;
-    if (open.has(key)) open.delete(key); else open.add(key);
+    if (open.has(key)) { open.delete(key); showAll.delete(key); } else open.add(key);
     renderCategories();
   });
   document.querySelector('[data-nav="analytics"]')?.addEventListener("click", () => load());

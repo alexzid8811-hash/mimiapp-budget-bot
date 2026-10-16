@@ -99,6 +99,24 @@ def test_card_period_runs_from_payday_to_payday(client):
     assert data['label'].endswith('сентября')
 
 
+def test_category_lists_every_operation_besides_the_largest_three(client):
+    with connect() as con:
+        cafe = con.execute("SELECT id FROM categories WHERE user_id=1 AND title='Кафе'").fetchone()['id']
+        con.executemany(
+            "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note) VALUES(1,'expense',?,?,?,?)",
+            [(120, '2026-09-03', cafe, 'кофе'), (300, '2026-09-05', cafe, 'обед'),
+             (80, '2026-09-07', cafe, 'булка'), (300, '2026-09-04', cafe, 'обед')],
+        )
+    data = client.get('/api/analytics', params={'mode': 'month', 'anchor': '2026-09-10'}).json()
+    cafe = next(c for c in data['categories'] if c['title'] == 'Кафе')
+    assert cafe['count'] == 5
+    # Largest first; equal amounts by date.
+    assert [(op['amount'], op['date']) for op in cafe['operations']] == [
+        (900, '2026-09-12'), (300, '2026-09-04'), (300, '2026-09-05'), (120, '2026-09-03'), (80, '2026-09-07'),
+    ]
+    assert cafe['top'] == cafe['operations'][:3]
+
+
 def test_unknown_mode_is_rejected(client):
     assert client.get('/api/analytics', params={'mode': 'week'}).status_code == 422
 

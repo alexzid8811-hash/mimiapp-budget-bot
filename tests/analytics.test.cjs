@@ -11,8 +11,10 @@ const sample = {
   previous_totals: {daily: 800, bills: 3000, piggy: 200, total: 4000},
   categories: [
     {id: 2, title: 'Кафе', emoji: '☕', amount: 600, previous: 300, share: 0.6, count: 4,
-     top: [{date: '2026-09-12', amount: 400, note: '<b>ужин</b>'}]},
-    {id: 1, title: 'Продукты', emoji: '🛒', amount: 400, previous: 0, share: 0.4, count: 1, top: []},
+     top: [{date: '2026-09-12', amount: 400, note: '<b>ужин</b>'}],
+     operations: [{date: '2026-09-12', amount: 400, note: '<b>ужин</b>'}, {date: '2026-09-03', amount: 100, note: 'обед'},
+                  {date: '2026-09-05', amount: 60, note: 'кофе'}, {date: '2026-09-07', amount: 40, note: ''}]},
+    {id: 1, title: 'Продукты', emoji: '🛒', amount: 400, previous: 0, share: 0.4, count: 1, top: [], operations: []},
   ],
   days: [{date: '2026-09-01', amount: 100}, {date: '2026-09-02', amount: 0}],
   daily_limit: null,
@@ -132,10 +134,32 @@ test('the year tab shows months with their average instead of days', async () =>
 test('switching mode and expanding a category', async () => {
   const {sandbox, get, modes, requests} = setup();
   await sandbox.window.budgetAnalytics.load();
-  get('analyticsCategories').listeners.click({target: {closest: () => ({dataset: {cat: '2'}})}});
-  const html = get('analyticsCategories').innerHTML;
+  const click = (attr, key) => get('analyticsCategories').listeners.click({target: {
+    closest: sel => sel === `[data-${attr}]` ? {dataset: {[attr]: key}} : null,
+  }});
+  click('cat', '2');
+  let html = get('analyticsCategories').innerHTML;
   assert.match(html, /&lt;b&gt;ужин&lt;\/b&gt;/);
-  assert.match(html, /ещё 3 опер\./);
+  assert.doesNotMatch(html, /обед|кофе/);
+  assert.match(html, /data-more="2" aria-expanded="false">Показать все операции \(4\)/);
+
+  click('more', '2');
+  html = get('analyticsCategories').innerHTML;
+  assert.match(html, /ужин[\s\S]*обед, 3 сент\.[\s\S]*кофе, 5 сент\.[\s\S]*Без комментария, 7 сент\./);
+  assert.match(html, /aria-expanded="false" data-cat="1"/);
+  assert.match(html, /data-more="2" aria-expanded="true">Свернуть/);
+
+  click('more', '2');
+  assert.doesNotMatch(get('analyticsCategories').innerHTML, /обед/);
+
+  // Closing the category forgets «show all».
+  click('more', '2');
+  click('cat', '2');
+  assert.doesNotMatch(get('analyticsCategories').innerHTML, /analytics-drill/);
+  click('cat', '2');
+  html = get('analyticsCategories').innerHTML;
+  assert.match(html, /Показать все операции \(4\)/);
+  assert.doesNotMatch(html, /обед/);
 
   await modes[2].listeners.click();
   assert.equal(requests.at(-1), '/api/analytics?mode=year');

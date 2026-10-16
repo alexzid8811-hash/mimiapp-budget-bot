@@ -111,7 +111,10 @@ def _categories(expenses: list[dict], previous: list[dict]) -> list[dict]:
     total = sum(g["cents"] for g in groups.values())
     result = []
     for g in sorted(groups.values(), key=lambda g: (-g["cents"], g["order"], g["title"])):
-        top = sorted(g["operations"], key=lambda e: (-cents(e["amount"]), e["tx_date"], e["id"]))[:TOP_OPERATIONS]
+        operations = [
+            {"date": e["tx_date"], "amount": amount(cents(e["amount"])), "note": e["note"] or ""}
+            for e in sorted(g["operations"], key=lambda e: (-cents(e["amount"]), e["tx_date"], e["id"]))
+        ]
         result.append({
             "id": g["id"],
             "title": g["title"],
@@ -120,10 +123,9 @@ def _categories(expenses: list[dict], previous: list[dict]) -> list[dict]:
             "previous": amount(prev_totals.get(g["id"], 0)),
             "share": round(g["cents"] / total, 4) if total else 0.0,
             "count": len(g["operations"]),
-            "top": [
-                {"date": e["tx_date"], "amount": amount(cents(e["amount"])), "note": e["note"] or ""}
-                for e in top
-            ],
+            "top": operations[:TOP_OPERATIONS],
+            # Every operation, largest first, for «Показать все» in the app.
+            "operations": operations,
         })
     return result
 
