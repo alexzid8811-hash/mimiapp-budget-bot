@@ -668,3 +668,41 @@ test('switching to side jobs without a start asks for it first', async () => {
   assert.equal(mode.start_total,30000);
   assert.equal(mode.start_reserve,5000);
 });
+
+test('expense "+" sums several amounts into one expense with the parts in the note', async () => {
+  const {get,requests} = setup();
+  await get('refreshBtn').listeners.click();
+  get('expenseAmount').focus = () => {};
+  get('quickExpenseBtn').listeners.click();
+  get('expenseAmount').value = '305,00';
+  get('expenseAddPart').listeners.click();
+  assert.equal(get('expenseAmount').value,'');
+  assert.equal(get('expenseAmount').required,false);
+  // A keyboard with "+" (or a pasted "=…+…") splits the same way as the button.
+  get('expenseAmount').value = '=589,00+102';
+  get('expenseAmount').listeners.input({target:get('expenseAmount')});
+  assert.equal(get('expenseAmount').value,'102');
+  assert.match(get('expenseParts').innerHTML,/Итого 996,00/);
+  get('expenseCategory').value = '3';
+  await get('expenseForm').listeners.submit({preventDefault(){},target:get('expenseForm')});
+  const body = JSON.parse(requests.filter(r => r.url === '/api/transactions' && r.method === 'POST').at(-1).body);
+  assert.equal(body.amount,996);
+  assert.equal(body.note,'305 + 589 + 102');
+  assert.equal(get('expenseAmount').required,true);
+});
+
+test('expense "+" with an empty amount adds nothing and a typed note is kept', async () => {
+  const {get,requests} = setup();
+  await get('refreshBtn').listeners.click();
+  get('expenseAmount').focus = () => {};
+  get('quickExpenseBtn').listeners.click();
+  get('expenseAddPart').listeners.click();
+  assert.equal(get('expenseAmount').required,true);
+  get('expenseAmount').value = '0,10+0,20+';
+  get('expenseAmount').listeners.input({target:get('expenseAmount')});
+  get('expenseNote').value = 'Магнит';
+  await get('expenseForm').listeners.submit({preventDefault(){},target:get('expenseForm')});
+  const body = JSON.parse(requests.filter(r => r.url === '/api/transactions' && r.method === 'POST').at(-1).body);
+  assert.equal(body.amount,0.3);
+  assert.equal(body.note,'Магнит');
+});

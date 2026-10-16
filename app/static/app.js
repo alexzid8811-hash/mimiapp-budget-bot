@@ -593,8 +593,75 @@ function switchPage(page) {
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.nav)));
 $("refreshBtn").addEventListener("click", () => loadAll());
 let editingTransactionId = null;
+
+// Several receipts in one expense: "+" moves the typed amount into a list of parts,
+// and the expense is saved once with their total (kopecks avoid float drift).
+let expenseParts = [];
+const toKopecks = value => Math.round((window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(value) : Number(value) || 0) * 100);
+const kopecksText = k => new Intl.NumberFormat("ru-RU", { minimumFractionDigits: k % 100 ? 2 : 0, maximumFractionDigits: 2 }).format(k / 100);
+
+function renderExpenseParts() {
+  const box = $("expenseParts"), input = $("expenseAmount");
+  if (!box || !input) return;
+  input.required = !expenseParts.length;
+  box.classList.toggle("hidden", !expenseParts.length);
+  if (!expenseParts.length) { box.innerHTML = ""; return; }
+  const total = expenseParts.reduce((sum, k) => sum + k, 0) + Math.max(toKopecks(input.value), 0);
+  box.innerHTML = expenseParts.map((k, i) => `<button type="button" class="sum-part" data-part="${i}" aria-label="Убрать ${kopecksText(k)} ₽">${kopecksText(k)}<i aria-hidden="true">×</i></button>`).join('<span class="sum-plus" aria-hidden="true">+</span>')
+    + `<span class="sum-total">Итого ${money(total / 100)}</span>`;
+}
+
+function resetExpenseParts() { expenseParts = []; renderExpenseParts(); }
+
+function addExpensePart(raw) {
+  const k = toKopecks(raw);
+  if (k <= 0) return false;
+  expenseParts.push(k);
+  return true;
+}
+
+function addTypedExpensePart() {
+  const input = $("expenseAmount");
+  if (!addExpensePart(input.value)) { toast("Введите сумму, потом нажмите +"); input.focus(); return; }
+  input.value = ""; renderExpenseParts(); input.focus();
+}
+
+$("expenseAddPart")?.addEventListener("click", addTypedExpensePart);
+// Keep the keyboard open: tapping "+" must not take focus away from the amount field.
+["pointerdown", "mousedown"].forEach(type => $("expenseAddPart")?.addEventListener(type, e => e.preventDefault()));
+$("expenseParts")?.addEventListener("click", e => {
+  const part = e.target.closest?.("[data-part]");
+  if (!part) return;
+  expenseParts.splice(Number(part.dataset.part), 1);
+  renderExpenseParts();
+});
+// Keyboards that have "+" (desktop, some Android ones) work like the button;
+// "=305+589+102", typed or pasted, is split the same way. Runs before money-input.js strips the signs.
+$("expenseAmount")?.addEventListener("input", e => {
+  const input = e.target;
+  if (/[+=]/.test(input.value)) {
+    const pieces = input.value.replace(/=/g, "").split("+");
+    const last = pieces.pop();
+    pieces.forEach(addExpensePart);
+    input.value = last;
+  }
+  renderExpenseParts();
+});
+
+function expenseAmountTotal() {
+  return (expenseParts.reduce((sum, k) => sum + k, 0) + Math.max(toKopecks($("expenseAmount").value), 0)) / 100;
+}
+
+function expenseNoteWithParts() {
+  const note = $("expenseNote").value;
+  if (note.trim() || !expenseParts.length) return note;
+  const last = toKopecks($("expenseAmount").value);
+  return [...expenseParts, ...(last > 0 ? [last] : [])].map(kopecksText).join(" + ").slice(0, 200);
+}
+
 function openExpenseDialog() {
   editingTransactionId = null; $("expenseForm").reset(); $("expenseDate").value = todayISO();
+  resetExpenseParts();
   window.accountsUi?.prepareExpense();
   $("expenseDialog").showModal(); setTimeout(() => $("expenseAmount").focus(), 50);
 }
@@ -633,6 +700,7 @@ window.editTransaction = id => {
   }
   editingTransactionId = id;
   if (transaction.type === "expense") {
+    resetExpenseParts();
     $("expenseAmount").value = transaction.amount;
     $("expenseDate").value = transaction.tx_date;
     $("expenseCategory").value = transaction.category_id || "";
@@ -653,9 +721,9 @@ $("expenseForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const path = editingTransactionId ? `/api/transactions/${editingTransactionId}` : "/api/transactions";
-    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"expense", amount:moneyValue("expenseAmount"), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:$("expenseNote").value, ...(window.accountsUi?.expensePayload() || {}) }) });
+    await api(path, { method:editingTransactionId ? "PUT" : "POST", body: JSON.stringify({ type:"expense", amount:expenseAmountTotal(), tx_date:$("expenseDate").value, category_id:Number($("expenseCategory").value), note:expenseNoteWithParts(), ...(window.accountsUi?.expensePayload() || {}) }) });
     editingTransactionId = null;
-    $("expenseDialog").close(); e.target.reset(); toast("Расход записан"); await loadAll();
+    $("expenseDialog").close(); e.target.reset(); resetExpenseParts(); toast("Расход записан"); await loadAll();
   } catch(e2) { toast(e2.message); }
 });
 
