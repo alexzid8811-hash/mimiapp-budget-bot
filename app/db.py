@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import uuid
 from contextlib import closing, contextmanager
 from contextvars import ContextVar, Token
 from pathlib import Path
@@ -255,8 +256,10 @@ def _open(path: Path) -> sqlite3.Connection:
 def _provision(user_id: int) -> None:
     """Create an empty, fully migrated database for a new user (race-safe)."""
     path = user_db_path(user_id)
-    tmp = path.with_name(f".{int(user_id)}.{os.getpid()}.new")
-    tmp.unlink(missing_ok=True)
+    # A name of its own for every call: the first requests of a new user
+    # arrive in parallel threads of one process, and a shared temporary file
+    # would be deleted under another thread's open connection.
+    tmp = path.with_name(f".{int(user_id)}.{uuid.uuid4().hex}.new")
     con = sqlite3.connect(tmp)
     try:
         con.row_factory = sqlite3.Row
