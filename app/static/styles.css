@@ -692,6 +692,7 @@ html,body{background:var(--page-bg)}
 .ops-tools .chips::-webkit-scrollbar{display:none}
 .ops-tools .chip{flex:none;border:0;border-radius:99px;padding:5px 11px;font-size:12.5px;background:var(--bg);box-shadow:var(--tile-shadow);cursor:pointer}
 .ops-tools .chip[aria-pressed="true"]{background:var(--text);color:var(--bg)}
+.ops-tools .chips-sep{flex:none;width:1px;margin:4px 2px;background:var(--muted);opacity:.35}
 .transaction-week-toggle{padding:9px 0 6px}
 
 /* Нижнее меню: 5 пунктов и «+» в центре */

@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20260917-fullscreen-safe-area"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261016-sum-parts" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261016-today-filter" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -97,6 +97,8 @@
         <div class="ops-tools">
           <input id="txSearch" type="search" placeholder="Поиск по операциям" autocomplete="off" aria-label="Поиск по операциям" />
           <div class="chips" id="txChips" role="group" aria-label="Тип операций">
+            <button class="chip" type="button" id="txToday" aria-pressed="false">Сегодня</button>
+            <span class="chips-sep" aria-hidden="true"></span>
             <button class="chip" type="button" data-txf="all" aria-pressed="true">Все</button>
             <button class="chip" type="button" data-txf="expense" aria-pressed="false">Расходы</button>
             <button class="chip" type="button" data-txf="income" aria-pressed="false">Доходы</button>
@@ -666,7 +668,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20260917-full-design"></script>
   <script src="/static/money-input.js?v=20260917-full-design"></script>
-  <script src="/static/app.js?v=20261016-sum-parts"></script>
+  <script src="/static/app.js?v=20261016-today-filter"></script>
   <script src="/static/cashflow-ui.js?v=20260923-card-buffer-piggy"></script>
   <script src="/static/buffer-ui.js?v=20261015-accounts-3"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
