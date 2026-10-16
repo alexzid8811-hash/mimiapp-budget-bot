@@ -171,9 +171,6 @@ class App:
         shutil.rmtree(self.data, ignore_errors=True)
         self.set_date(day)
         self.start()
-        # Файл базы нового пользователя создаётся одним запросом: при первом
-        # открытии приложение шлёт много запросов сразу.
-        self.get("/api/bootstrap")
 
     def save(self, name: str) -> None:
         self.stop()

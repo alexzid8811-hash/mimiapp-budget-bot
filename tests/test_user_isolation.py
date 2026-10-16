@@ -3,7 +3,9 @@ import hmac
 import io
 import json
 import sqlite3
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode
 
 import pytest
@@ -91,6 +93,36 @@ def test_connect_without_user_fails_closed(tmp_path, monkeypatch):
     finally:
         from app.db import reset_current_user
         reset_current_user(token)
+
+
+def test_parallel_first_requests_create_one_working_database(tmp_path, monkeypatch):
+    # On first launch the mini app sends about ten requests at once, and the
+    # server handles each in its own thread.  All of them create the user's
+    # file at the same moment and must end up in the same healthy database.
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    init_db()
+    import app.db as db
+    prepare = db._prepare
+
+    def slow_prepare(con):
+        prepare(con)
+        time.sleep(0.05)  # keep the threads inside provisioning together
+
+    monkeypatch.setattr(db, "_prepare", slow_prepare)
+    barrier = threading.Barrier(8)
+
+    def first_request(_):
+        with user_scope(7):
+            barrier.wait()
+            ensure_user(7, "u7")
+            with connect() as con:
+                return con.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+
+    with ThreadPoolExecutor(8) as pool:
+        counts = list(pool.map(first_request, range(8)))
+    assert counts == [8] * 8
+    assert all_user_ids() == [7]
+    assert not list(user_db_path(7).parent.glob(".*"))
 
 
 def test_backup_contains_only_own_data(tmp_path, monkeypatch):
