@@ -1121,10 +1121,14 @@ def ch07(app: App, sh: Shooter, texts: dict) -> None:
     sh.shot("07-expense-result.png", [
         M(1, "#leftToday"), M(2, "#todayHero .hero-row span:last-child", pad=3),
     ], facts=HOME_FACTS)
+    # То же, что снимок главы 3: глава снимается и отдельно (--only 7).
+    app.save("payroll-cafe")
+    sh.open()
     sh.nav("operations")
     first = sh.page.locator("#transactionsList .transaction-week").first
     sh.shot("07-operations-list.png", [
-        M(1, ".page.active .segmented", pad=3), M(2, "#txSearch", pad=3), M(3, "#txChips", pad=3),
+        M(1, ".page.active .segmented", pad=3), M(2, "#txSearch", "mr", pad=3),
+        M(3, "#txChips", "mr", pad=3),
         M(4, first.locator(".transaction-week-toggle"), pad=2),
         M(5, first.locator(".actions .tiny:not(.danger)").first, pad=2),
         M(6, first.locator(".actions .tiny.danger").first, pad=2),
@@ -1135,8 +1139,20 @@ def ch07(app: App, sh: Shooter, texts: dict) -> None:
     sh.page.fill("#txSearch", "")
     sh.page.locator("#txSearch").dispatch_event("input")
     sh.page.wait_for_timeout(200)
+    sh.page.click("#txToday")
+    sh.page.click('[data-txf="expense"]')
+    sh.page.wait_for_timeout(200)
+    group = sh.page.locator("#transactionsList .transaction-week").first
+    sh.shot("07-operations-today.png", [
+        M(1, "#txToday", "tl", pad=2), M(2, '[data-txf="expense"]', pad=2),
+        M(3, group.locator(".transaction-week-toggle"), pad=2),
+    ], facts={"Сегодня": group.locator(".transaction-week-toggle")})
+    sh.page.click("#txToday")
+    sh.page.click('[data-txf="all"]')
+    sh.page.wait_for_timeout(200)
     sh.page.locator("#transactionsList .list-row", has_text="Обед").first.locator(".actions .tiny:not(.danger)").click()
     sh.page.fill("#expenseAmount", "520")
+    d = dlg(sh, "expenseDialog")
     sh.shot("07-expense-edit.png", [M(1, label(d, "Сумма"), pad=3), M(2, "#saveExpenseBtn", pad=3)])
     d.locator("[data-close]").click()
     # Перерасход: кроссовки за 2 000 ₽ при остатке на сегодня 1 028,94 ₽.
@@ -1165,6 +1181,30 @@ def ch07(app: App, sh: Shooter, texts: dict) -> None:
     sh.shot("07-overspend-next-day.png", [
         M(1, "#todayHero .hero-row span:first-child", pad=3), M(2, "#cardCash >> xpath=.."),
     ], facts=HOME_FACTS)
+    # Несколько сумм в одной трате: три чека в продуктовом.
+    app.load("payroll")
+    payroll_today(app)
+    sh.open()
+    sh.page.click("#quickExpenseBtn")
+    d = dlg(sh, "expenseDialog")
+    for value in ("305", "589"):
+        sh.page.fill("#expenseAmount", value)
+        sh.page.click("#expenseAddPart")
+    sh.page.fill("#expenseAmount", "102")
+    d.locator(".cat-tile", has_text="Продукты").click()
+    sh.shot("07-expense-parts.png", [
+        M(1, "#expenseAddPart", pad=2), M(2, "#expenseParts .sum-part >> nth=0", pad=2),
+        M(3, "#expenseParts .sum-total", pad=3), M(4, "#saveExpenseBtn", pad=3),
+    ], facts={"Итого": "#expenseParts .sum-total"})
+    sh.page.click("#saveExpenseBtn")
+    sh.settle()
+    sh.scroll_top()
+    sh.shot("07-expense-parts-home.png", [M(1, "#leftToday")], facts=HOME_FACTS)
+    sh.nav("operations")
+    row = sh.page.locator("#transactionsList .list-row").first
+    sh.shot("07-expense-parts-result.png", [
+        M(1, row.locator(".row-title"), pad=3), M(2, row.locator(".amount"), pad=3),
+    ], facts={"Строка": row})
 
 
 # --- 8. Обязательные платежи ----------------------------------------------------------
@@ -1369,15 +1409,29 @@ def ch11(app: App, sh: Shooter, texts: dict) -> None:
         M(3, ".analytics-total-row", pad=3), M(4, "#analyticsKinds", pad=3),
     ], facts={"Подпись": "#analyticsTotalCaption", "Всего": "#analyticsTotal", "Сравнение": "#analyticsDelta",
               "Виды": "#analyticsKinds", "Месяц": "#analyticsLabel"})
-    first = sh.page.locator("#analyticsCategories .analytics-cat").first
-    first.click()
+    sh.page.locator("#analyticsCategories .analytics-cat").first.click()
     sh.page.wait_for_timeout(200)
-    first = sh.page.locator("#analyticsCategories .analytics-cat").first
+    first = sh.page.locator("#analyticsCategories .analytics-cat-item").first
     sh.scroll(".analytics-cats-card", "start")
     sh.shot("11-analytics-categories.png", [
         M(1, first.locator(".top"), pad=3), M(2, first.locator(".meta"), pad=3),
         M(3, first.locator(".analytics-drill"), pad=3),
+        M(4, first.locator(".analytics-more"), pad=3),
     ], facts={"Категории": "#analyticsCategories"})
+    sh.page.locator("#analyticsCategories .analytics-cat").first.click()
+    # Полный список — у категории, где операций немного больше трёх: он целиком на экране.
+    cats = app.get("/api/analytics?mode=month")["categories"]
+    small = min((c for c in cats if c["count"] > 3), key=lambda c: c["count"])
+    item = sh.page.locator("#analyticsCategories .analytics-cat-item", has_text=small["title"])
+    item.locator(".analytics-cat").click()
+    sh.page.wait_for_timeout(200)
+    item.locator(".analytics-more").click()
+    sh.page.wait_for_timeout(200)
+    sh.scroll(item, "start")
+    sh.shot("11-analytics-categories-all.png", [
+        M(1, item.locator(".analytics-drill"), pad=3), M(2, item.locator(".analytics-more"), pad=3),
+    ], facts={"Категория": item})
+    item.locator(".analytics-cat").click()
     sh.scroll("#analyticsDaysCard", "center")
     sh.shot("11-analytics-days.png", [M(1, "#analyticsDays", pad=3), M(2, "#analyticsDaysLegend", pad=3)],
             facts={"Легенда": "#analyticsDaysLegend"})
