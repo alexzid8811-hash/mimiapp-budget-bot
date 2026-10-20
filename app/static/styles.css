@@ -159,37 +159,25 @@ h1,h2,h3,p{margin:0}
 .pc-move{text-align:right;font-weight:700;font-size:15px;white-space:nowrap}
 .pc-move small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
 .pc-move.pos{color:var(--income)} .pc-move.neg{color:var(--expense)} .pc-move.zero{color:var(--muted);font-weight:500}
-.pc-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0 8px;padding:8px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.pc-flow span{display:block;font-size:11.5px;color:var(--muted)}
-.pc-flow b{display:block;font-weight:600;font-size:13.5px;margin-top:1px;overflow-wrap:anywhere}
-.pc-flow b small{display:block;font-weight:500;font-size:11px;color:var(--muted);margin-top:1px}
 .pc-foot{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted)}
 .pc-foot b{color:var(--text);font-weight:600}
 .pc-foot b.low{color:var(--expense)}
-.pc-cap{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted);margin:-4px 0 8px}
-.pc-cap b{color:var(--text);font-weight:600}
 .buffer-spare .wide{width:100%}
-.pc-yearly{margin-top:4px;font-size:12px}
-.pc-yearly b{color:var(--muted);font-weight:500}
 
 .plan-table-wrap{display:none;overflow-x:auto;margin-top:14px}
 .plan-table{width:100%;border-collapse:collapse;font-size:13.5px}
 /* Headers wrap to two lines so the columns stay as narrow as their numbers. */
-.plan-table th{text-align:right;font-weight:500;color:var(--muted);font-size:12.5px;line-height:1.25;padding:8px 5px;border-bottom:1px solid var(--line);white-space:normal;vertical-align:bottom}
-.plan-table td{text-align:right;padding:10px 5px;border-bottom:1px solid var(--line);white-space:nowrap}
+.plan-table th{text-align:right;font-weight:500;color:var(--muted);font-size:12.5px;line-height:1.25;padding:8px 8px;border-bottom:1px solid var(--line);white-space:normal;vertical-align:bottom}
+.plan-table td{text-align:right;padding:10px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 .plan-table td small{display:block;font-weight:400;font-size:11.5px;color:var(--muted);margin-top:2px}
-.plan-table th:nth-child(-n+2),.plan-table td:nth-child(-n+2){text-align:left}
-.plan-table td:first-child{font-weight:600}
+.plan-table th:first-child,.plan-table td:first-child{text-align:left}
+.plan-table td:first-child small{font-weight:400}
 .plan-table tr:last-child td{border-bottom:0}
 .plan-table tr.cur td{background:var(--accent-soft)}
 .plan-table tr.cur td:first-child{border-radius:10px 0 0 10px} .plan-table tr.cur td:last-child{border-radius:0 10px 10px 0}
 .plan-table .pos{color:var(--income);font-weight:650} .plan-table .neg{color:var(--expense);font-weight:650} .plan-table .zero{color:var(--muted)}
 .plan-table .sep{border-left:1px solid var(--line)}
 .plan-table td.low{color:var(--expense);font-weight:650}
-.plan-table .cap-cell span{display:block;font-weight:600}
-.plan-table .cap-cell span.zero{font-weight:400}
-.plan-table .cap-cell small+span{margin-top:6px}
-.free-short{color:var(--expense);font-weight:650}
 @media (min-width:720px){
   .plan-cards{display:none}
   .plan-table-wrap{display:block}
@@ -316,11 +304,6 @@ h2{font-size:24px}h3{font-size:16px}.eyebrow{display:none}
 .carry-line.neg{color:var(--expense)}
 .past-toggle{display:block;margin:10px 0 0}
 .pc.past,.plan-table tr.past td{opacity:.65}
-/* Plan cards (phone): the generic ".pc-flow span" label style must not apply. */
-.pc-flow b span{display:inline;font-size:inherit;color:inherit}
-.pc-flow .income-cell{white-space:normal;margin-top:1px}
-.pc-flow .income-amount{display:block;font-size:13.5px;font-weight:600;color:var(--text)}
-.pc-flow .income-actions{display:flex;flex-direction:column;align-items:flex-start;gap:5px;font-size:inherit;color:inherit;margin-top:2px}
 .dialog-actions{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:8px;align-items:stretch}
 .dialog-actions .big{margin:0}
 .movement-cell span,.movement-cell small{display:block;white-space:nowrap}.movement-cell small{font-size:10px;font-weight:500}
@@ -353,7 +336,6 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .dialog-card .section-head{align-items:center}
 .top-actions{flex-shrink:0}.topbar>div:first-child{min-width:0}
 .row-main{flex:1}.row-text{flex:1}
-@media(max-width:380px){.pc-flow{gap:5px}.pc-flow span{font-size:10px}}
 
 /* Obligatory payment card: title/amount and metadata stay on single lines. */
 #planList .bill-row{display:block;padding:8px 0}
@@ -978,24 +960,14 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .buf-chart-keys i{width:8px;height:8px;border-radius:2px;display:block}
 .buf-chart-keys .k-cur{background:var(--accent)} .buf-chart-keys .k-ok{background:var(--bar-ok)} .buf-chart-keys .k-low{background:var(--bar-low)}
 .pc{border-radius:16px}
-.pc-flow > div{text-align:center}
 .page[data-page="buffer"] .buffer-summary .card{text-align:center}
 
 /* Аналитика: средняя сумма — отдельной строкой под графиком */
 .analytics-legend span:last-child{flex-basis:100%;padding-top:8px;border-top:1px solid var(--line);font-size:13px;color:var(--text);font-weight:600}
 
-/* Карточки периодов буфера: ровная сетка 2 × 2 и выплата по центру */
-.pc-flow{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px}
-.pc-flow > div{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
-.pc-flow .income-cell{align-items:center}
-.pc-flow .income-actions{flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;margin-top:4px}
-.pc-flow .income-btn{padding:5px 12px;border-radius:10px;background:var(--surface-2);color:var(--text)}
-.pc-flow .income-btn.accent{background:var(--accent);color:#fff}
-.pc-flow .income-btn:hover{text-decoration:none;filter:brightness(.97)}
-.pc-flow .carry-line{text-align:center}
-@media(min-width:520px){.pc-flow{grid-template-columns:repeat(4,minmax(0,1fr))}}
 
-/* Карточки периодов как в макете: выплата отдельным блоком, деньги — 3 колонки */
+/* Карточки периодов: дата и движение буфера сверху, дальше простой список
+   «подпись — сумма» без вложенных блоков и колонок. */
 .plan-cards{gap:8px}
 .pc-group{margin:10px 2px 0;font-size:13px;font-weight:600;color:var(--muted)}
 .pc-group:first-child{margin-top:4px}
@@ -1005,23 +977,23 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .pc-date{display:flex;align-items:center;gap:8px;font-size:15px}
 .pc-chip{padding:2px 8px;border-radius:99px;background:var(--accent);color:#fff;font-size:11px;font-weight:600}
 .pc-chip.past{background:var(--surface-2);color:var(--muted)}
-.pc-pay{margin-top:12px;padding:12px;border-radius:12px;background:var(--bg);border:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
-.pc-pay-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.pc-pay-top > div{display:flex;flex-direction:column;gap:2px;min-width:0}
-.pc-pay-top span{font-size:12px;color:var(--muted)}
-.pc-pay-top b{font-size:17px;font-weight:700}
-.pc-status{padding:4px 10px;border-radius:99px;background:var(--surface-2);color:var(--muted);font-size:12px;font-weight:600;white-space:nowrap}
+.pc-pay,.pc-flow{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.pc-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:14px}
+.pc-row span{color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+.pc-row b{font-weight:600;white-space:nowrap}
+.pc-pay .pc-row b{font-size:16px;font-weight:700}
+.pc-pay small,.pc-flow small{display:block;text-align:right;font-size:11.5px;color:var(--muted);margin-top:-4px}
+.pc-status{padding:1px 7px;border-radius:99px;background:var(--surface-2);color:var(--muted);font-size:11px;font-weight:600;white-space:nowrap}
 .pc-status.pending{background:var(--warn-bg);color:var(--warn-text)}
 .pc-status.done{background:color-mix(in srgb,var(--income) 14%,transparent);color:var(--income)}
-.pc-pay-actions{display:grid;grid-template-columns:1fr;gap:8px}
-.pc-pay-actions.two{grid-template-columns:repeat(2,minmax(0,1fr))}
-.pc-pay-actions .income-btn{min-height:44px;padding:0 12px;border-radius:12px;background:var(--surface-2);color:var(--text);font-size:14px}
+.pc-pay-actions{display:flex;gap:8px}
+.pc-pay-actions .income-btn{flex:1;min-height:38px;padding:0 12px;border-radius:10px;background:var(--surface-2);color:var(--text);font-size:14px}
 .pc-pay-actions .income-btn.accent{background:var(--accent);color:#fff}
 .pc-pay-actions .income-btn:hover{text-decoration:none;filter:brightness(.97)}
-.pc-flow.pc-flow3{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:8px;margin:12px 0 10px}
-.pc-flow.pc-flow3 b{font-size:14px}
-.pc-foot{font-size:13px}
-.pc-flow.pc-flow3 b small:not(.carry-line){white-space:nowrap;font-size:10.5px}
+.pc-foot{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:14px}
+.pc-foot + small{display:block;text-align:right;font-size:11.5px;color:var(--muted);margin-top:2px}
+.free-short{color:var(--expense)!important}
+.plan-hint{margin:12px 2px 0;font-size:12.5px}
 
 /* Главная на компьютере: две независимые колонки (home-layout.js задаёт
    каждой карточке высоту в строках по 1px), без пустот под короткими блоками. */
