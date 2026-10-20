@@ -139,6 +139,12 @@
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"в буфер"]
         : ["zero","—","без движения"];
+    // The period's own money may fall short of its obligatory payments (a
+    // small advance after the January holidays).  The minus stays, in red,
+    // with a note that the buffer already holds the missing money.
+    const freeInner = p => Number(p.free) < 0
+      ? `<span class="free-short">${formatMoney(p.free)}</span><br><small>недостающее заложено в буфере</small>`
+      : formatMoney(p.free);
     const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>`;
     const toCardLine = p => Number(p.to_card) > 0
       ? `<div><span>На карту</span><b>${toCardInner(p)}</b></div>` : "";
@@ -192,7 +198,7 @@
       const [c,m,shortLabel]=movement(p);
       const label = c==="pos" ? "положить в буфер" : c==="neg" ? "взять из буфера" : shortLabel;
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : i===0 ? '<span class="pc-chip">сейчас</span>' : "";
-      const flow = `<div class="pc-flow pc-flow3 num">${toCardLine(p)}<div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>`;
+      const flow = `<div class="pc-flow pc-flow3 num">${toCardLine(p)}<div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${freeInner(p)}</b></div></div>`;
       const footLabel = p.past ? "Остаток буфера" : "Останется в буфере";
       return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}${capLines(p)}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyLine(p)}</article>`;
     }).join("");
@@ -201,7 +207,7 @@
       const i = j - (shown.length - periods.length);
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
-      const tail=[formatMoney(p.mandatory),formatMoney(p.free)];
+      const tail=[formatMoney(p.mandatory),freeInner(p)];
       const capNote = (keptInBuffer(p) > 0.004 ? `<br><small>сверх максимума ${formatMoney(keptInBuffer(p))} — в буфере</small>` : "")
         + (Number(p.cap_kept_piggy) > 0 ? `<br><small>сверх максимума ${formatMoney(p.cap_kept_piggy)} — в копилку</small>` : "");
       const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>${capNote}`;
