@@ -33,7 +33,9 @@ FEDERAL_HOLIDAYS = {
 # 2025: Government Resolution No. 1335 of 04.10.2024.
 # 2026: Government Resolution No. 1466 of 24.09.2025 plus the resulting
 # observed holiday Mondays (09.03 and 11.05).
-# 2027: calendar published by the Ministry of Labour. Keeping an embedded
+# 2027: Government Resolution No. 1187 of 17.09.2026 (02.01 -> 05.11,
+# 03.01 -> 31.12, Saturday 20.02 -> 22.02, so 20.02 is a working day).
+# Keeping an embedded
 # copy is especially important around New Year: an incomplete remote calendar
 # must never treat 7 January as a working payday.
 DAY_OFF_OVERRIDES: dict[int, set[date]] = {
@@ -63,7 +65,7 @@ DAY_OFF_OVERRIDES: dict[int, set[date]] = {
 WORKDAY_OVERRIDES: dict[int, set[date]] = {
     2025: {date(2025, 11, 1)},
     2026: set(),
-    2027: set(),
+    2027: {date(2027, 2, 20)},
 }
 
 

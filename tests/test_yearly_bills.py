@@ -97,7 +97,7 @@ def test_buffer_saves_up_for_a_yearly_payment_beyond_the_forecast(client):
     add_yearly(client, effective_date=TODAY.isoformat())
     flow = cashflow_snapshot(1)
     # 15 March 2027 is far beyond the one-month forecast.  It is saved up on
-    # the start day and the 12 paydays 22.09 … 05.03 (07.03 is a Sunday):
+    # the start day and the 12 paydays 22.09 … 05.03 (07.03 is a Sunday, 22.02 moves to the working Saturday 20.02):
     # 13 equal parts of 923,08 ₽ (the first one a kopeck less).
     parts = [p["yearly_put_aside"] for p in flow["periods"]]
     assert parts[:3] == [923.07, 923.08, 923.08]
