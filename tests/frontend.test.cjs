@@ -270,16 +270,16 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
  assert.match(get('bufferPeriods').innerHTML,/neg movement-cell"><span>5.000,00.₽<\/span><small>взять из буфера/);
  assert.match(get('bufferPeriods').innerHTML,/pos movement-cell"><span>10.000,00.₽<\/span><small>положить в буфер/);
  assert.match(get('planCards').innerHTML,/5.000,00.₽<small>взять из буфера/);
- // The same daily rate everywhere is said once above the plan, not per row.
- assert.match(get('bufferPeriods').innerHTML,/15.000,00.₽<\/td>/);
- assert.doesNotMatch(get('bufferPeriods').innerHTML+get('planCards').innerHTML,/в день/);
+ // Every period shows its daily amount under «На карту».
+ assert.match(get('bufferPeriods').innerHTML,/15.000,00.₽<small>1.000,00.₽ в день<\/small><\/td>/);
+ assert.match(get('planCards').innerHTML,/15.000,00.₽<\/b><\/div><small>1.000,00.₽ в день/);
 });
 
 test('buffer plan shows money sent to the piggy bank and differing daily rates per period', async () => {
  const {get,responses}=setup();
  responses['/api/cashflow'].periods=[
  {start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',payday:'2026-10-07',days:15,received:58124.16,mandatory:39900,free:18224.16,to_card:20880.45,daily:1377.94,put_aside:0,take:2656.29,buffer:17908.09,yearly_saved:0},
- {start:'2026-10-22',end:'2026-11-05',kind:'Аванс',payday:'2026-10-22',days:15,received:48149.71,mandatory:27700,free:20449.71,to_card:27000,daily:1800,put_aside:0,take:10619.49,buffer:7288.6,cap_kept:4069.2,cap_kept_piggy:4069.2,to_piggy:4069.2,yearly_saved:214.28}
+ {start:'2026-10-22',end:'2026-11-05',kind:'Аванс',payday:'2026-10-22',days:15,received:48149.71,mandatory:27700,free:20449.71,to_card:27000,daily:1799.99,daily_set:1800,put_aside:0,take:10619.49,buffer:7288.6,cap_kept:4069.2,cap_kept_piggy:4069.2,to_piggy:4069.2,yearly_saved:214.28}
  ];
  await get('refreshBtn').listeners.click();
  const table=get('bufferPeriods').innerHTML, cards=get('planCards').innerHTML;
@@ -289,10 +289,11 @@ test('buffer plan shows money sent to the piggy bank and differing daily rates p
  assert.match(table,/<td class="num">4.069,20.₽<\/td><td class="num sep neg movement-cell"><span>10.619,49.₽<\/span><small>взять из буфера/);
  assert.match(get('planHint').textContent,/на карту − в копилку =/);
  assert.match(cards,/− В копилку<\/span><b class="num">4.069,20.₽/);
- // Only the period whose rate differs from the usual one shows it.
+ // Every period shows its daily amount; one limited by «Максимум в день»
+ // shows the amount set by hand.
  assert.match(get('planDaily').textContent,/В день обычно 1.800,00/);
  assert.match(table,/20.880,45.₽<small>1.377,94.₽ в день/);
- assert.doesNotMatch(table,/1.800,00.₽ в день/);
+ assert.match(table,/27.000,00.₽<small>1.800,00.₽ в день/);
  // The yearly part of the buffer is shown for the current period only.
  assert.doesNotMatch(table+cards,/на годовые/);
 });

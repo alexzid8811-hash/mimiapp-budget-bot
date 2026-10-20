@@ -121,11 +121,13 @@
       return;
     }
     const max = Math.max(0, ...periods.map(p => Number(p.buffer) || 0));
-    // The usual daily rate is said once above the plan; periods show their
-    // own rate only when it differs from it.  On a tie the later periods win:
-    // the current one is the usual odd one out.
+    // The period's daily amount; one limited by «Максимум в день» shows the
+    // amount set by hand.
+    const dailyOf = p => Number(p.daily_set ?? p.daily);
+    // The usual daily rate is said once above the plan.  On a tie the later
+    // periods win: the current one is the usual odd one out.
     const dailyCounts = new Map();
-    [...periods].reverse().forEach(p => dailyCounts.set(Number(p.daily), (dailyCounts.get(Number(p.daily)) || 0) + 1));
+    [...periods].reverse().forEach(p => dailyCounts.set(dailyOf(p), (dailyCounts.get(dailyOf(p)) || 0) + 1));
     const usualDaily = [...dailyCounts].sort((a, b) => b[1] - a[1])[0][0];
     const commonDaily = dailyCounts.size === 1;
     setText("planDaily", (commonDaily ? "В день везде " : "В день обычно ") + formatMoney(usualDaily));
@@ -152,7 +154,9 @@
     // the missing money is already planned in the buffer.
     const shortNote = p => Number(p.free) < 0
       ? `<small class="free-short">не хватает ${formatMoney(-Number(p.free))}</small>` : "";
-    const dailyNote = p => Number(p.daily) === usualDaily ? "" : `<small>${formatMoney(p.daily)} в день</small>`;
+    // Every period shows its daily amount under «На карту».
+    const dailyNote = p => Number(p.to_card) > 0 || p.daily_set != null
+      ? `<small>${formatMoney(dailyOf(p))} в день</small>` : "";
     // Money leaving for the piggy bank: the excess over «Максимум в день»
     // and spare buffer money.  Excess kept in the buffer is already part of
     // the movement and is not repeated.

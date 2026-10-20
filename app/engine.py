@@ -548,6 +548,12 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         else:
             # A closed period: its card money spread over its days.
             daily = row.to_card // row.card_days if row.card_days else 0
+        # A period limited by «Максимум в день» shows the amount set by hand.
+        # The maximum works from the day it is saved, so a period already
+        # running takes the one in effect today.
+        cap = (cap_rule(inp.caps, funded.period.funded_on if past else max(funded.period.start, today))[0]
+               if funded else None)
+        capped = cap is not None and (daily >= cap or sum(row_kept) > 0 or row.card_to_piggy > 0)
         return {
             "start": row.start.isoformat(),
             "end": row.end.isoformat(),
@@ -579,6 +585,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "free": amount(row.received - row.mandatory),
             "card_period": _period_dict(funded.period) if funded else None,
             "daily": amount(daily),
+            "daily_set": amount(cap) if capped else None,
             # Left in the buffer by the daily maximum in this buffer period.
             "cap_kept": amount(row_kept[0]),
             "cap_kept_piggy": amount(row_kept[1]),
