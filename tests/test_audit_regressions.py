@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app import clock, planning
 from app.auth import current_user
 from app.backup import export_user_data, restore_user_data
-from app.cashflow_app import app, cashflow_snapshot, add_piggy_bank_movement, PiggyBankMovementIn, piggy_bank_balance
+from app.cashflow_app import app, cashflow_settings, cashflow_snapshot, add_piggy_bank_movement, PiggyBankMovementIn, piggy_bank_balance
 from app.db import connect, ensure_user, init_db, user_scope
 
 
@@ -438,6 +438,19 @@ def test_backup_restores_cashflow_income_overrides(client):
     corrected = advance_row(as_user(2, cashflow_snapshot, 2))
     assert corrected['payday_amount'] == 41000
     assert corrected['income_overridden'] is True
+
+
+def test_backup_restores_buffer_floor(client):
+    assert client.put('/api/buffer-floor', json={'amount': 3000}).status_code == 200
+    backup = export_user_data(1)
+    assert backup['data']['settings']['buffer_floor'] == 3000
+    ensure_user(2)
+    restore_user_data(2, backup)
+    assert as_user(2, cashflow_settings, 2)['buffer_floor'] == 3000
+    # Older backups have no minimum.
+    del backup['data']['settings']['buffer_floor']
+    restore_user_data(2, backup)
+    assert as_user(2, cashflow_settings, 2)['buffer_floor'] == 0
 
 
 def test_backup_remaps_archived_rule_history(client):

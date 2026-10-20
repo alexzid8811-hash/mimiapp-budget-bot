@@ -59,6 +59,11 @@ class DailyCapIn(APIModel):
     excess_to: Literal["buffer", "piggy"] = "buffer"
 
 
+class BufferFloorIn(APIModel):
+    # None or 0: no minimum.
+    amount: float | None = Field(default=None, ge=0)
+
+
 class BufferToPiggyIn(APIModel):
     amount: float = Field(gt=0)
     note: str = Field(default="", max_length=160)
@@ -146,6 +151,17 @@ def save_daily_cap(payload: DailyCapIn, user: TelegramUser = Depends(current_use
     if irregular_engine.is_irregular(uid):
         raise HTTPException(422, "Максимум в день работает в режиме «Зарплата и аванс»")
     engine.set_daily_cap(uid, payload.amount, to_piggy=payload.excess_to == "piggy")
+    return cashflow_settings(uid)
+
+
+@app.put("/api/buffer-floor")
+def save_buffer_floor(payload: BufferFloorIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """«Минимум буфера»: later card periods get only what keeps the buffer
+    at or above it."""
+    uid = legacy.user_ready(user)
+    if irregular_engine.is_irregular(uid):
+        raise HTTPException(422, "Минимум буфера работает в режиме «Зарплата и аванс»")
+    engine.set_buffer_floor(uid, payload.amount)
     return cashflow_settings(uid)
 
 

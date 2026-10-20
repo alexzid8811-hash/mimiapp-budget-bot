@@ -327,6 +327,8 @@ def _ensure_settings_columns(con: sqlite3.Connection) -> None:
         # 1 when today's morning report was sent before the payday was
         # confirmed and has to be sent again with the new numbers.
         "morning_report_resend": "INTEGER NOT NULL DEFAULT 0",
+        # «Минимум буфера»: the card periods never get this money.
+        "buffer_floor": "REAL NOT NULL DEFAULT 0",
     }
     for name, ddl in additions.items():
         if name not in columns:

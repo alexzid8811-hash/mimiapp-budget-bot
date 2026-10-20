@@ -43,6 +43,10 @@ Rules
   With «избыток в копилку» the excess goes to the piggy bank instead: the
   buffer pays the period as without the maximum (so it never sags) and the
   part above the maximum, like the trimmed card money, goes to the piggy bank.
+* An optional minimum of the buffer («Минимум буфера») is never part of a
+  funding decision: the rate keeps the buffer at or above it on every day,
+  on top of the money saved up for yearly payments.  Obligatory payments are
+  still paid from the buffer, so they may take it below the minimum.
 """
 from __future__ import annotations
 
@@ -216,6 +220,8 @@ class LedgerInput:
     # Unpaid yearly payments, also beyond ``data_end`` (they are included
     # in ``bills_out`` only through it).
     sinking: list[Sinking] = field(default_factory=list)
+    # «Минимум буфера»: money the card periods never get.
+    buffer_floor: int = 0
 
 
 @dataclass
@@ -330,7 +336,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         if day in by_funding:
             look_ahead = min(add_months(day, inp.months), inp.data_end)
             decision = safe_daily_rate(
-                opening=buffer - kept_before(day), start=day, end=look_ahead, flows=decision_flows,
+                opening=buffer - kept_before(day) - inp.buffer_floor, start=day, end=look_ahead,
+                flows=decision_flows,
                 funded_days={d: n for d, n in funded_days.items() if day <= d <= look_ahead},
             )
             for period in by_funding[day]:
@@ -463,7 +470,7 @@ def safe_rate_from(inp: LedgerInput, result: LedgerResult, day: date, held: int 
             funded_days[period.funded_on] = funded_days.get(period.funded_on, 0) + period.days
     decision_flows, _, kept_before = sinking_decisions(
         inp, buffer_flows(inp), {p.funded_on for p in result.periods})
-    opening = held - kept_before(day) + (
+    opening = held - kept_before(day) - inp.buffer_floor + (
         inp.start_capital if day == inp.start else result.buffer_end[day - ONE_DAY])
     return safe_daily_rate(
         opening=opening, start=day, end=look_ahead, flows=decision_flows, funded_days=funded_days,
@@ -475,9 +482,9 @@ def spare_buffer(inp: LedgerInput, result: LedgerResult) -> int:
     any card period or leaving an obligation uncovered, in whole rubles."""
     if result.shortfall > 0:
         return 0
-    # Money kept for yearly payments is never spare.
+    # Money kept for yearly payments and the minimum are never spare.
     lowest = min(result.buffer_end[d] - result.sinking_end.get(d, 0)
-                 for d in daterange(inp.today, inp.data_end))
+                 for d in daterange(inp.today, inp.data_end)) - inp.buffer_floor
     if lowest <= 0:
         return 0
     stored = {p.start: result.allocations[p.start] for p in result.periods if p.funded_on <= inp.today}

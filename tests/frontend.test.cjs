@@ -785,3 +785,25 @@ test('expense "+" with an empty amount adds nothing and a typed note is kept', a
   assert.equal(body.amount,0.3);
   assert.equal(body.note,'Магнит');
 });
+
+test('buffer floor is saved from settings and warned about on the buffer page', async () => {
+  const {get, requests, responses} = setup();
+  responses['/api/cashflow-settings'] = {cashflow_enabled:1,start_date:'2026-09-01',buffer_floor:5000};
+  responses['/api/buffer-floor'] = {buffer_floor:7000};
+  Object.assign(responses['/api/cashflow'], {buffer_floor:5000, floor_gap:1500, floor_gap_date:'2026-10-07', periods:[
+    {start:'2026-09-07',end:'2026-09-21',kind:'Зарплата',payday:'2026-09-07',days:15,received:30000,mandatory:5000,free:25000,to_card:15000,daily:1000,put_aside:0,take:0,buffer:6000},
+    {start:'2026-09-22',end:'2026-10-06',kind:'Аванс',payday:'2026-09-22',days:15,received:20000,mandatory:10000,free:10000,to_card:12500,daily:833.33,put_aside:0,take:2500,buffer:3500},
+  ]});
+  await get('refreshBtn').listeners.click();
+  assert.equal(get('bufferFloor').value, 5000);
+  assert.match(get('reserveReason').textContent, /Минимум буфера — 5.000,00.₽/);
+  // The forecast falls below the minimum: said once, the balance is red.
+  assert.match(get('bufferShortfall').textContent, /7 окт. 2026 г. в буфере будет 3.500,00.₽ — меньше минимума 5.000,00.₽/);
+  assert.equal(get('bufferShortfall').classList.contains('hidden'), false);
+  assert.match(get('bufferPeriods').innerHTML, /<td class="num low">3.500,00.₽/);
+  get('bufferFloor').value = '7000';
+  await get('saveBufferFloorBtn').listeners.click();
+  const put = requests.find(r => r.url === '/api/buffer-floor');
+  assert.equal(put.method, 'PUT');
+  assert.deepEqual(JSON.parse(put.body), {amount:7000});
+});

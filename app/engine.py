@@ -8,7 +8,8 @@ from . import clock, planning
 from .budget import add_months
 from .db import connect
 from .ledger import (
-    LedgerInput, Sinking, buffer_rows, cap_on, cap_rule, run_ledger, safe_rate_from, spare_buffer,
+    LedgerInput, Sinking, buffer_rows, cap_on, cap_rule, daterange, run_ledger, safe_rate_from,
+    spare_buffer,
 )
 from .money import amount, cents
 
@@ -19,7 +20,7 @@ def settings_for(uid: int) -> dict:
     with connect() as con:
         row = con.execute(
             "SELECT cashflow_enabled,cashflow_start_date,cashflow_start_capital,forecast_months,"
-            "payday_confirm_from FROM settings WHERE user_id=?",
+            "payday_confirm_from,buffer_floor FROM settings WHERE user_id=?",
             (uid,),
         ).fetchone()
         cap = con.execute(
@@ -38,6 +39,8 @@ def settings_for(uid: int) -> dict:
         "daily_cap": cap["amount"] if cap else None,
         # Where the money above the maximum goes: 'buffer' or 'piggy'.
         "daily_cap_to": cap["excess_to"] if cap else "buffer",
+        # «Минимум буфера» (0: no minimum).
+        "buffer_floor": float(data.get("buffer_floor") or 0),
     }
 
 
@@ -106,7 +109,7 @@ def unconfirmed_payday(paydays: list[date], confirmed: set[date], *,
 
 
 def build_input(uid: int, *, start: date, capital: float, months: int, today: date,
-                confirm_from: str | None = None) -> tuple[LedgerInput, dict]:
+                confirm_from: str | None = None, floor: float = 0) -> tuple[LedgerInput, dict]:
     horizon = add_months(today, months)
     data_end = add_months(horizon, months)
     # Yearly payments are saved up for a year ahead, so their dates and the
@@ -271,6 +274,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         bills_out=bills_out, card_in=card_in, card_cover=card_cover, card_out=card_out,
         card_to_piggy=card_to_piggy, stored_allocations=stored, stored_cap_kept=stored_kept,
         buffer_out=buffer_out, caps=caps, cap_topups=topups, cap_moves=moves, sinking=sinking,
+        buffer_floor=cents(floor),
     )
     extras = {
         "titles": {day: ", ".join(item["titles"]) or "Выплата" for day, item in schedule["paydays"].items()},
@@ -348,7 +352,7 @@ def _run(uid: int, *, force_enabled: bool = False) -> tuple[LedgerInput, dict, d
         start, capital = (max(recent) if recent else today), 0.0
 
     inp, extras = build_input(uid, start=start, capital=capital, months=months, today=today,
-                              confirm_from=settings["payday_confirm_from"])
+                              confirm_from=settings["payday_confirm_from"], floor=settings["buffer_floor"])
     return inp, extras, today, start, settings, enabled
 
 
@@ -439,6 +443,19 @@ def set_daily_cap(uid: int, value: float | None, to_piggy: bool = False) -> None
             (uid, today.isoformat(), None if new is None else amount(new), amount(topup),
              "piggy" if to_piggy else "buffer", amount(moved)),
         )
+
+
+def set_buffer_floor(uid: int, value: float | None) -> None:
+    """Change «Минимум буфера».  It counts in every funding decision from
+    today on: the card money already given (the current period) stays, the
+    money funded today and every later period are recalculated."""
+    with connect() as con:
+        con.execute(
+            "UPDATE settings SET buffer_floor=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+            (value or 0, uid),
+        )
+    # The money funded today (a payday) is not spendable yet: recalculate it.
+    forget_allocations(uid, clock.today())
 
 
 def sync_cap_piggy(uid: int, start: date, today: date, moved: dict[date, int]) -> None:
@@ -612,6 +629,13 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
          for d, v in sorted(inp.buffer_in.items()) if d > today and v > 0),
         None,
     )
+    # The lowest buffer of the forecast below «Минимум буфера»: obligatory
+    # payments are paid from the buffer even when they take it below.
+    floor_gap, floor_gap_date = 0, None
+    if inp.buffer_floor:
+        low_day = min(daterange(today, inp.data_end), key=lambda d: result.buffer_end[d])
+        if result.buffer_end[low_day] < inp.buffer_floor:
+            floor_gap, floor_gap_date = inp.buffer_floor - result.buffer_end[low_day], low_day
     if result.shortfall > 0:
         reason = (
             f"Буфер не покрывает обязательные платежи: к {result.shortfall_date:%d.%m.%Y} "
@@ -669,6 +693,9 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "spent_period": round(float(spent_period), 2),
         "mandatory_period": amount(mandatory_period),
         "capital_shortfall": amount(result.shortfall),
+        "buffer_floor": amount(inp.buffer_floor),
+        "floor_gap": amount(floor_gap),
+        "floor_gap_date": floor_gap_date.isoformat() if floor_gap_date else None,
         "shortfall_date": result.shortfall_date.isoformat() if result.shortfall_date else None,
         "next_income": next_income,
         "reason": reason,
