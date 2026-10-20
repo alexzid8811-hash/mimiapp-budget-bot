@@ -514,7 +514,8 @@ class BufferRow:
     buffer_end: int
     lowest: int
     funded: PeriodForecast | None
-    to_piggy: int = 0   # spare buffer money moved to the piggy bank
+    to_piggy: int = 0   # buffer money moved to the piggy bank
+    card_to_piggy: int = 0  # card money above the maximum moved to the piggy bank
     card_days: int = 0  # days of the card periods funded in this row
 
 
@@ -542,10 +543,12 @@ def buffer_rows(inp: LedgerInput, result: LedgerResult, *, past: bool = False) -
             received=sum(inp.buffer_in.get(d, 0) for d in days),
             mandatory=sum(inp.bills_out.get(d, 0) for d in days),
             # Net money to the card: the daily maximum may return some of it
-            # to the buffer or top the card up.
+            # to the buffer or move it to the piggy bank, or top the card up.
             to_card=sum(result.allocations[p.start] for p in result.periods
                         if row_start <= p.funded_on <= row_end)
-            - sum(result.cap_trims.get(d, 0) for d in days) + sum(inp.cap_topups.get(d, 0) for d in days),
+            - sum(result.cap_trims.get(d, 0) + result.cap_piggy_trims.get(d, 0) for d in days)
+            + sum(inp.cap_topups.get(d, 0) for d in days),
+            card_to_piggy=sum(result.cap_piggy_trims.get(d, 0) for d in days),
             to_piggy=sum(inp.buffer_out.get(d, 0) + result.piggy_from_buffer.get(d, 0) for d in days),
             card_days=sum(p.days for p in result.periods if row_start <= p.funded_on <= row_end),
             buffer_start=(inp.start_capital if row_start == inp.start

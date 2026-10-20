@@ -569,6 +569,9 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "income_pending": bool(payday and payday == extras["waiting"]),
             "mandatory": amount(row.mandatory),
             "to_piggy": amount(row.to_piggy),
+            # Paid by the buffer to the card, then moved above the maximum to
+            # the piggy bank (not part of ``to_card``).
+            "cap_from_card": amount(row.card_to_piggy),
             "to_card": amount(row.to_card),
             # Money left on the card from the previous period (negative: its
             # overspend).  The daily amount is (to_card + carry_in) / days.

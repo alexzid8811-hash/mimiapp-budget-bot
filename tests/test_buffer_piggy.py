@@ -155,7 +155,8 @@ def test_daily_cap_keeps_excess_in_buffer(client):
     assert all(row["daily"] <= 80 for row in flow["periods"])
     for row in flow["periods"]:
         assert row["buffer"] == round(
-            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"], 2)
+            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"]
+            - row["cap_from_card"], 2)
 
 
 def test_daily_cap_above_the_limit_does_nothing(client):
@@ -253,7 +254,8 @@ def test_daily_cap_excess_to_piggy(client):
     assert cashflow_snapshot(1)["piggy_bank_balance"] == 200
     for row in flow["periods"]:
         assert row["buffer"] == round(
-            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"], 2)
+            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"]
+            - row["cap_from_card"], 2)
 
 
 def test_switching_excess_back_to_buffer_keeps_what_went_to_piggy(client, monkeypatch):
@@ -287,3 +289,20 @@ def test_switching_excess_to_piggy_moves_the_current_periods_excess(client, monk
     # Saving the same choice again the same day does not move it twice.
     assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
     assert cashflow_snapshot(1)["piggy_bank_balance"] == 200
+
+
+def test_card_money_trimmed_to_piggy_is_not_counted_as_to_card(client, monkeypatch):
+    # 1 000 ₽ for ten days; on the 14th the maximum is set with nothing spent.
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 14))
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    flow = cashflow_snapshot(1)
+    row = flow["periods"][0]
+    # 80 ₽ x 9 days stay on the card, 280 ₽ go to the piggy bank.
+    assert flow["card_balance"] == 720
+    assert row["cap_from_card"] == 280
+    assert row["to_card"] == 720
+    assert row["cap_kept_piggy"] == 280
+    for row in flow["periods"]:
+        assert row["buffer"] == round(
+            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"]
+            - row["cap_from_card"], 2)
