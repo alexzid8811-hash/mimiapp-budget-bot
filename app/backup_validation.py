@@ -185,6 +185,7 @@ class DailyCap(Record):
     amount: float | None = Field(default=None, gt=0)
     topup: float = Field(default=0, ge=0)
     excess_to: Literal['buffer', 'piggy'] = 'buffer'
+    moved: float = Field(default=0, ge=0)
 
 
 class CashflowIncomeOverride(Record):

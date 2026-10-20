@@ -196,6 +196,9 @@ CREATE TABLE IF NOT EXISTS daily_caps (
     amount REAL,
     topup REAL NOT NULL DEFAULT 0,
     excess_to TEXT NOT NULL DEFAULT 'buffer' CHECK(excess_to IN ('buffer','piggy')),
+    -- Switched to the piggy bank that day: the current period's excess
+    -- already kept in the buffer, moved buffer -> piggy bank.
+    moved REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, effective_from)
 );
@@ -590,6 +593,8 @@ def _prepare(con: sqlite3.Connection) -> None:
     cap_columns = {row[1] for row in con.execute("PRAGMA table_info(daily_caps)")}
     if "excess_to" not in cap_columns:
         con.execute("ALTER TABLE daily_caps ADD COLUMN excess_to TEXT NOT NULL DEFAULT 'buffer'")
+    if "moved" not in cap_columns:
+        con.execute("ALTER TABLE daily_caps ADD COLUMN moved REAL NOT NULL DEFAULT 0")
     category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
     if "sort_order" not in category_columns:
         con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")

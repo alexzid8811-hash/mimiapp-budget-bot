@@ -202,16 +202,26 @@
       const footLabel = p.past ? "Остаток буфера" : "Останется в буфере";
       return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}${capLines(p)}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyLine(p)}</article>`;
     }).join("");
-    document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
+    // «Сверх максимума» gets its own column, only when the maximum held
+    // anything back in the periods shown.
+    const capColumn = shown.some(p => Number(p.cap_kept) > 0);
+    const heads = ["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту",
+      ...(capColumn ? ["Сверх максимума"] : []),"Движение буфера","Остаток буфера"];
+    document.getElementById("bufferHead").innerHTML = "<tr>"+heads.map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = shown.map((p,j)=>{
       const i = j - (shown.length - periods.length);
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),freeInner(p)];
-      const capNote = (keptInBuffer(p) > 0.004 ? `<br><small>сверх максимума ${formatMoney(keptInBuffer(p))} — в буфере</small>` : "")
-        + (Number(p.cap_kept_piggy) > 0 ? `<br><small>сверх максимума ${formatMoney(p.cap_kept_piggy)} — в копилку</small>` : "");
-      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>${capNote}`;
-      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${Number(p.yearly_saved) > 0 ? `<br><small>на годовые ${formatMoney(p.yearly_saved)}</small>` : ""}</td></tr>`;
+      const capParts = [
+        ...(Number(p.cap_kept_piggy) > 0 ? [[p.cap_kept_piggy, "в копилку"]] : []),
+        ...(keptInBuffer(p) > 0.004 ? [[keptInBuffer(p), "в буфер"]] : []),
+      ];
+      const capCell = !capColumn ? "" : `<td class="num cap-cell">${capParts.length
+        ? capParts.map(([value, where]) => `<span>${formatMoney(value)}</span><small>${where}</small>`).join("")
+        : '<span class="zero">—</span>'}</td>`;
+      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>`;
+      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td>${capCell}<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${Number(p.yearly_saved) > 0 ? `<br><small>на годовые ${formatMoney(p.yearly_saved)}</small>` : ""}</td></tr>`;
     }).join("");
   }
 

@@ -221,6 +221,14 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
                 (uid, today.isoformat()),
             )
         ]
+        moves = {
+            date.fromisoformat(r["effective_from"]): cents(r["moved"])
+            for r in con.execute(
+                "SELECT effective_from,moved FROM daily_caps WHERE user_id=? AND moved>0 "
+                "AND effective_from BETWEEN ? AND ?",
+                window,
+            )
+        }
         topups = {
             date.fromisoformat(r["effective_from"]): cents(r["topup"])
             for r in con.execute(
@@ -262,7 +270,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         start_capital=cents(capital), paydays=paydays, buffer_in=buffer_in,
         bills_out=bills_out, card_in=card_in, card_cover=card_cover, card_out=card_out,
         card_to_piggy=card_to_piggy, stored_allocations=stored, stored_cap_kept=stored_kept,
-        buffer_out=buffer_out, caps=caps, cap_topups=topups, sinking=sinking,
+        buffer_out=buffer_out, caps=caps, cap_topups=topups, cap_moves=moves, sinking=sinking,
     )
     extras = {
         "titles": {day: ", ".join(item["titles"]) or "Выплата" for day, item in schedule["paydays"].items()},
@@ -416,11 +424,20 @@ def set_daily_cap(uid: int, value: float | None, to_piggy: bool = False) -> None
             if new is not None:
                 rate = min(rate, new)
             topup = max(0, (rate - old) * remaining)
+    # Switched to the piggy bank: the current period's excess already kept in
+    # the buffer goes there too (the buffer stays as without the maximum).
+    moved = 0
+    if to_piggy and not old_to_piggy and old is not None:
+        current = result.current
+        if not cap_rule(inp.caps, current.funded_on)[1]:
+            moved += result.cap_kept.get(current.start, 0)
+        moved += sum(v for d, v in result.cap_trims.items() if current.start <= d < today)
+        moved = max(0, min(moved, result.buffer_end[today - timedelta(days=1)] if today > inp.start else 0))
     with connect() as con:
         con.execute(
-            "INSERT INTO daily_caps(user_id,effective_from,amount,topup,excess_to) VALUES(?,?,?,?,?)",
+            "INSERT INTO daily_caps(user_id,effective_from,amount,topup,excess_to,moved) VALUES(?,?,?,?,?,?)",
             (uid, today.isoformat(), None if new is None else amount(new), amount(topup),
-             "piggy" if to_piggy else "buffer"),
+             "piggy" if to_piggy else "buffer", amount(moved)),
         )
 
 
@@ -496,7 +513,10 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         held = sum(result.cap_kept.get(p.start, 0) for p in periods)
         held_to_piggy = sum(result.cap_kept.get(p.start, 0) for p in periods
                             if cap_rule(inp.caps, p.funded_on)[1])
-        return held + in_range(actual.cap_trims) + piggy_trims, held_to_piggy + piggy_trims
+        # Kept in the buffer first, moved to the piggy bank on switching.
+        moved = in_range(inp.cap_moves)
+        total = held + in_range(actual.cap_trims) + piggy_trims
+        return total, min(total, held_to_piggy + piggy_trims + moved)
     card_now = actual.card_end_today
 
     with connect() as con:
@@ -549,6 +569,9 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "income_pending": bool(payday and payday == extras["waiting"]),
             "mandatory": amount(row.mandatory),
             "to_piggy": amount(row.to_piggy),
+            # Paid by the buffer to the card, then moved above the maximum to
+            # the piggy bank (not part of ``to_card``).
+            "cap_from_card": amount(row.card_to_piggy),
             "to_card": amount(row.to_card),
             # Money left on the card from the previous period (negative: its
             # overspend).  The daily amount is (to_card + carry_in) / days.
