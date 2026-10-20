@@ -135,3 +135,97 @@ def test_buffer_rows_follow_actual_paydays(client):
     assert rows[1]["to_card"] > 0
     for row in rows:
         assert row["buffer"] == round(row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"], 2)
+
+
+# «Максимум в день».
+
+def test_daily_cap_keeps_excess_in_buffer(client):
+    before = cashflow_snapshot(1)
+    response = client.put("/api/daily-cap", json={"amount": 80})
+    assert response.status_code == 200
+    assert response.json()["daily_cap"] == 80
+    flow = cashflow_snapshot(1)
+    assert flow["daily_cap"] == 80
+    assert flow["today_target"] == 80
+    assert flow["card_balance"] == 800
+    assert flow["buffer_balance"] == before["buffer_balance"] + 200
+    assert flow["period_cap_kept"] == 200
+    # Later periods are capped too.
+    assert flow["next_period"]["daily"] == 80
+    assert all(row["daily"] <= 80 for row in flow["periods"])
+    for row in flow["periods"]:
+        assert row["buffer"] == round(
+            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"], 2)
+
+
+def test_daily_cap_above_the_limit_does_nothing(client):
+    before = cashflow_snapshot(1)
+    assert client.put("/api/daily-cap", json={"amount": 150}).status_code == 200
+    flow = cashflow_snapshot(1)
+    assert flow["today_target"] == before["today_target"] == 100
+    assert flow["buffer_balance"] == before["buffer_balance"]
+    assert flow["period_cap_kept"] == 0
+
+
+def test_daily_cap_changed_mid_period(client, monkeypatch):
+    spend(client, 100)
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 14))
+    before = cashflow_snapshot(1)
+    assert before["today_target"] == 100  # 900 ₽ for nine days
+    assert client.put("/api/daily-cap", json={"amount": 80}).status_code == 200
+    flow = cashflow_snapshot(1)
+    assert flow["today_target"] == 80
+    assert flow["card_balance"] == 720
+    assert flow["buffer_balance"] == before["buffer_balance"] + 180
+    # Raised again the next day: the card gets the difference back from the
+    # buffer (only as much as the buffer can safely give).
+    spend(client, 80, date(2026, 9, 14))
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 15))
+    assert cashflow_snapshot(1)["today_target"] == 80
+    assert client.put("/api/daily-cap", json={"amount": None}).status_code == 200
+    flow = cashflow_snapshot(1)
+    assert flow["daily_cap"] is None
+    # 640 ₽ left on the card + the 180 ₽ returned to the buffer on the 14th.
+    assert flow["card_balance"] == 820
+    assert flow["today_target"] == 102.5
+    assert flow["capital_shortfall"] == 0
+    # History of the days gone is not rewritten.
+    assert client.get("/api/cashflow-settings").json()["daily_cap"] is None
+
+
+def test_spare_buffer_moves_to_piggy_without_touching_the_plan(client):
+    assert client.put("/api/daily-cap", json={"amount": 80}).status_code == 200
+    flow = cashflow_snapshot(1)
+    spare = flow["spare_buffer"]
+    assert spare > 0
+    too_much = client.post("/api/buffer/to-piggy", json={"amount": spare + 1})
+    assert too_much.status_code == 422
+    response = client.post("/api/buffer/to-piggy", json={"amount": spare})
+    assert response.status_code == 200
+    assert response.json()["balance"] == spare
+    after = cashflow_snapshot(1)
+    assert after["buffer_balance"] == round(flow["buffer_balance"] - spare, 2)
+    assert after["piggy_bank_balance"] == spare
+    assert after["capital_shortfall"] == 0
+    assert after["spare_buffer"] == 0
+    assert [r["to_card"] for r in after["periods"]] == [r["to_card"] for r in flow["periods"]]
+    assert after["periods"][0]["to_piggy"] == spare
+
+
+def test_no_spare_buffer_without_daily_cap(client):
+    assert cashflow_snapshot(1)["spare_buffer"] == 0
+    assert client.post("/api/buffer/to-piggy", json={"amount": 1}).status_code == 422
+
+
+def test_daily_cap_survives_backup(client):
+    assert client.put("/api/daily-cap", json={"amount": 80}).status_code == 200
+    spare = cashflow_snapshot(1)["spare_buffer"]
+    assert client.post("/api/buffer/to-piggy", json={"amount": spare}).status_code == 200
+    before = cashflow_snapshot(1)
+    backup = client.get("/api/backup").json()
+    assert backup["data"]["daily_caps"][0]["amount"] == 80
+    assert client.put("/api/daily-cap", json={"amount": None}).status_code == 200
+    assert client.post("/api/backup/restore", json=backup).status_code == 200
+    after = cashflow_snapshot(1)
+    for key in ("daily_cap", "today_target", "buffer_balance", "piggy_bank_balance", "period_cap_kept"):
+        assert after[key] == before[key], key

@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 11
+BACKUP_VERSION = 12
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -69,8 +69,10 @@ TABLE_COLUMNS = {
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "confirmed", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
-    "card_allocations": ("id", "period_start", "funded_on", "amount"),
+    "card_allocations": ("id", "period_start", "funded_on", "amount", "cap_kept"),
     "payroll_changes": ("id", "effective_month", "salary_gross", "bonus_gross", "created_at"),
+    # «Максимум в день» (v12).
+    "daily_caps": ("id", "effective_from", "amount", "topup", "created_at"),
     "emergency_reserve_movements": (
         "id", "direction", "amount", "movement_date", "reason", "kind", "expense_transaction_id", "created_at",
     ),
@@ -136,7 +138,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
         with user_scope(user_id), connect() as con:
             con.execute("BEGIN IMMEDIATE")
             for table in ("account_transfers", "account_adjustments", "account_incomes", "envelope_accounts",
-                          "emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories", "accounts"):
+                          "emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "daily_caps", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories", "accounts"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             # Versions before v5 stored the cash-flow start balance in
@@ -306,8 +308,13 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
             for row in data["card_allocations"]:
                 con.execute(
-                    "INSERT INTO card_allocations(user_id,period_start,funded_on,amount) VALUES(?,?,?,?)",
-                    (user_id, row["period_start"], row["funded_on"], row["amount"]),
+                    "INSERT INTO card_allocations(user_id,period_start,funded_on,amount,cap_kept) VALUES(?,?,?,?,?)",
+                    (user_id, row["period_start"], row["funded_on"], row["amount"], row.get("cap_kept") or 0),
+                )
+            for row in data["daily_caps"]:
+                con.execute(
+                    "INSERT INTO daily_caps(user_id,effective_from,amount,topup,created_at) VALUES(?,?,?,?,?)",
+                    (user_id, row["effective_from"], row.get("amount"), row.get("topup") or 0, _created_at(row)),
                 )
             for row in data["payroll_changes"]:
                 con.execute(

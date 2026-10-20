@@ -69,6 +69,11 @@
       save.addEventListener("click", saveCashflowSettings);
       if (save.dataset) save.dataset.bound = "true";
     }
+    const saveCap = document.getElementById("saveDailyCapBtn");
+    if (saveCap && !saveCap.dataset?.bound) {
+      saveCap.addEventListener("click", saveDailyCap);
+      if (saveCap.dataset) saveCap.dataset.bound = "true";
+    }
   }
 
   function applyCashflow(flow) {
@@ -96,6 +101,12 @@
     let reason = flow.reason || "";
     if (Number(flow.reserved_mandatory || 0) > 0) {
       reason += ` На обязательные платежи зарезервировано ${formatMoney(flow.reserved_mandatory)}.`;
+    }
+    if (flow.daily_cap != null) {
+      reason += ` Максимум в день — ${formatMoney(flow.daily_cap)}.`;
+      if (Number(flow.period_cap_kept || 0) > 0) {
+        reason += ` Сверх него в этом периоде в буфере осталось ${formatMoney(flow.period_cap_kept)}.`;
+      }
     }
     if (flow.next_income) {
       const d = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" })
@@ -129,7 +140,28 @@
     document.getElementById("cashflowEnabled").checked = Boolean(settings.cashflow_enabled);
     document.getElementById("cashflowStartDate").value = settings.start_date || todayISO();
     document.getElementById("initialReserve").value = settings.start_capital ?? 0;
+    const cap = document.getElementById("dailyCap");
+    if (cap && document.activeElement !== cap) cap.value = settings.daily_cap ?? "";
   };
+
+  async function saveDailyCap() {
+    try {
+      const raw = (document.getElementById("dailyCap")?.value || "").trim();
+      const value = raw ? parseMoneyField("dailyCap") : 0;
+      const settings = await request("/api/daily-cap", {
+        method: "PUT",
+        body: JSON.stringify({ amount: value > 0 ? value : null }),
+      });
+      if (typeof toast === "function") {
+        toast(settings.daily_cap != null
+          ? `Максимум в день ${formatMoney(settings.daily_cap)}, бюджет пересчитан`
+          : "Максимум в день снят, бюджет пересчитан");
+      }
+      await loadAll();
+    } catch (err) {
+      if (typeof toast === "function") toast(err.message);
+    }
+  }
 
   async function saveCashflowSettings() {
     try {

@@ -59,6 +59,8 @@ def _piggy_title(row: dict) -> str:
             return "Остаток обязательного платежа"
         if row.get("income_transaction_id"):
             return "Доход в копилку"
+        if row.get("purpose") == "from_buffer":
+            return "Лишнее из буфера"
         return "Из остатка дня" if row["source"] == "daily_budget" else "Пополнение"
     if row["source"] == "daily_budget":
         return "На карту · по дням периода" if row.get("purpose") == "transfer" else "На карту · на сегодня"

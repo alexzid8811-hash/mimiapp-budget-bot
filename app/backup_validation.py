@@ -137,7 +137,7 @@ class Piggy(Record):
     movement_date: date
     note: str = Field(default='', max_length=160)
     source: Literal['external', 'daily_budget'] = 'external'
-    purpose: Literal['transfer', 'today', 'cover_overspend'] | None = None
+    purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
     expense_transaction_id: int | None = Field(default=None, gt=0)
@@ -175,6 +175,13 @@ class CardAllocation(Record):
     period_start: date
     funded_on: date
     amount: float
+    cap_kept: float = Field(default=0, ge=0)
+
+
+class DailyCap(Record):
+    effective_from: date
+    amount: float | None = Field(default=None, gt=0)
+    topup: float = Field(default=0, ge=0)
 
 
 class CashflowIncomeOverride(Record):
@@ -277,11 +284,12 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
           'plan_history': History, 'card_allocations': CardAllocation,
           'payroll_changes': PayrollChange, 'emergency_reserve_movements': EmergencyReserve,
+          'daily_caps': DailyCap,
           **ACCOUNT_TABLES}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 12):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 13):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -294,6 +302,8 @@ def validate_backup(payload):
         data['settings'].update(accounts_enabled=False, main_account_id=None, accounts_disabled_at=None)
     for table, model in MODELS.items():
         optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations', 'payroll_changes'}
+        if payload['backup_version'] < 12:
+            optional_legacy_tables.add('daily_caps')
         if payload['backup_version'] < 11:
             optional_legacy_tables.update(ACCOUNT_TABLES)
         if payload['backup_version'] < 10:
@@ -361,6 +371,9 @@ def validate_backup(payload):
         row['snapshot'] = conditions
     if dates and min(dates) != '0001-01-01':
         raise ValueError('Нет начального состояния истории условий')
+    caps = [r['effective_from'] for r in data['daily_caps']]
+    if len(set(caps)) != len(caps) or any(day > clock.today().isoformat() for day in caps):
+        raise ValueError('Неверная дата максимума в день')
     months = [r['effective_month'] for r in data['payroll_changes']]
     if len(set(months)) != len(months):
         raise ValueError('Повторяющийся месяц изменения зарплаты')

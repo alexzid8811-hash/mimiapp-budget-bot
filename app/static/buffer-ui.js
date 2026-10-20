@@ -95,7 +95,15 @@
     } else {
       shortfall.classList.add("hidden");
     }
-
+    // Money the daily maximum left in the buffer that no period and no
+    // obligation needs: offered to the piggy bank.
+    const spare = Number(data.spare_buffer || 0);
+    document.getElementById("bufferSpare")?.classList.toggle("hidden", !(data.enabled && spare > 0));
+    if (data.enabled && spare > 0) {
+      setText("bufferSpareAmount", formatMoney(spare));
+      setText("bufferSpareText", `Из-за максимума ${formatMoney(data.daily_cap)} в день в буфере собралось больше, чем нужно. `
+        + "Эту сумму можно перевести в копилку: дневной лимит всех периодов и обязательные платежи останутся как есть.");
+    }
 
     const body = document.getElementById("bufferPeriods");
     const cards = document.getElementById("planCards");
@@ -134,6 +142,11 @@
     const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>`;
     const toCardLine = p => Number(p.to_card) > 0
       ? `<div><span>На карту</span><b>${toCardInner(p)}</b></div>` : "";
+    // «Максимум в день» and the spare money moved to the piggy bank.
+    const capLines = p => (Number(p.cap_kept) > 0
+      ? `<div class="pc-cap"><span>Сверх максимума — в буфере</span><b class="num">${formatMoney(p.cap_kept)}</b></div>` : "")
+      + (Number(p.to_piggy) > 0
+        ? `<div class="pc-cap"><span>Из буфера в копилку</span><b class="num">${formatMoney(p.to_piggy)}</b></div>` : "");
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
     const pastToggle = document.getElementById("bufPastToggle");
@@ -174,7 +187,7 @@
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : i===0 ? '<span class="pc-chip">сейчас</span>' : "";
       const flow = `<div class="pc-flow pc-flow3 num">${toCardLine(p)}<div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>`;
       const footLabel = p.past ? "Остаток буфера" : "Останется в буфере";
-      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}${capLines(p)}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = shown.map((p,j)=>{
@@ -182,7 +195,8 @@
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),formatMoney(p.free)];
-      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>`;
+      const capNote = Number(p.cap_kept) > 0 ? `<br><small>сверх максимума ${formatMoney(p.cap_kept)} — в буфере</small>` : "";
+      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>${capNote}`;
       return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
     }).join("");
   }
@@ -258,7 +272,8 @@
     list.innerHTML = piggy.movements.map(item => {
       const deposit = item.direction === "deposit";
       const toCard = !deposit && item.source === "daily_budget";
-      const title = deposit && item.source === "daily_budget" ? "Из остатка дня" : deposit ? "Пополнение"
+      const title = deposit && item.source === "daily_budget" ? "Из остатка дня"
+        : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера" : deposit ? "Пополнение"
         : toCard ? (item.purpose === "transfer" ? "На карту · по дням периода" : "На карту · на сегодня") : "Снятие";
       return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div><div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div></div></div>`;
     }).join("");
@@ -352,6 +367,19 @@
           coverOverspend: "Перерасход покрыт",
         }[mode] || "Сохранено");
       }
+      await loadAll();
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  });
+
+  document.getElementById("bufferSpareBtn")?.addEventListener("click", async () => {
+    const spare = Number(bufferState.buffer?.spare_buffer || 0);
+    if (spare <= 0) return;
+    if (!confirm(`Перевести ${formatMoney(spare)} из буфера в копилку?`)) return;
+    try {
+      await request("/api/buffer/to-piggy", { method: "POST", body: JSON.stringify({ amount: spare }) });
+      if (typeof toast === "function") toast("Лишнее из буфера переведено в копилку");
       await loadAll();
     } catch (error) {
       if (typeof toast === "function") toast(error.message);

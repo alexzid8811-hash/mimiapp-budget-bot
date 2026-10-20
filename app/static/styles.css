@@ -166,6 +166,9 @@ h1,h2,h3,p{margin:0}
 .pc-foot{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted)}
 .pc-foot b{color:var(--text);font-weight:600}
 .pc-foot b.low{color:var(--expense)}
+.pc-cap{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted);margin:-4px 0 8px}
+.pc-cap b{color:var(--text);font-weight:600}
+.buffer-spare .wide{width:100%}
 
 .plan-table-wrap{display:none;overflow-x:auto;margin-top:14px}
 .plan-table{width:100%;border-collapse:collapse;font-size:14px}
