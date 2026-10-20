@@ -605,7 +605,9 @@
       <input id="ruleId" type="hidden" />
       <label>Название<input id="ruleTitle" required maxlength="80" /></label>
       <label>Сумма<input id="ruleAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <label id="billPeriodWrap">Как часто<select id="ruleBillPeriod"><option value="monthly">Каждый месяц</option><option value="yearly">Раз в год</option></select></label>
       <label>День месяца<input id="ruleDay" type="number" min="1" max="31" required /></label>
+      <label id="billMonthWrap">Месяц<select id="ruleBillMonth"><option value="1">января</option><option value="2">февраля</option><option value="3">марта</option><option value="4">апреля</option><option value="5">мая</option><option value="6">июня</option><option value="7">июля</option><option value="8">августа</option><option value="9">сентября</option><option value="10">октября</option><option value="11">ноября</option><option value="12">декабря</option></select></label>
       <div id="incomeRuleFields">
         <label>Тип<select id="ruleKind"><option value="other">Другой доход</option><option value="salary">Зарплата</option><option value="advance">Аванс</option></select></label>
         <label class="checkbox"><input id="ruleIsPayday" type="checkbox" /> Начинает бюджетный период</label>
