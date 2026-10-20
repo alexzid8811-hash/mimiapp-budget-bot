@@ -152,7 +152,10 @@
     // the missing money is already planned in the buffer.
     const shortNote = p => Number(p.free) < 0
       ? `<small class="free-short">не хватает ${formatMoney(-Number(p.free))}</small>` : "";
-    const dailyNote = p => Number(p.daily) === usualDaily ? "" : `<small>${formatMoney(p.daily)} в день</small>`;
+    // The daily amount under «На карту»; a period limited by «Максимум в
+    // день» shows the amount set by hand.
+    const dailyNote = p => Number(p.to_card) > 0 || p.daily_set != null
+      ? `<small>${formatMoney(p.daily_set ?? p.daily)} в день</small>` : "";
     // Money leaving for the piggy bank: the excess over «Максимум в день»
     // and spare buffer money.  Excess kept in the buffer is already part of
     // the movement and is not repeated.

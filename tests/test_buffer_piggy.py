@@ -153,6 +153,8 @@ def test_daily_cap_keeps_excess_in_buffer(client):
     # Later periods are capped too.
     assert flow["next_period"]["daily"] == 80
     assert all(row["daily"] <= 80 for row in flow["periods"])
+    # The table shows the daily amount set by hand for the capped periods.
+    assert flow["periods"][0]["daily_set"] == 80
     for row in flow["periods"]:
         assert row["buffer"] == round(
             row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"]
@@ -166,6 +168,7 @@ def test_daily_cap_above_the_limit_does_nothing(client):
     assert flow["today_target"] == before["today_target"] == 100
     assert flow["buffer_balance"] == before["buffer_balance"]
     assert flow["period_cap_kept"] == 0
+    assert flow["periods"][0]["daily_set"] is None
 
 
 def test_daily_cap_changed_mid_period(client, monkeypatch):
