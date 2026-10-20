@@ -104,8 +104,11 @@
     }
     if (flow.daily_cap != null) {
       reason += ` Максимум в день — ${formatMoney(flow.daily_cap)}.`;
-      if (Number(flow.period_cap_kept || 0) > 0) {
-        reason += ` Сверх него в этом периоде в буфере осталось ${formatMoney(flow.period_cap_kept)}.`;
+      const kept = Number(flow.period_cap_kept || 0);
+      const toPiggy = Number(flow.period_cap_kept_piggy || 0);
+      if (toPiggy > 0) reason += ` Сверх него в этом периоде в копилку ушло ${formatMoney(toPiggy)}.`;
+      if (kept - toPiggy > 0.004) {
+        reason += ` Сверх него в этом периоде в буфере осталось ${formatMoney(kept - toPiggy)}.`;
       }
     }
     if (Number(flow.yearly_saved || 0) > 0) {
@@ -145,6 +148,8 @@
     document.getElementById("initialReserve").value = settings.start_capital ?? 0;
     const cap = document.getElementById("dailyCap");
     if (cap && document.activeElement !== cap) cap.value = settings.daily_cap ?? "";
+    const capTo = document.getElementById("dailyCapTo");
+    if (capTo) capTo.value = settings.daily_cap_to === "piggy" ? "piggy" : "buffer";
   };
 
   async function saveDailyCap() {
@@ -153,11 +158,14 @@
       const value = raw ? parseMoneyField("dailyCap") : 0;
       const settings = await request("/api/daily-cap", {
         method: "PUT",
-        body: JSON.stringify({ amount: value > 0 ? value : null }),
+        body: JSON.stringify({
+          amount: value > 0 ? value : null,
+          excess_to: document.getElementById("dailyCapTo")?.value === "piggy" ? "piggy" : "buffer",
+        }),
       });
       if (typeof toast === "function") {
         toast(settings.daily_cap != null
-          ? `Максимум в день ${formatMoney(settings.daily_cap)}, бюджет пересчитан`
+          ? `Максимум в день ${formatMoney(settings.daily_cap)}, избыток — ${settings.daily_cap_to === "piggy" ? "в копилку" : "в буфер"}`
           : "Максимум в день снят, бюджет пересчитан");
       }
       await loadAll();

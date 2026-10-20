@@ -229,3 +229,42 @@ def test_daily_cap_survives_backup(client):
     after = cashflow_snapshot(1)
     for key in ("daily_cap", "today_target", "buffer_balance", "piggy_bank_balance", "period_cap_kept"):
         assert after[key] == before[key], key
+
+
+def test_daily_cap_excess_to_piggy(client):
+    before = cashflow_snapshot(1)
+    response = client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"})
+    assert response.status_code == 200
+    assert response.json()["daily_cap_to"] == "piggy"
+    flow = cashflow_snapshot(1)
+    assert flow["today_target"] == 80
+    assert flow["daily_cap_to"] == "piggy"
+    # The buffer stays as without the maximum, the 200 ₽ went to the piggy bank.
+    assert flow["buffer_balance"] == before["buffer_balance"]
+    assert flow["piggy_bank_balance"] == 200
+    assert flow["period_cap_kept"] == flow["period_cap_kept_piggy"] == 200
+    assert flow["capital_shortfall"] == 0
+    movements = client.get("/api/piggy-bank").json()["movements"]
+    assert [(m["purpose"], m["amount"]) for m in movements] == [("cap_excess", 200)]
+    # The deposit follows the budget and cannot be deleted by hand.
+    assert client.delete(f"/api/piggy-bank/movements/{movements[0]['id']}").status_code == 422
+    # Recomputing does not deposit twice.
+    cashflow_snapshot(1)
+    assert cashflow_snapshot(1)["piggy_bank_balance"] == 200
+    for row in flow["periods"]:
+        assert row["buffer"] == round(
+            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"], 2)
+
+
+def test_switching_excess_back_to_buffer_keeps_what_went_to_piggy(client, monkeypatch):
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    assert cashflow_snapshot(1)["piggy_bank_balance"] == 200
+    spend(client, 80)
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 14))
+    assert client.put("/api/daily-cap", json={"amount": 50, "excess_to": "buffer"}).status_code == 200
+    flow = cashflow_snapshot(1)
+    assert flow["daily_cap_to"] == "buffer"
+    assert flow["today_target"] == 50
+    # 720 ₽ for nine days -> 450 ₽; the 270 ₽ go to the buffer now.
+    assert flow["piggy_bank_balance"] == 200
+    assert flow["card_balance"] == 450

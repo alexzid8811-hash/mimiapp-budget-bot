@@ -345,3 +345,27 @@ def test_money_saved_for_yearly_payments_is_never_spare():
                                stored_allocations={D(2026, 9, 8): result.allocations[D(2026, 9, 8)]}))
     assert moved.allocations == result.allocations
     assert all(moved.buffer_end[d] >= kept for d, kept in moved.sinking_end.items())
+
+
+def test_excess_to_piggy_leaves_the_buffer_as_without_the_cap():
+    plain = run_ledger(ten_days_with_1000())
+    piggy = run_ledger(ten_days_with_1000(caps=[(D(2026, 9, 13), 80 * RUB, True)]))
+    start = D(2026, 9, 13)
+    assert piggy.allocations[start] == 800 * RUB
+    assert piggy.today_limit == 80 * RUB
+    # The buffer pays the period in full: 800 ₽ to the card, 200 ₽ to the piggy bank.
+    assert piggy.buffer_end[start] == plain.buffer_end[start]
+    assert piggy.piggy_from_buffer[start] == 200 * RUB
+    assert piggy.cap_to_piggy[start] == 200 * RUB
+    assert piggy.shortfall == 0
+
+
+def test_excess_to_piggy_trims_the_card_into_the_piggy_bank():
+    spent = {D(2026, 9, d): 100 * RUB for d in range(13, 18)}
+    inp = ten_days_with_1000(today=D(2026, 9, 18), card_out=spent)
+    before = run_ledger(inp)
+    after = run_ledger(replace(inp, caps=[(D(2026, 9, 18), 80 * RUB, True)]))
+    assert after.today_limit == 80 * RUB
+    assert after.cap_piggy_trims == {D(2026, 9, 18): 100 * RUB}
+    assert not after.cap_trims
+    assert after.buffer_end[D(2026, 9, 18)] == before.buffer_end[D(2026, 9, 18)]
