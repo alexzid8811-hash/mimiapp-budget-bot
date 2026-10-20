@@ -140,12 +140,12 @@
       warning.textContent=text;homeWarning.textContent=text;
       warning.classList.remove("hidden");homeWarning.classList.remove("hidden");
     }
-    // The buffer movement is one signed number: green "+" goes into the
-    // buffer, red "−" is taken from it.
+    // What the period does with the buffer, in words: green goes into it,
+    // red is taken from it.
     const movement = p => p.take>0
-      ? ["neg","−"+formatMoney(p.take),"из буфера"]
+      ? ["neg",formatMoney(p.take),"взять из буфера"]
       : p.put_aside>0
-        ? ["pos","+"+formatMoney(p.put_aside),"в буфер"]
+        ? ["pos",formatMoney(p.put_aside),"положить в буфер"]
         : ["zero","—","без движения"];
     // The period's own money may fall short of its obligatory payments (a
     // small advance after the January holidays): a short red note under them;
@@ -157,18 +157,22 @@
     // and spare buffer money.  Excess kept in the buffer is already part of
     // the movement and is not repeated.
     const toPiggy = p => Math.max(Number(p.to_piggy || 0), Number(p.cap_kept_piggy || 0));
+    // The columns read as a sum: what came minus where it went is what the
+    // buffer gets or gives; the hint says so once.
+    const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
+    const shown = [...(showPast ? past : []), ...periods];
+    const piggyColumn = shown.some(p => toPiggy(p) > 0.004);
+    setText("planHint", `Пришло − обязательные − на карту${piggyColumn ? " − в копилку" : ""} = сколько положить в буфер или взять из него.`);
     // Yearly payments are saved up in equal parts on every payday; the sum
     // is shown for the current period only.
     const yearlyNote = (p, current) => current && Number(p.yearly_saved) > 0
       ? `<small>из них на годовые ${formatMoney(p.yearly_saved)}</small>` : "";
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
-    const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
     const pastToggle = document.getElementById("bufPastToggle");
     if (pastToggle) {
       pastToggle.hidden = !past.length;
       pastToggle.textContent = showPast ? "Скрыть прошлые периоды" : `Показать прошлые периоды (${past.length})`;
     }
-    const shown = [...(showPast ? past : []), ...periods];
     const rowClass = (p, i) => p.past ? "past" : (i === 0 ? "cur" : "");
     const statusMark = p => p.income_confirmed || (p.past && !p.received_editable)
       ? '<span class="pc-status done" title="получено">✓</span>'
@@ -197,24 +201,24 @@
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : current ? '<span class="pc-chip">сейчас</span>' : "";
       const payLabel = `${p.past || current ? "Пришло" : "Придёт"}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
       const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.received))}${payoutActions(p,current)}</div>`;
-      const flow = `<div class="pc-flow">${row("Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
+      const flow = `<div class="pc-flow">${row("− Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("− На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("− В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
       const footLabel = p.past ? "Осталось в буфере" : "Останется в буфере";
       return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${pay}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyNote(p,current)}</article>`;
     }).join("");
-    const heads = ["Период","Пришло","Обязательные","На карту","Буфер","Остаток"];
+    const heads = ["Период","Пришло","Обязательные","На карту",...(piggyColumn ? ["В копилку"] : []),"Буфер","Остаток буфера"];
     document.getElementById("bufferHead").innerHTML = "<tr>"+heads.map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = shown.map((p,j)=>{
       const i = j - (shown.length - periods.length);
       const current = !p.past && i===0;
-      const [c,m]=movement(p);
+      const [c,m,label]=movement(p);
       const period = `<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><small>${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</small>`;
-      const piggy = toPiggy(p) > 0.004 ? `<small>${formatMoney(toPiggy(p))} в копилку</small>` : "";
       const cells = [
         `<td>${period}</td>`,
         `<td class="num">${receivedMarkup(p,true,current)}</td>`,
         `<td class="num">${formatMoney(p.mandatory)}${shortNote(p)}</td>`,
         `<td class="num">${formatMoney(p.to_card)}${dailyNote(p)}</td>`,
-        `<td class="num sep ${c} movement-cell"><span>${m}</span>${piggy}</td>`,
+        ...(piggyColumn ? [`<td class="num">${toPiggy(p) > 0.004 ? formatMoney(toPiggy(p)) : '<span class="zero">—</span>'}</td>`] : []),
+        `<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td>`,
         `<td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${yearlyNote(p,current)}</td>`,
       ];
       return `<tr class="${rowClass(p,i)}">${cells.join("")}</tr>`;

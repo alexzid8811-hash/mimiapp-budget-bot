@@ -264,11 +264,12 @@ test('buffer renders responsive cards and table, escaping user-provided labels',
  assert.doesNotMatch(get('bufferPeriods').innerHTML,/<img/);
  assert.match(get('bufWarn').textContent,/5.000/);
  assert.match(get('planDaily').textContent,/В день везде/);
- assert.equal(get('bufferHead').innerHTML,'<tr><th>Период</th><th>Пришло</th><th>Обязательные</th><th>На карту</th><th>Буфер</th><th>Остаток</th></tr>');
- // The buffer movement is one signed number: "−" is taken from the buffer.
- assert.match(get('bufferPeriods').innerHTML,/neg movement-cell"><span>−5.000,00.₽<\/span>/);
- assert.match(get('bufferPeriods').innerHTML,/pos movement-cell"><span>\+10.000,00.₽<\/span>/);
- assert.match(get('planCards').innerHTML,/−5.000,00.₽<small>из буфера/);
+ assert.equal(get('bufferHead').innerHTML,'<tr><th>Период</th><th>Пришло</th><th>Обязательные</th><th>На карту</th><th>Буфер</th><th>Остаток буфера</th></tr>');
+ // The columns read as a sum, said once above the plan.
+ assert.equal(get('planHint').textContent,'Пришло − обязательные − на карту = сколько положить в буфер или взять из него.');
+ assert.match(get('bufferPeriods').innerHTML,/neg movement-cell"><span>5.000,00.₽<\/span><small>взять из буфера/);
+ assert.match(get('bufferPeriods').innerHTML,/pos movement-cell"><span>10.000,00.₽<\/span><small>положить в буфер/);
+ assert.match(get('planCards').innerHTML,/5.000,00.₽<small>взять из буфера/);
  // The same daily rate everywhere is said once above the plan, not per row.
  assert.match(get('bufferPeriods').innerHTML,/15.000,00.₽<\/td>/);
  assert.doesNotMatch(get('bufferPeriods').innerHTML+get('planCards').innerHTML,/в день/);
@@ -282,8 +283,12 @@ test('buffer plan shows money sent to the piggy bank and differing daily rates p
  ];
  await get('refreshBtn').listeners.click();
  const table=get('bufferPeriods').innerHTML, cards=get('planCards').innerHTML;
- assert.match(table,/−10.619,49.₽<\/span><small>4.069,20.₽ в копилку/);
- assert.match(cards,/В копилку<\/span><b class="num">4.069,20.₽/);
+ // Money for the piggy bank gets its own column, so the row adds up:
+ // 48 149,71 − 27 700 − 27 000 − 4 069,20 = −10 619,49.
+ assert.match(get('bufferHead').innerHTML,/<th>На карту<\/th><th>В копилку<\/th><th>Буфер<\/th>/);
+ assert.match(table,/<td class="num">4.069,20.₽<\/td><td class="num sep neg movement-cell"><span>10.619,49.₽<\/span><small>взять из буфера/);
+ assert.match(get('planHint').textContent,/на карту − в копилку =/);
+ assert.match(cards,/− В копилку<\/span><b class="num">4.069,20.₽/);
  // Only the period whose rate differs from the usual one shows it.
  assert.match(get('planDaily').textContent,/В день обычно 1.800,00/);
  assert.match(table,/20.880,45.₽<small>1.377,94.₽ в день/);
@@ -302,7 +307,7 @@ test('start row shows the start capital as its money and the horizon with a year
  await get('refreshBtn').listeners.click();
  const table=get('bufferPeriods').innerHTML;
  assert.match(table,/68.534,33/);
- assert.match(table,/\+20.564,38.₽<\/span>/);
+ assert.match(table,/20.564,38.₽<\/span><small>положить в буфер/);
  assert.doesNotMatch(table,/47.969,95/);
  assert.doesNotMatch(get('bufWarn').textContent,/23 сент/);
  assert.match(get('bufferHorizon').textContent,/2027/);
