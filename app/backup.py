@@ -47,6 +47,7 @@ SETTINGS_COLUMNS = (
     "accounts_enabled",
     "main_account_id",
     "accounts_disabled_at",
+    "buffer_floor",
 )
 
 TABLE_COLUMNS = {
@@ -179,6 +180,8 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 "accounts_enabled": int(bool(settings.get("accounts_enabled", 0))),
                 "main_account_id": None,
                 "accounts_disabled_at": settings.get("accounts_disabled_at"),
+                # «Минимум буфера»: absent in older backups.
+                "buffer_floor": float(settings.get("buffer_floor") or 0),
             }
             assignments = ",".join(f"{column}=?" for column in SETTINGS_COLUMNS)
             con.execute(

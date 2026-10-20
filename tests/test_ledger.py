@@ -369,3 +369,78 @@ def test_excess_to_piggy_trims_the_card_into_the_piggy_bank():
     assert after.cap_piggy_trims == {D(2026, 9, 18): 100 * RUB}
     assert not after.cap_trims
     assert after.buffer_end[D(2026, 9, 18)] == before.buffer_end[D(2026, 9, 18)]
+
+
+# «Минимум буфера».
+
+def test_buffer_floor_is_never_given_to_the_card():
+    # 1 000 ₽ for ten days, 400 ₽ of them must stay: 60 ₽ a day.
+    inp = ten_days_with_1000(buffer_floor=400 * RUB)
+    result = run_ledger(inp)
+    assert result.allocations[D(2026, 9, 13)] == 600 * RUB
+    assert result.today_limit == 60 * RUB
+    assert result.buffer_end[D(2026, 9, 13)] == 400 * RUB
+
+
+def test_buffer_never_goes_below_the_floor_after_obligatory_payments():
+    # A big salary on the 7th, a small advance and the rent on the 22nd: with
+    # a minimum of 2 000 ₽ the buffer bottoms out at 2 000 ₽ instead of zero.
+    paydays = [D(2026, 9, 22), D(2026, 10, 7), D(2026, 10, 22), D(2026, 11, 6), D(2026, 11, 20),
+               D(2026, 12, 7), D(2026, 12, 22), D(2027, 1, 7), D(2027, 1, 22), D(2027, 2, 6), D(2027, 2, 20)]
+    values = dict(
+        start=D(2026, 10, 7), horizon=D(2026, 12, 7), data_end=D(2027, 2, 7), months=2, paydays=paydays,
+        buffer_in={p: (58000 if p.day == 7 else 43000) * RUB for p in paydays},
+        bills_out={p: (15400 if p.day == 7 else 27700) * RUB for p in paydays},
+    )
+    plain = run_ledger(ledger(D(2026, 10, 7), **values))
+    result = run_ledger(ledger(D(2026, 10, 7), buffer_floor=2000 * RUB, **values))
+    assert min(plain.buffer_end.values()) < 2000 * RUB
+    assert 2000 * RUB <= min(result.buffer_end.values()) < 2001 * RUB
+    assert result.shortfall == 0
+
+
+def test_buffer_floor_holds_through_weak_periods():
+    # 30 000 ₽ now, nothing on 7 October, 30 000 ₽ on 22 October.
+    values = dict(start=D(2026, 9, 22), start_capital=0, months=2, data_end=D(2026, 12, 1),
+                  buffer_in={D(2026, 9, 22): 30000 * RUB, D(2026, 10, 22): 30000 * RUB})
+    plain = run_ledger(ledger(D(2026, 9, 22), **values))
+    inp = ledger(D(2026, 9, 22), buffer_floor=6000 * RUB, **values)
+    result = run_ledger(inp)
+    assert all(result.buffer_end[d] >= 6000 * RUB for d in result.buffer_end)
+    assert result.forecasts[D(2026, 9, 23)].daily < plain.forecasts[D(2026, 9, 23)].daily
+    assert result.shortfall == 0
+
+
+def test_obligatory_payments_may_take_the_buffer_below_the_floor():
+    inp = ledger(D(2026, 9, 10), start_capital=10000 * RUB, bills_out={D(2026, 9, 20): 5000 * RUB},
+                 buffer_floor=8000 * RUB)
+    result = run_ledger(inp)
+    # The card gets nothing, the payment is still made and nothing is short.
+    assert result.allocations[D(2026, 9, 8)] == 0
+    assert result.buffer_end[D(2026, 9, 20)] == 5000 * RUB
+    assert result.shortfall == 0
+
+
+def test_spare_buffer_never_goes_below_the_floor():
+    caps = [(D(2026, 9, 13), 80 * RUB)]
+    plain = ten_days_with_1000(caps=caps)
+    inp = ten_days_with_1000(caps=caps, buffer_floor=100 * RUB)
+    result = run_ledger(inp)
+    spare = spare_buffer(inp, result)
+    assert 0 < spare <= spare_buffer(plain, run_ledger(plain)) - 100 * RUB
+    moved = run_ledger(replace(inp, buffer_out={D(2026, 9, 13): spare},
+                               stored_allocations={D(2026, 9, 13): result.allocations[D(2026, 9, 13)]}))
+    assert all(moved.buffer_end[d] >= 100 * RUB for d in moved.buffer_end if d >= inp.today)
+
+
+def test_buffer_floor_comes_on_top_of_yearly_savings():
+    result = run_ledger(yearly_ledger(buffer_floor=2000 * RUB))
+    assert all(result.buffer_end[d] - kept >= 2000 * RUB for d, kept in result.sinking_end.items())
+
+
+def test_safe_rate_keeps_the_floor():
+    inp = ten_days_with_1000(today=D(2026, 9, 14), buffer_floor=400 * RUB,
+                             card_out={D(2026, 9, 13): 60 * RUB})
+    result = run_ledger(inp)
+    # Only the 540 ₽ left on the card count: the 400 ₽ in the buffer stay.
+    assert safe_rate_from(inp, result, D(2026, 9, 14), held=540 * RUB) == 60 * RUB

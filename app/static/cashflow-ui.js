@@ -74,6 +74,11 @@
       saveCap.addEventListener("click", saveDailyCap);
       if (saveCap.dataset) saveCap.dataset.bound = "true";
     }
+    const saveFloor = document.getElementById("saveBufferFloorBtn");
+    if (saveFloor && !saveFloor.dataset?.bound) {
+      saveFloor.addEventListener("click", saveBufferFloor);
+      if (saveFloor.dataset) saveFloor.dataset.bound = "true";
+    }
   }
 
   function applyCashflow(flow) {
@@ -150,7 +155,28 @@
     if (cap && document.activeElement !== cap) cap.value = settings.daily_cap ?? "";
     const capTo = document.getElementById("dailyCapTo");
     if (capTo) capTo.value = settings.daily_cap_to === "piggy" ? "piggy" : "buffer";
+    const floor = document.getElementById("bufferFloor");
+    if (floor && document.activeElement !== floor) floor.value = Number(settings.buffer_floor) > 0 ? settings.buffer_floor : "";
   };
+
+  async function saveBufferFloor() {
+    try {
+      const raw = (document.getElementById("bufferFloor")?.value || "").trim();
+      const value = raw ? parseMoneyField("bufferFloor") : 0;
+      const settings = await request("/api/buffer-floor", {
+        method: "PUT",
+        body: JSON.stringify({ amount: value > 0 ? value : null }),
+      });
+      if (typeof toast === "function") {
+        toast(Number(settings.buffer_floor) > 0
+          ? `Минимум буфера ${formatMoney(settings.buffer_floor)}, бюджет пересчитан`
+          : "Минимум буфера снят, бюджет пересчитан");
+      }
+      await loadAll();
+    } catch (err) {
+      if (typeof toast === "function") toast(err.message);
+    }
+  }
 
   async function saveDailyCap() {
     try {

@@ -311,6 +311,15 @@
           <button class="primary wide" id="saveDailyCapBtn" type="button">Сохранить максимум</button>
         </div>
 
+        <div class="card payroll-only">
+          <h3>Минимум буфера</h3>
+          <label>Буфер не опускается ниже
+            <input id="bufferFloor" data-money inputmode="decimal" type="text" autocomplete="off" placeholder="0,00" />
+          </label>
+          <p class="muted">Буфер всегда держит деньги на обязательные платежи и сверх них — эту сумму. Дневной лимит считается так, чтобы после всех обязательных платежей в буфере в любой день оставалось не меньше минимума. Например, минимум 2 000 ₽: буфер не опустится ниже 2 000 ₽. Если доходов на это не хватает даже без повседневных трат, на экране буфера появится, сколько не хватает. Деньги, которые уже на карте, не меняются, следующие периоды пересчитываются. Пустое поле — минимум 0.</p>
+          <button class="primary wide" id="saveBufferFloorBtn" type="button">Сохранить минимум</button>
+        </div>
+
         <div class="card">
           <div class="section-head"><div><h3>Тема оформления</h3></div></div>
           <label>Тема

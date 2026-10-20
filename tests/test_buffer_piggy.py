@@ -311,3 +311,47 @@ def test_card_money_trimmed_to_piggy_is_not_counted_as_to_card(client, monkeypat
         assert row["buffer"] == round(
             row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"]
             - row["cap_from_card"], 2)
+
+
+# «Минимум буфера».
+
+def test_buffer_floor_is_kept_from_today(client):
+    assert client.put("/api/buffer-floor", json={"amount": 400}).json()["buffer_floor"] == 400
+    flow = cashflow_snapshot(1)
+    # Today is a funding day: its money is recalculated, 400 ₽ stay.
+    assert flow["buffer_floor"] == 400
+    assert flow["today_target"] == 60
+    assert flow["buffer_balance"] == 400
+    assert all(row["buffer"] >= 400 for row in flow["periods"])
+    assert flow["floor_gap"] == 0
+    assert "минимум 400.00" in flow["reason"]
+    # Removed: the next funding decisions give the money to the card again.
+    assert client.put("/api/buffer-floor", json={"amount": None}).json()["buffer_floor"] == 0
+    assert cashflow_snapshot(1)["today_target"] == 100
+
+
+def test_buffer_floor_set_mid_period_keeps_the_card_money(client, monkeypatch):
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 14))
+    before = cashflow_snapshot(1)
+    assert client.put("/api/buffer-floor", json={"amount": 400}).status_code == 200
+    flow = cashflow_snapshot(1)
+    assert flow["card_balance"] == before["card_balance"]
+    assert flow["today_target"] == before["today_target"]
+    later = [row for row in flow["periods"] if row["start"] > "2026-09-22"]
+    assert all(row["buffer"] >= 400 for row in later)
+
+
+def test_buffer_floor_reports_when_it_cannot_be_held(client):
+    assert client.put("/api/buffer-floor", json={"amount": 5000}).status_code == 200
+    flow = cashflow_snapshot(1)
+    # The 1 000 ₽ start capital is below the minimum: the card gets nothing
+    # until the buffer reaches it.
+    assert flow["today_target"] == 0
+    assert flow["floor_gap"] == 4000
+    assert flow["floor_gap_date"] == "2026-09-13"
+    assert flow["capital_shortfall"] == 0
+    assert "минимум 5000.00: к 13.09.2026 не хватает 4000.00" in flow["reason"]
+
+
+def test_buffer_floor_rejects_negative_amount(client):
+    assert client.put("/api/buffer-floor", json={"amount": -1}).status_code == 422

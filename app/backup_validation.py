@@ -41,6 +41,8 @@ class Settings(Payroll):
     accounts_enabled: bool = False
     main_account_id: int | None = Field(default=None, gt=0)
     accounts_disabled_at: str | None = Field(default=None, max_length=40)
+    # «Минимум буфера».
+    buffer_floor: float = Field(default=0, ge=0)
 
     @model_validator(mode='after')
     def valid_start(self):

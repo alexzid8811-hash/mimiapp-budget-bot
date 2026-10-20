@@ -92,6 +92,10 @@
     if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
       shortfall.textContent = `Даже без повседневных трат не хватает ${formatMoney(data.capital_shortfall)}. Увеличьте стартовый капитал или скорректируйте обязательные платежи.`;
       shortfall.classList.remove("hidden");
+    } else if (data.enabled && Number(data.floor_gap || 0) > 0) {
+      // Like the shortfall above, with «Минимум буфера» instead of zero.
+      shortfall.textContent = `Чтобы оплатить обязательные платежи и оставить в буфере минимум ${formatMoney(data.buffer_floor)}, к ${formatDate(data.floor_gap_date, true)} даже без повседневных трат не хватает ${formatMoney(data.floor_gap)}. Увеличьте стартовый капитал, скорректируйте обязательные платежи или минимум.`;
+      shortfall.classList.remove("hidden");
     } else {
       shortfall.classList.add("hidden");
     }
@@ -177,6 +181,9 @@
       pastToggle.hidden = !past.length;
       pastToggle.textContent = showPast ? "Скрыть прошлые периоды" : `Показать прошлые периоды (${past.length})`;
     }
+    // A small balance, or one below «Минимум буфера», is red.
+    const floor = Number(data.buffer_floor || 0);
+    const lowBuffer = p => p.buffer < max * .1 || (floor > 0 && Number(p.buffer) < floor - 0.004);
     const rowClass = (p, i) => p.past ? "past" : (i === 0 ? "cur" : "");
     const statusMark = p => p.income_confirmed || (p.past && !p.received_editable)
       ? '<span class="pc-status done" title="получено">✓</span>'
@@ -207,7 +214,7 @@
       const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.received))}${payoutActions(p,current)}</div>`;
       const flow = `<div class="pc-flow">${row("− Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("− На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("− В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
       const footLabel = p.past ? "Осталось в буфере" : "Останется в буфере";
-      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${pay}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyNote(p,current)}</article>`;
+      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${pay}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${lowBuffer(p)?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyNote(p,current)}</article>`;
     }).join("");
     const heads = ["Период","Пришло","Обязательные","На карту",...(piggyColumn ? ["В копилку"] : []),"Буфер","Остаток буфера"];
     document.getElementById("bufferHead").innerHTML = "<tr>"+heads.map(t=>`<th>${t}</th>`).join("")+"</tr>";
@@ -223,7 +230,7 @@
         `<td class="num">${formatMoney(p.to_card)}${dailyNote(p)}</td>`,
         ...(piggyColumn ? [`<td class="num">${toPiggy(p) > 0.004 ? formatMoney(toPiggy(p)) : '<span class="zero">—</span>'}</td>`] : []),
         `<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td>`,
-        `<td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${yearlyNote(p,current)}</td>`,
+        `<td class="num ${lowBuffer(p)?"low":""}">${formatMoney(p.buffer)}${yearlyNote(p,current)}</td>`,
       ];
       return `<tr class="${rowClass(p,i)}">${cells.join("")}</tr>`;
     }).join("");
