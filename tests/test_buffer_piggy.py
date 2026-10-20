@@ -181,6 +181,8 @@ def test_daily_cap_changed_mid_period(client, monkeypatch):
     assert flow["today_target"] == 80
     assert flow["card_balance"] == 720
     assert flow["buffer_balance"] == before["buffer_balance"] + 180
+    # The running period takes the maximum saved today (it was funded before).
+    assert flow["periods"][0]["daily_set"] == 80
     # Raised again the next day: the card gets the difference back from the
     # buffer (only as much as the buffer can safely give).
     spend(client, 80, date(2026, 9, 14))
