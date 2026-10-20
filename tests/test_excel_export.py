@@ -58,6 +58,9 @@ def test_excel_export_contains_operations_pivot_and_piggy(tmp_path, monkeypatch)
     assert (kinds["Повседневные траты"], kinds["Обязательные платежи"], kinds["Отложено в копилку"]) == (700, 0, 1000)
     assert any(r[0] == "☕ Тестовая кофейня" and r[1] == 700 and r[3] == 300 for r in values)
     assert any(r[0] == "сен 26" and r[1] == 700 and r[3] == 1000 for r in values)
+    # Months before the first record are left out of «По месяцам».
+    month_rows = [r[0] for r in values if isinstance(r[0], str) and r[0][:3] in ("июл", "авг", "сен")]
+    assert month_rows == ["авг 26", "сен 26"]
 
 
 def test_excel_charts_are_embedded(tmp_path, monkeypatch):

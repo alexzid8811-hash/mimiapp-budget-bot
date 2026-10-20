@@ -53,6 +53,18 @@ def _date(value: Any):
         return str(value)
 
 
+MONTHS_GENITIVE = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+                   "сентября", "октября", "ноября", "декабря")
+
+
+def _bill_period(row: dict) -> str:
+    if row["once_date"]:
+        return f"разово {_date(row['once_date']):%d.%m.%Y}"
+    if row["month_of_year"]:
+        return f"раз в год, {row['day_of_month']} {MONTHS_GENITIVE[row['month_of_year'] - 1]}"
+    return "ежемесячно"
+
+
 def _piggy_title(row: dict) -> str:
     if row["direction"] == "deposit":
         if row.get("bill_payment_id"):
@@ -285,17 +297,21 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
     ws.add_chart(chart, f"{CHART_COLUMN}{row}")
     row = max(end + 2, row + _chart_rows(chart))
 
-    # 4. Last twelve months.
+    # 4. Last twelve months, but not before the user started using the app:
+    # empty months from before that only squeeze the real columns.
     ws.cell(row=row, column=1, value="По месяцам").font = SECTION_FONT
     start = row + 1
     _header(ws, start, ["Месяц", *(KIND_TITLES[key] for key in kinds)])
-    months = analytics.monthly(user_id, add_months(today.replace(day=1), -11), 12)
+    this_month = today.replace(day=1)
+    first_month = max(add_months(this_month, -11), min(_first_use(user_id), this_month).replace(day=1))
+    count = (this_month.year - first_month.year) * 12 + this_month.month - first_month.month + 1
+    months = analytics.monthly(user_id, first_month, count)
     end = _rows(ws, start + 1, [
         # Short "окт 26" labels fit under the columns without being rotated.
         [f"{m['label'][:3].lower()} {m['month'][2:4]}", *(m[key] for key in kinds)] for m in months
     ], {2, 3, 4})
     chart = _bar_chart("Куда ушли деньги по месяцам", stacked=True)
-    chart.width = 22  # twelve month labels fit on one line
+    chart.width = max(12, 4 + 1.5 * len(months))  # twelve month labels fit on one line
     chart.add_data(Reference(ws, min_col=2, max_col=4, min_row=start, max_row=end - 1), titles_from_data=True)
     chart.set_categories(Reference(ws, min_col=1, min_row=start + 1, max_row=end - 1))
     for series, key in zip(chart.series, kinds):
@@ -303,6 +319,18 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
     chart.legend.position = "b"
     _tidy(chart)
     ws.add_chart(chart, f"{CHART_COLUMN}{row}")
+
+
+def _first_use(user_id: int):
+    """Date the user started: registration or the earliest backdated record."""
+    with connect() as con:
+        dates = con.execute(
+            "SELECT (SELECT created_at FROM users WHERE id=?), "
+            "(SELECT MIN(tx_date) FROM transactions WHERE user_id=?), "
+            "(SELECT MIN(movement_date) FROM piggy_bank_movements WHERE user_id=?)",
+            (user_id, user_id, user_id),
+        ).fetchone()
+    return min(datetime.fromisoformat(str(d)[:10]).date() for d in dates if d)
 
 
 def _query(con: Any, sql: str, params: tuple) -> list[dict]:
@@ -451,10 +479,11 @@ def _build_workbook(user_id: int) -> bytes:
 
     ws = wb.create_sheet("Обязательные платежи")
     _write_table(
-        ws, ["Название", "День месяца", f"Сумма, {currency}", "Категория", "Активен"],
-        [[b["title"], b["day_of_month"], float(b["amount"]), b["category_title"] or "", "Да" if b["active"] else "Нет"]
+        ws, ["Название", "День месяца", "Периодичность", f"Сумма, {currency}", "Категория", "Активен"],
+        [[b["title"], b["day_of_month"], _bill_period(b), float(b["amount"]), b["category_title"] or "",
+          "Да" if b["active"] else "Нет"]
          for b in bills],
-        money_columns={3}, widths=[30, 14, 16, 24, 10],
+        money_columns={4}, widths=[30, 14, 20, 16, 24, 10],
     )
 
     if irregular:

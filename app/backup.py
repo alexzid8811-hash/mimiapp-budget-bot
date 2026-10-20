@@ -54,7 +54,7 @@ TABLE_COLUMNS = {
     "income_rules": ("id", "title", "amount", "day_of_month", "kind", "is_payday", "active", "archived", "created_at"),
     "bill_rules": (
         "id", "title", "amount", "day_of_month", "category_id", "active", "archived",
-        "once_date", "credit_account_id", "created_at",
+        "once_date", "credit_account_id", "month_of_year", "created_at",
     ),
     "transactions": (
         "id", "type", "amount", "tx_date", "category_id", "note",
@@ -228,11 +228,12 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
             for row in data["bill_rules"]:
                 cur = con.execute(
                     "INSERT INTO bill_rules(user_id,title,amount,day_of_month,category_id,active,archived,once_date,"
-                    "credit_account_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "credit_account_id,month_of_year,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["title"]), float(row.get("amount", 0)), int(row["day_of_month"]),
                         category_ids.get(row.get("category_id")), int(row["active"]), int(row["archived"]),
-                        row.get("once_date"), account_ids.get(row.get("credit_account_id")), _created_at(row),
+                        row.get("once_date"), account_ids.get(row.get("credit_account_id")), row.get("month_of_year"),
+                        _created_at(row),
                     ),
                 )
                 bill_ids[row.get("id")] = int(cur.lastrowid)

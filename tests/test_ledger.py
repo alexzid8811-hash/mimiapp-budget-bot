@@ -287,3 +287,61 @@ def test_spare_buffer_never_changes_card_periods():
     more = run_ledger(replace(inp, buffer_out={D(2026, 9, 13): spare + RUB},
                               stored_allocations={D(2026, 9, 13): result.allocations[D(2026, 9, 13)]}))
     assert more.allocations != result.allocations or more.shortfall > 0
+
+
+def yearly_ledger(**overrides):
+    from app.ledger import Sinking
+    paydays = [p for p in PAYDAYS if p >= D(2026, 9, 22)]
+    values = dict(
+        start_capital=30000 * RUB, paydays=PAYDAYS,
+        buffer_in={p: 30000 * RUB for p in paydays if p <= D(2026, 11, 8)},
+        sinking=[Sinking(D(2027, 1, 10), 9000 * RUB, D(2026, 9, 8))],
+    )
+    values.update(overrides)
+    return ledger(D(2026, 9, 8), **values)
+
+
+def test_yearly_payment_is_saved_up_in_equal_parts_on_every_funding_day():
+    result = run_ledger(yearly_ledger())
+    # 8 Sep (the start) and the paydays of 22 Sep … 7 Jan: nine parts.
+    funding = [D(2026, 9, 8), D(2026, 9, 22), D(2026, 10, 7), D(2026, 10, 22), D(2026, 11, 6)]
+    assert result.sinking_in == {day: 1000 * RUB for day in funding + [
+        D(2026, 11, 20), D(2026, 12, 7), D(2026, 12, 22), D(2027, 1, 7)]}
+    assert result.sinking_end[D(2026, 11, 8)] == 5000 * RUB
+    # Every card period gives up the same 1 000 ₽ part.
+    plain = run_ledger(yearly_ledger(sinking=[]))
+    for period in result.periods:
+        given_up = plain.allocations[period.start] - result.allocations[period.start]
+        assert abs(given_up - 1000 * RUB) <= period.days
+    # The buffer always holds at least what is saved up.
+    assert all(result.buffer_end[d] >= kept for d, kept in result.sinking_end.items())
+
+
+def test_saved_up_yearly_payment_is_not_paid_twice():
+    from app.ledger import Sinking
+    # Due inside the forecast: held by the parts, not again on its date.
+    due = D(2026, 10, 30)
+    inp = yearly_ledger(sinking=[Sinking(due, 3000 * RUB, D(2026, 9, 8))], bills_out={due: 3000 * RUB})
+    result = run_ledger(inp)
+    assert result.sinking_in == {D(2026, 9, 8): 750 * RUB, D(2026, 9, 22): 750 * RUB,
+                                 D(2026, 10, 7): 750 * RUB, D(2026, 10, 22): 750 * RUB}
+    assert result.sinking_end[due - timedelta(days=1)] == 3000 * RUB
+    assert result.sinking_end[due] == 0
+    assert result.buffer_end[due] >= 0
+
+
+def test_money_saved_for_yearly_payments_is_never_spare():
+    from app.ledger import Sinking
+    caps = [(D(2026, 9, 8), 100 * RUB)]
+    plain = yearly_ledger(caps=caps, sinking=[])
+    yearly = yearly_ledger(caps=caps)
+    spare_plain = spare_buffer(plain, run_ledger(plain))
+    result = run_ledger(yearly)
+    spare = spare_buffer(yearly, result)
+    assert spare_plain > 0
+    # The saved part stays in the buffer, the rest is still offered.
+    assert spare <= spare_plain - result.sinking_end[D(2026, 9, 8)]
+    moved = run_ledger(replace(yearly, buffer_out={D(2026, 9, 8): spare},
+                               stored_allocations={D(2026, 9, 8): result.allocations[D(2026, 9, 8)]}))
+    assert moved.allocations == result.allocations
+    assert all(moved.buffer_end[d] >= kept for d, kept in moved.sinking_end.items())

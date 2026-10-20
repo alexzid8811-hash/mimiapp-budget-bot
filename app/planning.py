@@ -12,7 +12,8 @@ from .payroll import PayrollConfig, payroll_events_between
 
 PAYROLL_COLUMNS = ('payroll_enabled', 'salary_gross', 'bonus_gross', 'tax_rate', 'salary_day', 'advance_day')
 INCOME_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'kind', 'is_payday', 'active')
-BILL_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'category_id', 'active', 'once_date', 'credit_account_id')
+BILL_COLUMNS = ('id', 'title', 'amount', 'day_of_month', 'category_id', 'active', 'once_date', 'credit_account_id',
+                'month_of_year')
 
 
 def live_conditions(con, uid):
@@ -205,16 +206,28 @@ def budget_income_map(uid, start, end, include_manual=True, payroll_changes_thro
     return {day: amount(value) for day, value in sorted(totals.items())}
 
 
+def bill_due_dates(rule, left, right):
+    """Due dates of one bill rule inside [left, right].
+
+    A one-off payment (a planned credit card repayment) is due on its date
+    only, a yearly one on its day of ``month_of_year``, any other bill every
+    month. Older plan versions have neither field.
+    """
+    if rule.get('once_date'):
+        once = date.fromisoformat(rule['once_date'])
+        return [once] if left <= once <= right else []
+    days = occurrences([rule['day_of_month']], left, right)
+    if rule.get('month_of_year'):
+        days = [day for day in days if day.month == int(rule['month_of_year'])]
+    return days
+
+
 def bill_events(uid, start, end):
     events = {}
     for left, right, conditions in condition_segments(uid, start, end):
         for rule in conditions['bill_rules']:
             if rule['active']:
-                # A one-off payment (a planned credit card repayment) is due on
-                # its date only; older plan versions have no such field.
-                once = date.fromisoformat(rule['once_date']) if rule.get('once_date') else None
-                days = ([once] if left <= once <= right else []) if once else occurrences([rule['day_of_month']], left, right)
-                for day in days:
+                for day in bill_due_dates(rule, left, right):
                     events[(rule['id'], day.isoformat())] = {
                         **rule,
                         'due_date': day.isoformat(),
@@ -245,17 +258,37 @@ def bill_events(uid, start, end):
                 remainder_destination='piggy' if row['remainder_amount'] is not None else 'budget',
                 remainder_amount=row['remainder_amount'] or 0,
             )
-    # A monthly bill is due once a month. Moving its day mid-month leaves an
-    # occurrence in both the old and the new version of the plan: the paid one
-    # wins, otherwise the date from the newer version (the later one).
-    by_month = {}
+    # A monthly bill is due once a month, a yearly one once a year. Moving its
+    # day mid-period leaves an occurrence in both the old and the new version
+    # of the plan: the paid one wins, otherwise the date from the newer
+    # version (the later one).
+    by_period = {}
     for event in events.values():
-        by_month.setdefault((event['id'], event['due_date'][:7]), []).append(event)
+        period = event['due_date'][:4] if event.get('month_of_year') else event['due_date'][:7]
+        by_period.setdefault((event['id'], period), []).append(event)
     result = []
-    for group in by_month.values():
+    for group in by_period.values():
         paid = [e for e in group if e.get('paid')]
         result.extend(paid or [max(group, key=lambda e: e['due_date'])])
     return sorted(result, key=lambda e: (e['due_date'], e['id']))
+
+
+def yearly_bill_since(uid, start, end):
+    """From which day each yearly occurrence in [start, end] has been planned.
+
+    Keyed by ``(rule id, due date)``: the first day of the unbroken run of
+    plan versions in which the rule is an active yearly payment, never
+    earlier than ``start``.  Saving up for the payment starts on that day.
+    """
+    since, result = {}, {}
+    for left, right, conditions in condition_segments(uid, start, end):
+        yearly = {r['id']: r for r in conditions['bill_rules']
+                  if r['active'] and r.get('month_of_year') and not r.get('once_date')}
+        since = {rid: since.get(rid, left) for rid in yearly}
+        for rid, rule in yearly.items():
+            for day in bill_due_dates(rule, left, right):
+                result[(rid, day.isoformat())] = since[rid]
+    return result
 
 
 def mandatory_map(uid, start, end):
@@ -288,7 +321,7 @@ def bill_planned_amount(uid, bill_id, due_date):
         for rule in conditions['bill_rules']:
             if rule['id'] != bill_id or not rule['active']:
                 continue
-            if due_date in occurrences([rule['day_of_month']], left, right):
+            if due_date in bill_due_dates(rule, left, right):
                 return amount(cents(rule['amount']))
     return None
 

@@ -47,6 +47,8 @@ class BillRuleIn(DatedConditionsIn):
     title: str = Field(min_length=1, max_length=80)
     amount: float = Field(ge=0)
     day_of_month: int = Field(ge=1, le=31)
+    # Set for a yearly payment: it is due on day_of_month of this month only.
+    month_of_year: int | None = Field(default=None, ge=1, le=12)
     category_id: int | None = None
     active: bool = True
 
@@ -605,8 +607,8 @@ def add_bill(payload: BillRuleIn, user: TelegramUser = Depends(current_user)) ->
     with planning.change_conditions(uid, payload.effective_date) as con:
         require_category(con, uid, payload.category_id)
         cur = con.execute(
-            "INSERT INTO bill_rules(user_id,title,amount,day_of_month,category_id,active) VALUES(?,?,?,?,?,?)",
-            (uid, payload.title, payload.amount, payload.day_of_month, payload.category_id, int(payload.active)),
+            "INSERT INTO bill_rules(user_id,title,amount,day_of_month,month_of_year,category_id,active) VALUES(?,?,?,?,?,?,?)",
+            (uid, payload.title, payload.amount, payload.day_of_month, payload.month_of_year, payload.category_id, int(payload.active)),
         )
         rid = cur.lastrowid
     invalidate_current_auto_reserve(uid)
@@ -619,8 +621,8 @@ def edit_bill(rule_id: int, payload: BillRuleIn, user: TelegramUser = Depends(cu
     with planning.change_conditions(uid, payload.effective_date, table="bill_rules", record_id=rule_id) as con:
         require_category(con, uid, payload.category_id)
         cur = con.execute(
-            "UPDATE bill_rules SET title=?,amount=?,day_of_month=?,category_id=?,active=? WHERE id=? AND user_id=?",
-            (payload.title, payload.amount, payload.day_of_month, payload.category_id, int(payload.active), rule_id, uid),
+            "UPDATE bill_rules SET title=?,amount=?,day_of_month=?,month_of_year=?,category_id=?,active=? WHERE id=? AND user_id=?",
+            (payload.title, payload.amount, payload.day_of_month, payload.month_of_year, payload.category_id, int(payload.active), rule_id, uid),
         )
         if cur.rowcount == 0:
             raise HTTPException(404, "Bill rule not found")

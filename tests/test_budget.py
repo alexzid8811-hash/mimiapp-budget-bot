@@ -55,3 +55,19 @@ def test_2027_february_weekend_moves_salary_before_weekend(monkeypatch):
     period = current_period(date(2027, 2, 1), [7, 22])
     assert period.start == date(2027, 1, 23)
     assert period.end == date(2027, 2, 5)
+
+
+def test_2027_working_days_match_the_official_calendar(monkeypatch):
+    # Production calendar 2027 (Resolution No. 1187 of 17.09.2026): working
+    # days per month for the five-day week, 247 in the year.
+    import calendar
+    from app.russian_calendar import is_working_day_ru as is_workday
+
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda year: "0" * 365)
+    counts = [
+        sum(is_workday(date(2027, m, d)) for d in range(1, calendar.monthrange(2027, m)[1] + 1))
+        for m in range(1, 13)
+    ]
+    assert counts == [15, 19, 22, 22, 19, 21, 22, 22, 22, 21, 20, 22]
+    # Saturday 20 February is a working day: the 22nd advance comes on it.
+    assert payday_on_or_before(date(2027, 2, 22)) == date(2027, 2, 20)

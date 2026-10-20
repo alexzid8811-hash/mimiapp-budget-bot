@@ -24,6 +24,10 @@ Rules
   daily amount such that the buffer stays non-negative on every day of the
   forecast horizon (all obligations are covered on their dates, and money from
   strong periods is kept for future cash gaps).
+* A yearly obligatory payment is saved up in equal parts: on every funding
+  day in the 12 months before its due date (from the day the payment was
+  planned) the buffer keeps one part, so the card periods share the payment
+  evenly instead of the few periods just before the due date.
 * The card balance is carried over.  An overspend reduces the remaining days
   of the current card period; on the last day it reduces the next period, whose
   new money is added to the already reduced card balance.
@@ -145,6 +149,31 @@ def cap_on(caps: list[tuple[date, int | None]], day: date) -> int | None:
     return value
 
 
+@dataclass(frozen=True)
+class Sinking:
+    """A yearly payment saved up in equal parts from ``since`` to ``due``."""
+    due: date
+    amount: int
+    since: date
+
+
+def sinking_parts(sinking: list[Sinking], funding_days: list[date]) -> list[dict[date, int]]:
+    """The part each funding day keeps for every yearly payment.
+
+    The amount is split over the funding days in ``[since, due)``, the
+    kopecks of the division going to the later parts.  A payment without
+    such a day is not spread and is held on its date like any other bill.
+    """
+    result = []
+    for item in sinking:
+        days = [d for d in funding_days if item.since <= d < item.due]
+        result.append({
+            day: item.amount * (i + 1) // len(days) - item.amount * i // len(days)
+            for i, day in enumerate(days)
+        })
+    return result
+
+
 @dataclass
 class LedgerInput:
     start: date
@@ -171,6 +200,9 @@ class LedgerInput:
     # A payday whose money is not confirmed yet: the card period it funds
     # gets nothing (used for the actual balances, not for the plan).
     unconfirmed_payday: date | None = None
+    # Unpaid yearly payments, also beyond ``data_end`` (they are included
+    # in ``bills_out`` only through it).
+    sinking: list[Sinking] = field(default_factory=list)
 
 
 @dataclass
@@ -201,6 +233,10 @@ class LedgerResult:
     to_store: dict[date, tuple[date, int, int]]  # start -> (funded on, amount, kept by cap)
     cap_kept: dict[date, int] = field(default_factory=dict)   # by period start
     cap_trims: dict[date, int] = field(default_factory=dict)  # card -> buffer by day
+    # Kept for yearly payments on each funding day, and in the buffer at the
+    # end of each day (a part of ``buffer_end``).
+    sinking_in: dict[date, int] = field(default_factory=dict)
+    sinking_end: dict[date, int] = field(default_factory=dict)
 
 
 def buffer_flows(inp: LedgerInput) -> dict[date, int]:
@@ -212,6 +248,36 @@ def buffer_flows(inp: LedgerInput) -> dict[date, int]:
     return flows
 
 
+def sinking_decisions(inp: LedgerInput, flows: dict[date, int], funding_days: set[date]):
+    """Yearly payments.  For a funding decision the money already kept for
+    them is not free, every later part is an outflow on its funding day,
+    and the payment itself is then covered by the kept parts.
+
+    Returns the decision flows, the parts kept on each funding day and
+    ``kept_before(day)``: the money kept for payments due on or after ``day``.
+    """
+    funding_all = sorted(set(funding_days) | {p for p in inp.paydays if p > inp.data_end})
+    parts = sinking_parts(inp.sinking, funding_all)
+    decision_flows = dict(flows)
+    sinking_in: dict[date, int] = {}
+    for item, item_parts in zip(inp.sinking, parts):
+        if not item_parts:
+            continue
+        decision_flows[item.due] = decision_flows.get(item.due, 0) + item.amount
+        for day, value in item_parts.items():
+            decision_flows[day] = decision_flows.get(day, 0) - value
+            sinking_in[day] = sinking_in.get(day, 0) + value
+
+    def kept_before(day: date) -> int:
+        return sum(
+            value
+            for item, item_parts in zip(inp.sinking, parts) if item.due >= day
+            for part_day, value in item_parts.items() if part_day < day
+        )
+
+    return decision_flows, sinking_in, kept_before
+
+
 def run_ledger(inp: LedgerInput) -> LedgerResult:
     if not inp.start <= inp.today <= inp.horizon <= inp.data_end:
         raise ValueError("Неверный диапазон расчёта")
@@ -221,6 +287,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         by_funding.setdefault(period.funded_on, []).append(period)
     funded_days = {day: sum(p.days for p in items) for day, items in by_funding.items()}
     flows = buffer_flows(inp)
+
+    decision_flows, sinking_in, kept_before = sinking_decisions(inp, flows, set(by_funding))
 
     # Buffer pass.  It never looks at card spending, except for the money the
     # daily maximum returns from the card (through today).
@@ -241,7 +309,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         if day in by_funding:
             look_ahead = min(add_months(day, inp.months), inp.data_end)
             decision = safe_daily_rate(
-                opening=buffer, start=day, end=look_ahead, flows=flows,
+                opening=buffer - kept_before(day), start=day, end=look_ahead, flows=decision_flows,
                 funded_days={d: n for d, n in funded_days.items() if day <= d <= look_ahead},
             )
             for period in by_funding[day]:
@@ -291,6 +359,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
             card += (inp.card_in.get(day, 0) + inp.card_cover.get(day, 0)
                      - inp.card_out.get(day, 0) - inp.card_to_piggy.get(day, 0))
         buffer_end[day] = buffer
+    sinking_end = {day: kept_before(day + ONE_DAY) for day in daterange(inp.start, inp.data_end)}
 
     current = next(p for p in periods if p.start <= inp.today <= p.end)
     days_left = (current.end - inp.today).days + 1
@@ -340,6 +409,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         to_store=to_store,
         cap_kept=cap_kept,
         cap_trims=cap_trims,
+        sinking_in=sinking_in,
+        sinking_end=sinking_end,
     )
 
 
@@ -354,9 +425,12 @@ def safe_rate_from(inp: LedgerInput, result: LedgerResult, day: date, held: int 
     for period in result.periods:
         if period.start > current.start and day <= period.funded_on <= look_ahead:
             funded_days[period.funded_on] = funded_days.get(period.funded_on, 0) + period.days
-    opening = held + (inp.start_capital if day == inp.start else result.buffer_end[day - ONE_DAY])
+    decision_flows, _, kept_before = sinking_decisions(
+        inp, buffer_flows(inp), {p.funded_on for p in result.periods})
+    opening = held - kept_before(day) + (
+        inp.start_capital if day == inp.start else result.buffer_end[day - ONE_DAY])
     return safe_daily_rate(
-        opening=opening, start=day, end=look_ahead, flows=buffer_flows(inp), funded_days=funded_days,
+        opening=opening, start=day, end=look_ahead, flows=decision_flows, funded_days=funded_days,
     ).daily
 
 
@@ -365,7 +439,9 @@ def spare_buffer(inp: LedgerInput, result: LedgerResult) -> int:
     any card period or leaving an obligation uncovered, in whole rubles."""
     if result.shortfall > 0:
         return 0
-    lowest = min(result.buffer_end[d] for d in daterange(inp.today, inp.data_end))
+    # Money kept for yearly payments is never spare.
+    lowest = min(result.buffer_end[d] - result.sinking_end.get(d, 0)
+                 for d in daterange(inp.today, inp.data_end))
     if lowest <= 0:
         return 0
     stored = {p.start: result.allocations[p.start] for p in result.periods if p.funded_on <= inp.today}
