@@ -290,7 +290,7 @@ test('start row shows the start capital as its money and the horizon with a year
  assert.match(get('bufferHorizon').textContent,/2027/);
 });
 
-test('a period whose money falls short of its payments shows no minus in «Свободно»', async () => {
+test('a period whose money falls short of its payments shows the minus in red with a buffer note', async () => {
  const {get,responses}=setup();
  responses['/api/cashflow'].periods=[
  {start:'2026-12-30',end:'2027-01-21',kind:'Зарплата + премия',payday:'2026-12-30',days:23,received:61199.72,mandatory:15400,free:45799.72,to_card:44059.49,daily:1915.63,buffer_start:25178.8,put_aside:1740.23,take:0,buffer:26919.03},
@@ -298,8 +298,7 @@ test('a period whose money falls short of its payments shows no minus in «Св�
  ];
  await get('refreshBtn').listeners.click();
  for (const html of [get('bufferPeriods').innerHTML, get('planCards').innerHTML]) {
-  assert.doesNotMatch(html,/[−-]100,19/);
-  assert.match(html,/0,00.₽<br><small>100,19.₽ на платежи — из буфера/);
+  assert.match(html,/<span class="free-short">[−-]100,19.₽<\/span><br><small>недостающее заложено в буфере/);
  }
 });
 

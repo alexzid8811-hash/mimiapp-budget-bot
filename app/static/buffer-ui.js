@@ -140,11 +140,10 @@
         ? ["pos",formatMoney(p.put_aside),"в буфер"]
         : ["zero","—","без движения"];
     // The period's own money may fall short of its obligatory payments (a
-    // small advance after the January holidays).  The buffer pays the rest,
-    // so "Свободно" never goes below zero and the gap is named instead.
-    const fromBuffer = p => Math.max(0, -Number(p.free) || 0);
-    const freeInner = p => fromBuffer(p) > 0
-      ? `${formatMoney(0)}<br><small>${formatMoney(fromBuffer(p))} на платежи — из буфера</small>`
+    // small advance after the January holidays).  The minus stays, in red,
+    // with a note that the buffer already holds the missing money.
+    const freeInner = p => Number(p.free) < 0
+      ? `<span class="free-short">${formatMoney(p.free)}</span><br><small>недостающее заложено в буфере</small>`
       : formatMoney(p.free);
     const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>`;
     const toCardLine = p => Number(p.to_card) > 0
