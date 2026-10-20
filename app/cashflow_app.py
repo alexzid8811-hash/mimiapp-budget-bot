@@ -55,6 +55,8 @@ class PiggyToCardIn(APIModel):
 class DailyCapIn(APIModel):
     # None: no maximum.
     amount: float | None = Field(default=None, gt=0)
+    # Where the money above the maximum goes.
+    excess_to: Literal["buffer", "piggy"] = "buffer"
 
 
 class BufferToPiggyIn(APIModel):
@@ -143,7 +145,7 @@ def save_daily_cap(payload: DailyCapIn, user: TelegramUser = Depends(current_use
     uid = legacy.user_ready(user)
     if irregular_engine.is_irregular(uid):
         raise HTTPException(422, "Максимум в день работает в режиме «Зарплата и аванс»")
-    engine.set_daily_cap(uid, payload.amount)
+    engine.set_daily_cap(uid, payload.amount, to_piggy=payload.excess_to == "piggy")
     return cashflow_settings(uid)
 
 
@@ -187,7 +189,7 @@ def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
 BUFFER_KEYS = (
     "today", "horizon_end", "daily_target", "available_today", "buffer_balance",
     "capital_shortfall", "shortfall_date", "periods", "past_periods", "card_balance", "tomorrow_limit",
-    "daily_cap", "period_cap_kept", "spare_buffer",
+    "daily_cap", "daily_cap_to", "period_cap_kept", "period_cap_kept_piggy", "spare_buffer",
 )
 
 
@@ -389,7 +391,7 @@ def delete_piggy_bank_movement(
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         movement = con.execute(
-            "SELECT income_transaction_id,bill_payment_id,expense_transaction_id FROM piggy_bank_movements "
+            "SELECT income_transaction_id,bill_payment_id,expense_transaction_id,purpose FROM piggy_bank_movements "
             "WHERE id=? AND user_id=?",
             (movement_id, uid),
         ).fetchone()
@@ -403,6 +405,8 @@ def delete_piggy_bank_movement(
             raise HTTPException(422, "Это остаток обязательного платежа: измените сумму в самом платеже")
         if movement["expense_transaction_id"] is not None:
             raise HTTPException(422, "Это трата из копилки: измените или удалите саму трату")
+        if movement["purpose"] == "cap_excess":
+            raise HTTPException(422, "Это деньги сверх максимума в день: они меняются вместе с бюджетом")
         if con.execute(
             "SELECT 1 FROM account_transfers WHERE user_id=? AND piggy_movement_id=? AND kind='credit_payment'",
             (uid, movement_id),

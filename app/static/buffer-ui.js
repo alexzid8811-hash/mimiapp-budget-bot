@@ -149,10 +149,14 @@
     const toCardLine = p => Number(p.to_card) > 0
       ? `<div><span>На карту</span><b>${toCardInner(p)}</b></div>` : "";
     // «Максимум в день» and the spare money moved to the piggy bank.
-    const capLines = p => (Number(p.cap_kept) > 0
-      ? `<div class="pc-cap"><span>Сверх максимума — в буфере</span><b class="num">${formatMoney(p.cap_kept)}</b></div>` : "")
+    const keptInBuffer = p => Math.max(0, Number(p.cap_kept || 0) - Number(p.cap_kept_piggy || 0));
+    const capLines = p => (keptInBuffer(p) > 0.004
+      ? `<div class="pc-cap"><span>Сверх максимума — в буфере</span><b class="num">${formatMoney(keptInBuffer(p))}</b></div>` : "")
+      + (Number(p.cap_kept_piggy) > 0
+        ? `<div class="pc-cap"><span>Сверх максимума — в копилку</span><b class="num">${formatMoney(p.cap_kept_piggy)}</b></div>` : "")
       + (Number(p.to_piggy) > 0
-        ? `<div class="pc-cap"><span>Из буфера в копилку</span><b class="num">${formatMoney(p.to_piggy)}</b></div>` : "");
+        && Number(p.to_piggy) - Number(p.cap_kept_piggy || 0) > 0.004
+        ? `<div class="pc-cap"><span>Из буфера в копилку</span><b class="num">${formatMoney(Number(p.to_piggy) - Number(p.cap_kept_piggy || 0))}</b></div>` : "");
     // Yearly payments are saved up in equal parts on every payday.
     const yearlyLine = p => Number(p.yearly_saved) > 0 || Number(p.yearly_put_aside) > 0
       ? `<div class="pc-foot pc-yearly"><span>Из них на годовые платежи${Number(p.yearly_put_aside) > 0 ? ` (+${formatMoney(p.yearly_put_aside)})` : ""}</span><b class="num">${formatMoney(p.yearly_saved)}</b></div>` : "";
@@ -204,7 +208,8 @@
       const [c,m,label]=movement(p);
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),freeInner(p)];
-      const capNote = Number(p.cap_kept) > 0 ? `<br><small>сверх максимума ${formatMoney(p.cap_kept)} — в буфере</small>` : "";
+      const capNote = (keptInBuffer(p) > 0.004 ? `<br><small>сверх максимума ${formatMoney(keptInBuffer(p))} — в буфере</small>` : "")
+        + (Number(p.cap_kept_piggy) > 0 ? `<br><small>сверх максимума ${formatMoney(p.cap_kept_piggy)} — в копилку</small>` : "");
       const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>${capNote}`;
       return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${Number(p.yearly_saved) > 0 ? `<br><small>на годовые ${formatMoney(p.yearly_saved)}</small>` : ""}</td></tr>`;
     }).join("");
@@ -282,9 +287,10 @@
       const deposit = item.direction === "deposit";
       const toCard = !deposit && item.source === "daily_budget";
       const title = deposit && item.source === "daily_budget" ? "Из остатка дня"
-        : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера" : deposit ? "Пополнение"
+        : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера"
+          : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : deposit ? "Пополнение"
         : toCard ? (item.purpose === "transfer" ? "На карту · по дням периода" : "На карту · на сегодня") : "Снятие";
-      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div><div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div></div></div>`;
+      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
     }).join("");
   }
 

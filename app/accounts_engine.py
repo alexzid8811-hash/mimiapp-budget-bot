@@ -164,7 +164,8 @@ def operations_without_account(con, uid: int, since: str) -> int:
     for sql in (
         "SELECT COUNT(*) FROM transactions WHERE user_id=? AND account_id IS NULL AND created_at>=?",
         "SELECT COUNT(*) FROM piggy_bank_movements WHERE user_id=? AND created_at>=? "
-        "AND income_transaction_id IS NULL AND bill_payment_id IS NULL AND expense_transaction_id IS NULL",
+        "AND income_transaction_id IS NULL AND bill_payment_id IS NULL AND expense_transaction_id IS NULL "
+        "AND COALESCE(purpose,'')<>'cap_excess'",
         "SELECT COUNT(*) FROM emergency_reserve_movements WHERE user_id=? AND created_at>=? "
         "AND expense_transaction_id IS NULL",
     ):
@@ -317,6 +318,13 @@ def budget_ops(uid: int, mode: str) -> list[BudgetOp]:
             for day, value in inp.cap_topups.items():
                 if day <= today and value:
                     ops.append(BudgetOp(day, {"buffer": -value, "spending": value}, {}))
+            # «Избыток в копилку»: the part above the maximum goes to the
+            # piggy bank from the buffer (funding) or from the card (trims).
+            for day, value in actual.piggy_from_buffer.items():
+                if day <= today and value:
+                    ops.append(BudgetOp(day, {"buffer": -value, "piggy": value}, {}))
+            for day, value in actual.cap_piggy_trims.items():
+                ops.append(BudgetOp(day, {"spending": -value, "piggy": value}, {}))
     return ops
 
 

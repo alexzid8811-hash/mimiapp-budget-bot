@@ -72,7 +72,7 @@ TABLE_COLUMNS = {
     "card_allocations": ("id", "period_start", "funded_on", "amount", "cap_kept"),
     "payroll_changes": ("id", "effective_month", "salary_gross", "bonus_gross", "created_at"),
     # «Максимум в день» (v12).
-    "daily_caps": ("id", "effective_from", "amount", "topup", "created_at"),
+    "daily_caps": ("id", "effective_from", "amount", "topup", "excess_to", "created_at"),
     "emergency_reserve_movements": (
         "id", "direction", "amount", "movement_date", "reason", "kind", "expense_transaction_id", "created_at",
     ),
@@ -314,8 +314,10 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
             for row in data["daily_caps"]:
                 con.execute(
-                    "INSERT INTO daily_caps(user_id,effective_from,amount,topup,created_at) VALUES(?,?,?,?,?)",
-                    (user_id, row["effective_from"], row.get("amount"), row.get("topup") or 0, _created_at(row)),
+                    "INSERT INTO daily_caps(user_id,effective_from,amount,topup,excess_to,created_at) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (user_id, row["effective_from"], row.get("amount"), row.get("topup") or 0,
+                     row.get("excess_to") or "buffer", _created_at(row)),
                 )
             for row in data["payroll_changes"]:
                 con.execute(

@@ -73,6 +73,8 @@ def _piggy_title(row: dict) -> str:
             return "Доход в копилку"
         if row.get("purpose") == "from_buffer":
             return "Лишнее из буфера"
+        if row.get("purpose") == "cap_excess":
+            return "Сверх максимума в день"
         return "Из остатка дня" if row["source"] == "daily_budget" else "Пополнение"
     if row["source"] == "daily_budget":
         return "На карту · по дням периода" if row.get("purpose") == "transfer" else "На карту · на сегодня"

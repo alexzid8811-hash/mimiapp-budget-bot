@@ -187,13 +187,15 @@ CREATE TABLE IF NOT EXISTS card_allocations (
 
 -- «Максимум в день»: the cap by the day it takes effect (amount NULL: no
 -- cap).  ``topup`` is the buffer -> card money given to the current period
--- when the cap was raised on that day.
+-- when the cap was raised on that day.  ``excess_to``: where the money above
+-- the cap goes, 'buffer' or 'piggy'.
 CREATE TABLE IF NOT EXISTS daily_caps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     effective_from TEXT NOT NULL,
     amount REAL,
     topup REAL NOT NULL DEFAULT 0,
+    excess_to TEXT NOT NULL DEFAULT 'buffer' CHECK(excess_to IN ('buffer','piggy')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, effective_from)
 );
@@ -585,6 +587,9 @@ def _prepare(con: sqlite3.Connection) -> None:
     allocation_columns = {row[1] for row in con.execute("PRAGMA table_info(card_allocations)")}
     if "cap_kept" not in allocation_columns:
         con.execute("ALTER TABLE card_allocations ADD COLUMN cap_kept REAL NOT NULL DEFAULT 0")
+    cap_columns = {row[1] for row in con.execute("PRAGMA table_info(daily_caps)")}
+    if "excess_to" not in cap_columns:
+        con.execute("ALTER TABLE daily_caps ADD COLUMN excess_to TEXT NOT NULL DEFAULT 'buffer'")
     category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
     if "sort_order" not in category_columns:
         con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")

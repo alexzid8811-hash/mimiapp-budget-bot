@@ -40,6 +40,9 @@ Rules
   (including money left from the previous period) is trimmed to
   ``cap * remaining days``; the excess returns to the buffer.  A raised cap
   tops the current period up from the buffer by the stored ``cap_topups``.
+  With «избыток в копилку» the excess goes to the piggy bank instead: the
+  buffer pays the period as without the maximum (so it never sags) and the
+  part above the maximum, like the trimmed card money, goes to the piggy bank.
 """
 from __future__ import annotations
 
@@ -139,14 +142,20 @@ def spend_evenly(balance: int, days: int) -> tuple[int, int]:
     return first or 0, balance
 
 
-def cap_on(caps: list[tuple[date, int | None]], day: date) -> int | None:
-    """The daily maximum in effect on ``day`` (None: no maximum)."""
-    value = None
-    for since, cap in caps:
-        if since > day:
+def cap_rule(caps: list[tuple], day: date) -> tuple[int | None, bool]:
+    """The daily maximum in effect on ``day`` (None: no maximum) and whether
+    its excess goes to the piggy bank.  Entries: (since, cap[, to_piggy])."""
+    value: tuple[int | None, bool] = (None, False)
+    for entry in caps:
+        if entry[0] > day:
             break
-        value = cap
+        value = (entry[1], bool(entry[2]) if len(entry) > 2 else False)
     return value
+
+
+def cap_on(caps: list[tuple], day: date) -> int | None:
+    """The daily maximum in effect on ``day`` (None: no maximum)."""
+    return cap_rule(caps, day)[0]
 
 
 @dataclass(frozen=True)
@@ -193,8 +202,9 @@ class LedgerInput:
     # Part of a stored allocation kept in the buffer by the daily maximum.
     stored_cap_kept: dict[date, int] = field(default_factory=dict)
     buffer_out: dict[date, int] = field(default_factory=dict)    # buffer -> piggy bank
-    # Daily maximum by the day it takes effect, sorted (None: no maximum).
-    caps: list[tuple[date, int | None]] = field(default_factory=list)
+    # Daily maximum by the day it takes effect, sorted: (since, cap or None,
+    # excess to the piggy bank — optional, False by default).
+    caps: list[tuple] = field(default_factory=list)
     # Buffer -> card top-ups of the current period after the cap was raised.
     cap_topups: dict[date, int] = field(default_factory=dict)
     # A payday whose money is not confirmed yet: the card period it funds
@@ -233,6 +243,11 @@ class LedgerResult:
     to_store: dict[date, tuple[date, int, int]]  # start -> (funded on, amount, kept by cap)
     cap_kept: dict[date, int] = field(default_factory=dict)   # by period start
     cap_trims: dict[date, int] = field(default_factory=dict)  # card -> buffer by day
+    # «Избыток в копилку»: money above the maximum to the piggy bank by day,
+    # and the part of it paid by the buffer on funding days.
+    cap_to_piggy: dict[date, int] = field(default_factory=dict)
+    piggy_from_buffer: dict[date, int] = field(default_factory=dict)
+    cap_piggy_trims: dict[date, int] = field(default_factory=dict)  # card -> piggy by day
     # Kept for yearly payments on each funding day, and in the buffer at the
     # end of each day (a part of ``buffer_end``).
     sinking_in: dict[date, int] = field(default_factory=dict)
@@ -298,8 +313,11 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
     buffer_end: dict[date, int] = {}
     to_store: dict[date, tuple[date, int, int]] = {}
     starts = {period.start: period for period in periods}
-    cap_days = {since for since, _ in inp.caps}
+    cap_days = {entry[0] for entry in inp.caps}
     cap_trims: dict[date, int] = {}
+    cap_to_piggy: dict[date, int] = {}
+    piggy_from_buffer: dict[date, int] = {}
+    cap_piggy_trims: dict[date, int] = {}
     active: CardPeriod | None = None
     card = 0
     card_start_today = 0
@@ -335,6 +353,10 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 allocations[period.start] = value
                 cap_kept[period.start] = kept
                 funded_today += value
+                if kept and cap_rule(inp.caps, day)[1]:
+                    funded_today += kept
+                    piggy_from_buffer[day] = piggy_from_buffer.get(day, 0) + kept
+                    cap_to_piggy[day] = cap_to_piggy.get(day, 0) + kept
         buffer += flows.get(day, 0) - funded_today
 
         # Card through today with real operations.
@@ -343,14 +365,17 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 active = starts[day]
                 card += allocations[day]
             trim = 0
-            if day == active.start or day in cap_days:
-                cap = cap_on(inp.caps, day)
-                if cap is not None:
-                    trim = max(0, card - cap * ((active.end - day).days + 1))
+            cap, to_piggy = cap_rule(inp.caps, day)
+            if (day == active.start or day in cap_days) and cap is not None:
+                trim = max(0, card - cap * ((active.end - day).days + 1))
             topup = inp.cap_topups.get(day, 0)
             card += topup - trim
-            buffer += trim - topup
-            if trim:
+            buffer -= topup
+            if trim and to_piggy:
+                cap_to_piggy[day] = cap_to_piggy.get(day, 0) + trim
+                cap_piggy_trims[day] = trim
+            elif trim:
+                buffer += trim
                 cap_trims[day] = trim
             if day in starts:
                 opening_by_start[day] = card
@@ -409,6 +434,9 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         to_store=to_store,
         cap_kept=cap_kept,
         cap_trims=cap_trims,
+        cap_to_piggy=cap_to_piggy,
+        piggy_from_buffer=piggy_from_buffer,
+        cap_piggy_trims=cap_piggy_trims,
         sinking_in=sinking_in,
         sinking_end=sinking_end,
     )
@@ -510,7 +538,7 @@ def buffer_rows(inp: LedgerInput, result: LedgerResult, *, past: bool = False) -
             to_card=sum(result.allocations[p.start] for p in result.periods
                         if row_start <= p.funded_on <= row_end)
             - sum(result.cap_trims.get(d, 0) for d in days) + sum(inp.cap_topups.get(d, 0) for d in days),
-            to_piggy=sum(inp.buffer_out.get(d, 0) for d in days),
+            to_piggy=sum(inp.buffer_out.get(d, 0) + result.piggy_from_buffer.get(d, 0) for d in days),
             card_days=sum(p.days for p in result.periods if row_start <= p.funded_on <= row_end),
             buffer_start=(inp.start_capital if row_start == inp.start
                           else result.buffer_end[row_start - ONE_DAY]),

@@ -139,7 +139,7 @@ class Piggy(Record):
     movement_date: date
     note: str = Field(default='', max_length=160)
     source: Literal['external', 'daily_budget'] = 'external'
-    purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer'] | None = None
+    purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer', 'cap_excess'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
     expense_transaction_id: int | None = Field(default=None, gt=0)
@@ -184,6 +184,7 @@ class DailyCap(Record):
     effective_from: date
     amount: float | None = Field(default=None, gt=0)
     topup: float = Field(default=0, ge=0)
+    excess_to: Literal['buffer', 'piggy'] = 'buffer'
 
 
 class CashflowIncomeOverride(Record):
