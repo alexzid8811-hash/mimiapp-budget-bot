@@ -180,8 +180,22 @@ CREATE TABLE IF NOT EXISTS card_allocations (
     period_start TEXT NOT NULL,
     funded_on TEXT NOT NULL,
     amount REAL NOT NULL,
+    cap_kept REAL NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, period_start)
+);
+
+-- «Максимум в день»: the cap by the day it takes effect (amount NULL: no
+-- cap).  ``topup`` is the buffer -> card money given to the current period
+-- when the cap was raised on that day.
+CREATE TABLE IF NOT EXISTS daily_caps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    effective_from TEXT NOT NULL,
+    amount REAL,
+    topup REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, effective_from)
 );
 
 CREATE TABLE IF NOT EXISTS morning_reports (
@@ -568,6 +582,9 @@ def _prepare(con: sqlite3.Connection) -> None:
     _ensure_payment_columns(con)
     _ensure_irregular_schema(con)
     _ensure_accounts_schema(con)
+    allocation_columns = {row[1] for row in con.execute("PRAGMA table_info(card_allocations)")}
+    if "cap_kept" not in allocation_columns:
+        con.execute("ALTER TABLE card_allocations ADD COLUMN cap_kept REAL NOT NULL DEFAULT 0")
     category_columns = {row[1] for row in con.execute("PRAGMA table_info(categories)")}
     if "sort_order" not in category_columns:
         con.execute("ALTER TABLE categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")

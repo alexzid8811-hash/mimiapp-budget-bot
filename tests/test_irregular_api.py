@@ -417,7 +417,7 @@ def test_backup_round_trip_keeps_numbers(client):
     _rich_history(client)
     before = _numbers()
     backup = export_user_data(1)
-    assert backup["backup_version"] == 11
+    assert backup["backup_version"] == 12
     assert len(backup["data"]["emergency_reserve_movements"]) == 2
     with connect() as con:
         con.execute("DELETE FROM emergency_reserve_movements WHERE user_id=1")

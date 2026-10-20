@@ -52,6 +52,16 @@ class PiggyToCardIn(APIModel):
     purpose: Literal["transfer", "today", "cover_overspend"] = "transfer"
 
 
+class DailyCapIn(APIModel):
+    # None: no maximum.
+    amount: float | None = Field(default=None, gt=0)
+
+
+class BufferToPiggyIn(APIModel):
+    amount: float = Field(gt=0)
+    note: str = Field(default="", max_length=160)
+
+
 class CashflowIncomeOverrideIn(APIModel):
     amount: float = Field(ge=0)
     # True when the user confirms the payout actually arrived.
@@ -126,6 +136,48 @@ def save_cashflow_settings(payload: CashflowSettingsIn, user: TelegramUser = Dep
     return cashflow_settings(uid)
 
 
+@app.put("/api/daily-cap")
+def save_daily_cap(payload: DailyCapIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """«Максимум в день» from today on: the current period is recalculated
+    for its remaining days and every later period from scratch."""
+    uid = legacy.user_ready(user)
+    if irregular_engine.is_irregular(uid):
+        raise HTTPException(422, "Максимум в день работает в режиме «Зарплата и аванс»")
+    engine.set_daily_cap(uid, payload.amount)
+    return cashflow_settings(uid)
+
+
+@app.post("/api/buffer/to-piggy")
+def buffer_to_piggy(payload: BufferToPiggyIn, user: TelegramUser = Depends(current_user)) -> dict:
+    """Spare buffer money (kept by the daily maximum) to the piggy bank.  Only
+    as much as leaves every card period and obligation as it was."""
+    uid = legacy.user_ready(user)
+    snapshot = cashflow_snapshot(uid)
+    if not snapshot.get("enabled") or irregular_engine.is_irregular(uid):
+        raise HTTPException(422, "Буфер выключен")
+    spare = cents(snapshot.get("spare_buffer") or 0)
+    if cents(payload.amount) > spare:
+        raise HTTPException(
+            422, f"Без ущерба для буфера можно перевести не больше {spare / 100:.2f}".replace(".", ","),
+        )
+    from . import accounts_engine
+
+    day = clock.today().isoformat()
+    with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        movement_id = con.execute(
+            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
+            "VALUES(?,'deposit',?,?,?,'external','from_buffer')",
+            (uid, payload.amount, day, payload.note or "Лишнее из буфера"),
+        ).lastrowid
+        # Cards and accounts: from the buffer's card to the piggy bank's.
+        if accounts_engine.settings_for(con, uid)["enabled"]:
+            places, _ = accounts_engine.placement(con, uid)
+            accounts_engine._linked(con, uid, places.get("buffer"), places.get("piggy"), payload.amount, day,
+                                    piggy=movement_id)
+    return {**piggy_bank_snapshot(uid), "buffer": get_buffer(user)}
+
+
 @app.get("/api/cashflow")
 def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
@@ -135,6 +187,7 @@ def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
 BUFFER_KEYS = (
     "today", "horizon_end", "daily_target", "available_today", "buffer_balance",
     "capital_shortfall", "shortfall_date", "periods", "past_periods", "card_balance", "tomorrow_limit",
+    "daily_cap", "period_cap_kept", "spare_buffer",
 )
 
 
