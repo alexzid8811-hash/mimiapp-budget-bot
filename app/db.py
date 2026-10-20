@@ -539,6 +539,9 @@ def _ensure_accounts_schema(con: sqlite3.Connection) -> None:
     if "credit_account_id" not in bill_columns:
         # Paying this bill repays the credit card instead of being an expense.
         con.execute("ALTER TABLE bill_rules ADD COLUMN credit_account_id INTEGER REFERENCES accounts(id)")
+    if "month_of_year" not in bill_columns:
+        # A yearly obligatory payment: due on day_of_month of this month only.
+        con.execute("ALTER TABLE bill_rules ADD COLUMN month_of_year INTEGER CHECK(month_of_year BETWEEN 1 AND 12)")
     envelope_columns = {row[1] for row in con.execute("PRAGMA table_info(envelope_accounts)")}
     if "assigned_at" not in envelope_columns:
         con.execute("ALTER TABLE envelope_accounts ADD COLUMN assigned_at TEXT")

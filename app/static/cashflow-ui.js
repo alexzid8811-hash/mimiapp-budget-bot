@@ -97,6 +97,9 @@
     if (Number(flow.reserved_mandatory || 0) > 0) {
       reason += ` На обязательные платежи зарезервировано ${formatMoney(flow.reserved_mandatory)}.`;
     }
+    if (Number(flow.yearly_saved || 0) > 0) {
+      reason += ` На годовые платежи накоплено ${formatMoney(flow.yearly_saved)}.`;
+    }
     if (flow.next_income) {
       const d = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" })
         .format(new Date(`${flow.next_income.date}T12:00:00`));

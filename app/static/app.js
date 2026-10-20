@@ -58,6 +58,7 @@ function moneyValue(id) {
   return window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(value) : Number(value) || 0;
 }
 function fmtDate(s) { return new Intl.DateTimeFormat("ru-RU", { day:"numeric", month:"short" }).format(new Date(`${s}T12:00:00`)); }
+const MONTHS_GENITIVE = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
 function fmtMonth(year, month) { return new Intl.DateTimeFormat("ru-RU", { month:"long", year:"numeric" }).format(new Date(year, month - 1, 1)); }
 function todayISO() { return window.budgetDate.today(); }
 function shiftISODate(iso, days) { return window.budgetDate.shift(iso, days); }
@@ -350,7 +351,7 @@ function renderSettings() {
   $("vacationsList").innerHTML = state.vacations.length ? state.vacations.map(v => `
     <div class="list-row"><div class="row-text"><div class="row-title">Отпуск ${fmtDate(v.start_date)} — ${fmtDate(v.end_date)}</div><div class="row-sub">Выплата ${fmtDate(v.payment_date)}${v.note ? ` · ${escapeHtml(v.note)}` : ''}</div></div><div><div class="amount income">${money(v.amount)}</div><div class="actions"><button class="tiny" onclick="editVacation(${v.id})">Изм.</button><button class="tiny danger" onclick="deleteVacation(${v.id})">×</button></div></div></div>`).join("") : `<div class="empty">Отпуска пока не добавлены.</div>`;
 
-  $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title"><i class="status-dot ${r.active ? "on" : "off"}" title="${r.active ? "Включён" : "Выключен"}" aria-label="${r.active ? "Включён" : "Выключен"}"></i>${escapeHtml(r.title)} · ${r.once_date ? fmtDate(r.once_date) : `${r.day_of_month} числа`}</div><div class="row-sub">${!r.active ? "выключен · не учитывается в бюджете и аналитике" : r.once_date ? "разово · погашение кредитки" : "ежемесячно"}</div></div><div><div class="amount ${r.active ? "expense" : "muted"}">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
+  $("billRulesList").innerHTML = b.bill_rules.length ? b.bill_rules.map(r => `<div class="list-row"><div class="row-text"><div class="row-title"><i class="status-dot ${r.active ? "on" : "off"}" title="${r.active ? "Включён" : "Выключен"}" aria-label="${r.active ? "Включён" : "Выключен"}"></i>${escapeHtml(r.title)} · ${r.once_date ? fmtDate(r.once_date) : r.month_of_year ? `${r.day_of_month} ${MONTHS_GENITIVE[r.month_of_year - 1]}` : `${r.day_of_month} числа`}</div><div class="row-sub">${!r.active ? "выключен · не учитывается в бюджете и аналитике" : r.once_date ? "разово · погашение кредитки" : r.month_of_year ? "раз в год" : "ежемесячно"}</div></div><div><div class="amount ${r.active ? "expense" : "muted"}">${money(r.amount)}</div><div class="actions"><button class="tiny" onclick="editBillRule(${r.id})">Изм.</button><button class="tiny danger" onclick="deleteBillRule(${r.id})">×</button></div></div></div>`).join("") : `<div class="empty">Добавьте аренду, кредиты, подписки и другие обязательные платежи.</div>`;
   renderCategories();
 }
 
@@ -825,6 +826,12 @@ function openRule(mode, rule = null) {
   $("ruleDialogTitle").textContent = rule ? "Изменить правило" : (income ? "Новый доход" : "Новый платеж");
   $("incomeRuleFields").style.display = income ? "block" : "none";
   $("billCategoryWrap").style.display = income ? "none" : "flex";
+  // A yearly bill is due on its day of one month; a one-off (credit card)
+  // bill keeps its own date and has no periodicity to choose.
+  $("billPeriodWrap").style.display = income || rule?.once_date ? "none" : "flex";
+  $("ruleBillPeriod").value = rule?.month_of_year ? "yearly" : "monthly";
+  $("ruleBillMonth").value = String(rule?.month_of_year || new Date().getMonth() + 1);
+  syncBillPeriod();
   $("ruleTitle").value = rule?.title || ""; $("ruleAmount").value = rule?.amount ?? ""; $("ruleDay").value = rule?.day_of_month ?? "";
   $("ruleKind").value = rule?.kind || "other"; $("ruleIsPayday").checked = Boolean(rule?.is_payday);
   $("ruleActive").checked = rule?.active !== 0 && rule?.active !== false;
@@ -832,6 +839,11 @@ function openRule(mode, rule = null) {
   $("ruleBillCategory").value = rule?.category_id || "";
   $("ruleDialog").showModal();
 }
+function syncBillPeriod() {
+  const yearly = $("ruleMode").value === "bill" && $("ruleBillPeriod").value === "yearly";
+  $("billMonthWrap").style.display = yearly ? "flex" : "none";
+}
+$("ruleBillPeriod").addEventListener("change", syncBillPeriod);
 $("addBillRuleBtn").addEventListener("click", () => openRule("bill"));
 window.editBillRule = id => openRule("bill", state.bootstrap.bill_rules.find(x => x.id === id));
 window.deleteBillRule = async id => { if(!confirm("Удалить платеж?")) return; try { await api(`/api/bill-rules/${id}`, {method:"DELETE"}); await loadAll(); } catch(e) { toast(e.message); } };
@@ -841,7 +853,7 @@ $("ruleForm").addEventListener("submit", async (e) => {
   const mode = $("ruleMode").value, id = $("ruleId").value;
   let body;
   if (mode === "income") body = { title:$("ruleTitle").value, amount:moneyValue("ruleAmount"), day_of_month:Number($("ruleDay").value), kind:$("ruleKind").value, is_payday:$("ruleIsPayday").checked, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
-  else body = { title:$("ruleTitle").value, amount:moneyValue("ruleAmount"), day_of_month:Number($("ruleDay").value), category_id:$("ruleBillCategory").value ? Number($("ruleBillCategory").value) : null, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
+  else body = { title:$("ruleTitle").value, amount:moneyValue("ruleAmount"), day_of_month:Number($("ruleDay").value), month_of_year:$("ruleBillPeriod").value === "yearly" ? Number($("ruleBillMonth").value) : null, category_id:$("ruleBillCategory").value ? Number($("ruleBillCategory").value) : null, active:$("ruleActive").checked, effective_date:$("ruleEffectiveDate").value };
   const base = mode === "income" ? "/api/income-rules" : "/api/bill-rules";
   try { await api(id ? `${base}/${id}` : base, {method:id?"PUT":"POST", body:JSON.stringify(body)}); $("ruleDialog").close(); toast("Сохранено"); await loadAll(); } catch(err){ toast(err.message); }
 });

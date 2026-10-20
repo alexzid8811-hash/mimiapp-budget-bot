@@ -25,7 +25,7 @@ def _nearest_unpaid_bills(user_id: int, today: date) -> tuple[date | None, list[
     """Return every unpaid active bill on the nearest payment date."""
     with connect() as con:
         rules = con.execute(
-            "SELECT id,title,amount,day_of_month,once_date FROM bill_rules "
+            "SELECT id,title,amount,day_of_month,once_date,month_of_year FROM bill_rules "
             "WHERE user_id=? AND active=1 AND archived=0",
             (user_id,),
         ).fetchall()
@@ -36,6 +36,8 @@ def _nearest_unpaid_bills(user_id: int, today: date) -> tuple[date | None, list[
                 due = date.fromisoformat(rule["once_date"])
                 if due < today:
                     continue
+            elif rule["month_of_year"]:
+                due = planning.bill_due_dates(dict(rule), today, today + timedelta(days=366))[0]
             else:
                 due = _next_rule_due_date(int(rule["day_of_month"]), today)
             paid = con.execute(

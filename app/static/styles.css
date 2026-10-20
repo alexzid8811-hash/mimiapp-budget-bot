@@ -166,6 +166,8 @@ h1,h2,h3,p{margin:0}
 .pc-foot{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted)}
 .pc-foot b{color:var(--text);font-weight:600}
 .pc-foot b.low{color:var(--expense)}
+.pc-yearly{margin-top:4px;font-size:12px}
+.pc-yearly b{color:var(--muted);font-weight:500}
 
 .plan-table-wrap{display:none;overflow-x:auto;margin-top:14px}
 .plan-table{width:100%;border-collapse:collapse;font-size:14px}

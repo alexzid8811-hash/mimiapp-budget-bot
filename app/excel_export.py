@@ -53,6 +53,18 @@ def _date(value: Any):
         return str(value)
 
 
+MONTHS_GENITIVE = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+                   "сентября", "октября", "ноября", "декабря")
+
+
+def _bill_period(row: dict) -> str:
+    if row["once_date"]:
+        return f"разово {_date(row['once_date']):%d.%m.%Y}"
+    if row["month_of_year"]:
+        return f"раз в год, {row['day_of_month']} {MONTHS_GENITIVE[row['month_of_year'] - 1]}"
+    return "ежемесячно"
+
+
 def _piggy_title(row: dict) -> str:
     if row["direction"] == "deposit":
         if row.get("bill_payment_id"):
@@ -465,10 +477,11 @@ def _build_workbook(user_id: int) -> bytes:
 
     ws = wb.create_sheet("Обязательные платежи")
     _write_table(
-        ws, ["Название", "День месяца", f"Сумма, {currency}", "Категория", "Активен"],
-        [[b["title"], b["day_of_month"], float(b["amount"]), b["category_title"] or "", "Да" if b["active"] else "Нет"]
+        ws, ["Название", "День месяца", "Периодичность", f"Сумма, {currency}", "Категория", "Активен"],
+        [[b["title"], b["day_of_month"], _bill_period(b), float(b["amount"]), b["category_title"] or "",
+          "Да" if b["active"] else "Нет"]
          for b in bills],
-        money_columns={3}, widths=[30, 14, 16, 24, 10],
+        money_columns={4}, widths=[30, 14, 20, 16, 24, 10],
     )
 
     if irregular:

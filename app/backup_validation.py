@@ -84,6 +84,8 @@ class Bill(Record):
     # A planned credit card repayment (v11): one-off, repays this card.
     once_date: date | None = None
     credit_account_id: int | None = Field(default=None, gt=0)
+    # A yearly payment: due on day_of_month of this month only.
+    month_of_year: int | None = Field(default=None, ge=1, le=12)
 
 
 class Transaction(Record):
