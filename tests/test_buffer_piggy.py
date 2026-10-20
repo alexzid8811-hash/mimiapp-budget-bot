@@ -268,3 +268,22 @@ def test_switching_excess_back_to_buffer_keeps_what_went_to_piggy(client, monkey
     # 720 ₽ for nine days -> 450 ₽; the 270 ₽ go to the buffer now.
     assert flow["piggy_bank_balance"] == 200
     assert flow["card_balance"] == 450
+
+
+def test_switching_excess_to_piggy_moves_the_current_periods_excess(client, monkeypatch):
+    plain = cashflow_snapshot(1)
+    assert client.put("/api/daily-cap", json={"amount": 80}).status_code == 200
+    assert cashflow_snapshot(1)["buffer_balance"] == plain["buffer_balance"] + 200
+    spend(client, 80)
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 14))
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    flow = cashflow_snapshot(1)
+    # The 200 ₽ kept in the buffer on 13 September go to the piggy bank:
+    # the buffer is again as without the maximum.
+    assert flow["piggy_bank_balance"] == 200
+    assert flow["buffer_balance"] == plain["buffer_balance"]
+    assert flow["period_cap_kept"] == flow["period_cap_kept_piggy"] == 200
+    assert flow["today_target"] == 80
+    # Saving the same choice again the same day does not move it twice.
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    assert cashflow_snapshot(1)["piggy_bank_balance"] == 200

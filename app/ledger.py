@@ -207,6 +207,9 @@ class LedgerInput:
     caps: list[tuple] = field(default_factory=list)
     # Buffer -> card top-ups of the current period after the cap was raised.
     cap_topups: dict[date, int] = field(default_factory=dict)
+    # Buffer -> piggy bank: the current period's excess kept in the buffer,
+    # moved when the excess was switched to the piggy bank.
+    cap_moves: dict[date, int] = field(default_factory=dict)
     # A payday whose money is not confirmed yet: the card period it funds
     # gets nothing (used for the actual balances, not for the plan).
     unconfirmed_payday: date | None = None
@@ -371,6 +374,11 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
             topup = inp.cap_topups.get(day, 0)
             card += topup - trim
             buffer -= topup
+            move = inp.cap_moves.get(day, 0)
+            if move:
+                buffer -= move
+                piggy_from_buffer[day] = piggy_from_buffer.get(day, 0) + move
+                cap_to_piggy[day] = cap_to_piggy.get(day, 0) + move
             if trim and to_piggy:
                 cap_to_piggy[day] = cap_to_piggy.get(day, 0) + trim
                 cap_piggy_trims[day] = trim
