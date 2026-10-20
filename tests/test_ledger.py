@@ -5,7 +5,8 @@ from datetime import date, timedelta
 import pytest
 
 from app.ledger import (
-    CardPeriod, LedgerInput, buffer_rows, card_periods, run_ledger, safe_daily_rate, spend_evenly,
+    CardPeriod, LedgerInput, buffer_rows, card_periods, run_ledger, safe_daily_rate, safe_rate_from,
+    spare_buffer, spend_evenly,
 )
 
 RUB = 100
@@ -19,8 +20,8 @@ PAYDAYS = [D(2026, 8, 21), D(2026, 9, 7), D(2026, 9, 22), D(2026, 10, 7), D(2026
 RICH = {D(2026, 9, 22): 100000 * RUB, D(2026, 10, 7): 100000 * RUB, D(2026, 10, 22): 100000 * RUB}
 
 
-def ten_days_with_1000(**overrides):
-    return ledger(D(2026, 9, 13), start=D(2026, 9, 13),
+def ten_days_with_1000(today=D(2026, 9, 13), **overrides):
+    return ledger(today, start=D(2026, 9, 13),
                   buffer_in={D(2026, 9, 13): 1000 * RUB, **RICH}, **overrides)
 
 
@@ -195,6 +196,99 @@ def test_payday_money_is_not_spendable_before_next_day(day):
         assert result.tomorrow_limit > 0
 
 
+# «Максимум в день».
+
+def test_daily_cap_keeps_the_excess_in_the_buffer():
+    plain = run_ledger(ten_days_with_1000())
+    capped = run_ledger(ten_days_with_1000(caps=[(D(2026, 9, 13), 80 * RUB)]))
+    start = D(2026, 9, 13)
+    assert plain.allocations[start] == 1000 * RUB
+    assert capped.allocations[start] == 800 * RUB
+    assert capped.cap_kept[start] == 200 * RUB
+    assert capped.today_limit == 80 * RUB
+    assert capped.buffer_end[start] == plain.buffer_end[start] + 200 * RUB
+    # Every later period is capped as well, the rest stays in the buffer.
+    for period in capped.periods[1:]:
+        assert capped.allocations[period.start] == 80 * RUB * period.days
+
+
+def test_daily_cap_above_the_rate_changes_nothing():
+    plain = run_ledger(ten_days_with_1000())
+    high = run_ledger(ten_days_with_1000(caps=[(D(2026, 9, 13), 150 * RUB)]))
+    start = D(2026, 9, 13)
+    assert high.allocations[start] == plain.allocations[start]
+    assert high.cap_kept[start] == 0 and not high.cap_trims
+    assert high.today_limit == plain.today_limit
+
+
+def test_daily_cap_trims_money_left_from_the_previous_period():
+    # Nothing is spent from 13 to 22 September: the 1 000 ₽ are carried over.
+    cap = 2000 * RUB
+    inp = ten_days_with_1000(today=D(2026, 9, 23), caps=[(D(2026, 9, 13), cap)])
+    result = run_ledger(inp)
+    nxt = D(2026, 9, 23)
+    assert result.allocations[nxt] == cap * 15
+    # Option «а»: the cap holds for the whole daily amount, the carried
+    # 1 000 ₽ go back to the buffer on the first day of the period.
+    assert result.cap_trims == {nxt: 1000 * RUB}
+    assert result.card_start_today == cap * 15
+    assert result.today_limit == cap
+    plain = run_ledger(replace(inp, caps=[]))
+    assert plain.today_limit > cap
+
+
+def test_daily_cap_lowered_mid_period_returns_the_rest_of_the_card():
+    spent = {D(2026, 9, d): 100 * RUB for d in range(13, 18)}
+    inp = ten_days_with_1000(today=D(2026, 9, 18), card_out=spent)
+    before = run_ledger(inp)
+    after = run_ledger(replace(inp, caps=[(D(2026, 9, 18), 80 * RUB)]))
+    # 500 ₽ left for five days (100 ₽ a day) -> at most 400 ₽.
+    assert before.today_limit == 100 * RUB
+    assert after.today_limit == 80 * RUB
+    assert after.cap_trims == {D(2026, 9, 18): 100 * RUB}
+    assert after.card_start_today == 400 * RUB
+    # The days already gone and the period's money are not rewritten.
+    assert after.allocations[D(2026, 9, 13)] == before.allocations[D(2026, 9, 13)]
+    for day in range(13, 18):
+        assert after.buffer_end[D(2026, 9, day)] == before.buffer_end[D(2026, 9, day)]
+    assert after.buffer_end[D(2026, 9, 18)] == before.buffer_end[D(2026, 9, 18)] + 100 * RUB
+
+
+def test_daily_cap_below_the_card_balance_per_day_changes_nothing_mid_period():
+    spent = {D(2026, 9, d): 150 * RUB for d in range(13, 18)}  # 250 ₽ for five days
+    inp = ten_days_with_1000(today=D(2026, 9, 18), card_out=spent, caps=[(D(2026, 9, 18), 80 * RUB)])
+    result = run_ledger(inp)
+    assert not result.cap_trims
+    assert result.today_limit == 50 * RUB
+
+
+def test_raised_cap_tops_up_only_within_the_safe_rate():
+    caps = [(D(2026, 9, 13), 80 * RUB)]
+    inp = ten_days_with_1000(today=D(2026, 9, 14), caps=caps, card_out={D(2026, 9, 13): 80 * RUB})
+    result = run_ledger(inp)
+    # 200 ₽ kept in the buffer + 80 ₽ x 9 days still on the card.
+    rate = safe_rate_from(inp, result, D(2026, 9, 14), held=80 * RUB * 9)
+    assert rate == (200 * RUB + 720 * RUB) // 9
+    topped = run_ledger(replace(inp, caps=caps + [(D(2026, 9, 14), 150 * RUB)],
+                                cap_topups={D(2026, 9, 14): (rate - 80 * RUB) * 9}))
+    assert topped.today_limit == rate
+    assert topped.buffer_end[D(2026, 9, 14)] >= 0
+
+
+def test_spare_buffer_never_changes_card_periods():
+    inp = ten_days_with_1000(caps=[(D(2026, 9, 13), 80 * RUB)])
+    result = run_ledger(inp)
+    spare = spare_buffer(inp, result)
+    assert spare > 0 and spare % RUB == 0
+    moved = run_ledger(replace(inp, buffer_out={D(2026, 9, 13): spare},
+                               stored_allocations={D(2026, 9, 13): result.allocations[D(2026, 9, 13)]}))
+    assert moved.allocations == result.allocations
+    assert moved.shortfall == 0
+    more = run_ledger(replace(inp, buffer_out={D(2026, 9, 13): spare + RUB},
+                              stored_allocations={D(2026, 9, 13): result.allocations[D(2026, 9, 13)]}))
+    assert more.allocations != result.allocations or more.shortfall > 0
+
+
 def yearly_ledger(**overrides):
     from app.ledger import Sinking
     paydays = [p for p in PAYDAYS if p >= D(2026, 9, 22)]
@@ -234,3 +328,20 @@ def test_saved_up_yearly_payment_is_not_paid_twice():
     assert result.sinking_end[due - timedelta(days=1)] == 3000 * RUB
     assert result.sinking_end[due] == 0
     assert result.buffer_end[due] >= 0
+
+
+def test_money_saved_for_yearly_payments_is_never_spare():
+    from app.ledger import Sinking
+    caps = [(D(2026, 9, 8), 100 * RUB)]
+    plain = yearly_ledger(caps=caps, sinking=[])
+    yearly = yearly_ledger(caps=caps)
+    spare_plain = spare_buffer(plain, run_ledger(plain))
+    result = run_ledger(yearly)
+    spare = spare_buffer(yearly, result)
+    assert spare_plain > 0
+    # The saved part stays in the buffer, the rest is still offered.
+    assert spare <= spare_plain - result.sinking_end[D(2026, 9, 8)]
+    moved = run_ledger(replace(yearly, buffer_out={D(2026, 9, 8): spare},
+                               stored_allocations={D(2026, 9, 8): result.allocations[D(2026, 9, 8)]}))
+    assert moved.allocations == result.allocations
+    assert all(moved.buffer_end[d] >= kept for d, kept in moved.sinking_end.items())

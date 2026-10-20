@@ -310,6 +310,13 @@ def budget_ops(uid: int, mode: str) -> list[BudgetOp]:
                 value = actual.allocations.get(period.start, 0)
                 if period.funded_on <= today and value:
                     ops.append(BudgetOp(period.funded_on, {"buffer": -value, "spending": value}, {}))
+            # «Максимум в день»: card money above the maximum returns to the
+            # buffer; a raised maximum tops the card up from the buffer.
+            for day, value in actual.cap_trims.items():
+                ops.append(BudgetOp(day, {"buffer": value, "spending": -value}, {}))
+            for day, value in inp.cap_topups.items():
+                if day <= today and value:
+                    ops.append(BudgetOp(day, {"buffer": -value, "spending": value}, {}))
     return ops
 
 

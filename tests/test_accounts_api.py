@@ -915,7 +915,7 @@ def test_backup_v11_round_trip_keeps_cards_and_their_history(client):
     before = ok(client.get("/api/accounts"))
     budget = ok(client.get("/api/cashflow"))["available_today"]
     backup = export_user_data(1)
-    assert backup["backup_version"] == 11
+    assert backup["backup_version"] == 12
     assert all(backup["data"][t] for t in ACCOUNT_TABLES)
     ensure_user(2)
     restore_user_data(2, backup)
