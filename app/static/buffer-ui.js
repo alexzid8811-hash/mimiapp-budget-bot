@@ -121,8 +121,14 @@
       return;
     }
     const max = Math.max(0, ...periods.map(p => Number(p.buffer) || 0));
-    const commonDaily = periods.every(p => Number(p.daily) === Number(periods[0].daily));
-    setText("planDaily", commonDaily ? "В день везде " + formatMoney(periods[0].daily) : "Дневной лимит по периодам");
+    // The usual daily rate is said once above the plan; periods show their
+    // own rate only when it differs from it.  On a tie the later periods win:
+    // the current one is the usual odd one out.
+    const dailyCounts = new Map();
+    [...periods].reverse().forEach(p => dailyCounts.set(Number(p.daily), (dailyCounts.get(Number(p.daily)) || 0) + 1));
+    const usualDaily = [...dailyCounts].sort((a, b) => b[1] - a[1])[0][0];
+    const commonDaily = dailyCounts.size === 1;
+    setText("planDaily", (commonDaily ? "В день везде " : "В день обычно ") + formatMoney(usualDaily));
     // Red marks only the three smallest balances ahead; the current period is blue.
     const lowest = new Set(periods.map((p,i)=>({i,b:Number(p.buffer)||0})).filter(x=>x.i>0).sort((a,b)=>a.b-b.b).slice(0,3).map(x=>x.i));
     chart.innerHTML = periods.map((p,i) => `<div class="bar ${i===0?"cur":lowest.has(i)?"low":""}" style="height:${max>0?Math.max(3,Math.max(0,Number(p.buffer))/max*100):3}%" title="${safe(formatDate(p.start)+" — "+formatDate(p.end)+": "+formatMoney(p.buffer))}"></div>`).join("");
@@ -134,32 +140,27 @@
       warning.textContent=text;homeWarning.textContent=text;
       warning.classList.remove("hidden");homeWarning.classList.remove("hidden");
     }
+    // The buffer movement is one signed number: green "+" goes into the
+    // buffer, red "−" is taken from it.
     const movement = p => p.take>0
-      ? ["neg",formatMoney(p.take),"из буфера"]
+      ? ["neg","−"+formatMoney(p.take),"из буфера"]
       : p.put_aside>0
-        ? ["pos",formatMoney(p.put_aside),"в буфер"]
+        ? ["pos","+"+formatMoney(p.put_aside),"в буфер"]
         : ["zero","—","без движения"];
     // The period's own money may fall short of its obligatory payments (a
-    // small advance after the January holidays).  The minus stays, in red,
-    // with a note that the buffer already holds the missing money.
-    const freeInner = p => Number(p.free) < 0
-      ? `<span class="free-short">${formatMoney(p.free)}</span><br><small>недостающее заложено в буфере</small>`
-      : formatMoney(p.free);
-    const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>`;
-    const toCardLine = p => Number(p.to_card) > 0
-      ? `<div><span>На карту</span><b>${toCardInner(p)}</b></div>` : "";
-    // «Максимум в день» and the spare money moved to the piggy bank.
-    const keptInBuffer = p => Math.max(0, Number(p.cap_kept || 0) - Number(p.cap_kept_piggy || 0));
-    const capLines = p => (keptInBuffer(p) > 0.004
-      ? `<div class="pc-cap"><span>Сверх максимума — в буфере</span><b class="num">${formatMoney(keptInBuffer(p))}</b></div>` : "")
-      + (Number(p.cap_kept_piggy) > 0
-        ? `<div class="pc-cap"><span>Сверх максимума — в копилку</span><b class="num">${formatMoney(p.cap_kept_piggy)}</b></div>` : "")
-      + (Number(p.to_piggy) > 0
-        && Number(p.to_piggy) - Number(p.cap_kept_piggy || 0) > 0.004
-        ? `<div class="pc-cap"><span>Из буфера в копилку</span><b class="num">${formatMoney(Number(p.to_piggy) - Number(p.cap_kept_piggy || 0))}</b></div>` : "");
-    // Yearly payments are saved up in equal parts on every payday.
-    const yearlyLine = p => Number(p.yearly_saved) > 0 || Number(p.yearly_put_aside) > 0
-      ? `<div class="pc-foot pc-yearly"><span>Из них на годовые платежи${Number(p.yearly_put_aside) > 0 ? ` (+${formatMoney(p.yearly_put_aside)})` : ""}</span><b class="num">${formatMoney(p.yearly_saved)}</b></div>` : "";
+    // small advance after the January holidays): a short red note under them;
+    // the missing money is already planned in the buffer.
+    const shortNote = p => Number(p.free) < 0
+      ? `<small class="free-short">не хватает ${formatMoney(-Number(p.free))}</small>` : "";
+    const dailyNote = p => Number(p.daily) === usualDaily ? "" : `<small>${formatMoney(p.daily)} в день</small>`;
+    // Money leaving for the piggy bank: the excess over «Максимум в день»
+    // and spare buffer money.  Excess kept in the buffer is already part of
+    // the movement and is not repeated.
+    const toPiggy = p => Math.max(Number(p.to_piggy || 0), Number(p.cap_kept_piggy || 0));
+    // Yearly payments are saved up in equal parts on every payday; the sum
+    // is shown for the current period only.
+    const yearlyNote = (p, current) => current && Number(p.yearly_saved) > 0
+      ? `<small>из них на годовые ${formatMoney(p.yearly_saved)}</small>` : "";
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
     const pastToggle = document.getElementById("bufPastToggle");
@@ -169,25 +170,21 @@
     }
     const shown = [...(showPast ? past : []), ...periods];
     const rowClass = (p, i) => p.past ? "past" : (i === 0 ? "cur" : "");
-    // Cards follow the design: period and movement on top, the payout as its
-    // own block (amount, status, "Изменить" / "Получил ✓"), then where the
-    // money goes, then what stays in the buffer.
-    const payoutBlock = (p, current) => {
-      const head = `${safe(p.kind)}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
-      if (!p.received_editable) {
-        const done = p.past ? '<span class="pc-status done">получено ✓</span>' : "";
-        return `<div class="pc-pay"><div class="pc-pay-top"><div><span>${head}</span><b class="num">${formatMoney(p.received)}</b></div>${done}</div></div>`;
-      }
-      const status = p.income_confirmed ? '<span class="pc-status done">получено ✓</span>'
-        : p.income_pending ? '<span class="pc-status pending">ждём подтверждения</span>'
-          : p.income_overridden ? '<span class="pc-status">изменено</span>' : "";
+    const statusMark = p => p.income_confirmed || (p.past && !p.received_editable)
+      ? '<span class="pc-status done" title="получено">✓</span>'
+      : p.income_pending ? '<span class="pc-status pending">ждём</span>'
+        : p.income_overridden ? '<span class="pc-status">изменено</span>' : "";
+    const payoutActions = (p, current) => {
+      if (!p.received_editable) return "";
       const edit = !current ? "" : `<button class="income-btn" type="button" onclick="editCashflowIncome('${p.override_key}')" aria-label="Изменить полученную сумму">Изменить</button>`;
       const confirm = p.income_pending
         ? `<button class="income-btn accent" type="button" onclick="confirmCashflowIncome('${p.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`
         : "";
-      const actions = edit || confirm ? `<div class="pc-pay-actions${edit && confirm ? " two" : ""}">${edit}${confirm}</div>` : "";
-      return `<div class="pc-pay"><div class="pc-pay-top"><div><span>${head}</span><b class="num">${formatMoney(p.received)}</b></div>${status}</div>${actions}</div>`;
+      return edit || confirm ? `<div class="pc-pay-actions">${confirm}${edit}</div>` : "";
     };
+    // Cards: period and buffer movement on top, then a plain list of
+    // label — amount rows, then what stays in the buffer.
+    const row = (label, value, extra = "") => `<div class="pc-row"><span>${label}</span><b class="num">${value}</b></div>${extra}`;
     const groupTitle = (p, i, j) => {
       if (p.past) return j === 0 ? '<h4 class="pc-group">Прошедшие</h4>' : "";
       if (i === 0) return '<h4 class="pc-group">Сейчас</h4>';
@@ -195,33 +192,32 @@
     };
     cards.innerHTML = shown.map((p,j)=>{
       const i = j - (shown.length - periods.length);
-      const [c,m,shortLabel]=movement(p);
-      const label = c==="pos" ? "положить в буфер" : c==="neg" ? "взять из буфера" : shortLabel;
-      const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : i===0 ? '<span class="pc-chip">сейчас</span>' : "";
-      const flow = `<div class="pc-flow pc-flow3 num">${toCardLine(p)}<div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${freeInner(p)}</b></div></div>`;
-      const footLabel = p.past ? "Остаток буфера" : "Останется в буфере";
-      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}${capLines(p)}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyLine(p)}</article>`;
+      const current = !p.past && i===0;
+      const [c,m,label]=movement(p);
+      const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : current ? '<span class="pc-chip">сейчас</span>' : "";
+      const payLabel = `${p.past || current ? "Пришло" : "Придёт"}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
+      const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.received))}${payoutActions(p,current)}</div>`;
+      const flow = `<div class="pc-flow">${row("Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
+      const footLabel = p.past ? "Осталось в буфере" : "Останется в буфере";
+      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${pay}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyNote(p,current)}</article>`;
     }).join("");
-    // «Сверх максимума» gets its own column, only when the maximum held
-    // anything back in the periods shown.
-    const capColumn = shown.some(p => Number(p.cap_kept) > 0);
-    const heads = ["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту",
-      ...(capColumn ? ["Сверх максимума"] : []),"Движение буфера","Остаток буфера"];
+    const heads = ["Период","Пришло","Обязательные","На карту","Буфер","Остаток"];
     document.getElementById("bufferHead").innerHTML = "<tr>"+heads.map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = shown.map((p,j)=>{
       const i = j - (shown.length - periods.length);
-      const [c,m,label]=movement(p);
-      const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
-      const tail=[formatMoney(p.mandatory),freeInner(p)];
-      const capParts = [
-        ...(Number(p.cap_kept_piggy) > 0 ? [[p.cap_kept_piggy, "в копилку"]] : []),
-        ...(keptInBuffer(p) > 0.004 ? [[keptInBuffer(p), "в буфер"]] : []),
+      const current = !p.past && i===0;
+      const [c,m]=movement(p);
+      const period = `<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><small>${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</small>`;
+      const piggy = toPiggy(p) > 0.004 ? `<small>${formatMoney(toPiggy(p))} в копилку</small>` : "";
+      const cells = [
+        `<td>${period}</td>`,
+        `<td class="num">${receivedMarkup(p,true,current)}</td>`,
+        `<td class="num">${formatMoney(p.mandatory)}${shortNote(p)}</td>`,
+        `<td class="num">${formatMoney(p.to_card)}${dailyNote(p)}</td>`,
+        `<td class="num sep ${c} movement-cell"><span>${m}</span>${piggy}</td>`,
+        `<td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${yearlyNote(p,current)}</td>`,
       ];
-      const capCell = !capColumn ? "" : `<td class="num cap-cell">${capParts.length
-        ? capParts.map(([value, where]) => `<span>${formatMoney(value)}</span><small>${where}</small>`).join("")
-        : '<span class="zero">—</span>'}</td>`;
-      const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>`;
-      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td>${capCell}<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${Number(p.yearly_saved) > 0 ? `<br><small>на годовые ${formatMoney(p.yearly_saved)}</small>` : ""}</td></tr>`;
+      return `<tr class="${rowClass(p,i)}">${cells.join("")}</tr>`;
     }).join("");
   }
 
