@@ -116,9 +116,6 @@
         reason += ` Сверх него в этом периоде в буфере осталось ${formatMoney(kept - toPiggy)}.`;
       }
     }
-    if (Number(flow.buffer_floor || 0) > 0) {
-      reason += ` Минимум буфера — ${formatMoney(flow.buffer_floor)}: эти деньги не идут на карту.`;
-    }
     if (Number(flow.yearly_saved || 0) > 0) {
       reason += ` На годовые платежи накоплено ${formatMoney(flow.yearly_saved)}.`;
     }

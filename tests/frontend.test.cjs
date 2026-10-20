@@ -796,9 +796,8 @@ test('buffer floor is saved from settings and warned about on the buffer page', 
   ]});
   await get('refreshBtn').listeners.click();
   assert.equal(get('bufferFloor').value, 5000);
-  assert.match(get('reserveReason').textContent, /Минимум буфера — 5.000,00.₽/);
-  // The forecast falls below the minimum: said once, the balance is red.
-  assert.match(get('bufferShortfall').textContent, /7 окт. 2026 г. в буфере будет 3.500,00.₽ — меньше минимума 5.000,00.₽/);
+  // The income cannot hold the minimum: said like a shortfall, the balance is red.
+  assert.match(get('bufferShortfall').textContent, /оставить в буфере минимум 5.000,00.₽, к 7 окт. 2026 г. даже без повседневных трат не хватает 1.500,00.₽/);
   assert.equal(get('bufferShortfall').classList.contains('hidden'), false);
   assert.match(get('bufferPeriods').innerHTML, /<td class="num low">3.500,00.₽/);
   get('bufferFloor').value = '7000';

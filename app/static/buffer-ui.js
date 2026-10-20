@@ -93,9 +93,8 @@
       shortfall.textContent = `Даже без повседневных трат не хватает ${formatMoney(data.capital_shortfall)}. Увеличьте стартовый капитал или скорректируйте обязательные платежи.`;
       shortfall.classList.remove("hidden");
     } else if (data.enabled && Number(data.floor_gap || 0) > 0) {
-      // Obligatory payments or a buffer still below the minimum.
-      const floor = Number(data.buffer_floor);
-      shortfall.textContent = `${formatDate(data.floor_gap_date, true)} в буфере будет ${formatMoney(floor - Number(data.floor_gap))} — меньше минимума ${formatMoney(floor)}. Пока буфер не наберёт минимум, на карту идёт меньше.`;
+      // Like the shortfall above, with «Минимум буфера» instead of zero.
+      shortfall.textContent = `Чтобы оплатить обязательные платежи и оставить в буфере минимум ${formatMoney(data.buffer_floor)}, к ${formatDate(data.floor_gap_date, true)} даже без повседневных трат не хватает ${formatMoney(data.floor_gap)}. Увеличьте стартовый капитал, скорректируйте обязательные платежи или минимум.`;
       shortfall.classList.remove("hidden");
     } else {
       shortfall.classList.add("hidden");

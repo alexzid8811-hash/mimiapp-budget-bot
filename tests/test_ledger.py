@@ -382,6 +382,23 @@ def test_buffer_floor_is_never_given_to_the_card():
     assert result.buffer_end[D(2026, 9, 13)] == 400 * RUB
 
 
+def test_buffer_never_goes_below_the_floor_after_obligatory_payments():
+    # A big salary on the 7th, a small advance and the rent on the 22nd: with
+    # a minimum of 2 000 ₽ the buffer bottoms out at 2 000 ₽ instead of zero.
+    paydays = [D(2026, 9, 22), D(2026, 10, 7), D(2026, 10, 22), D(2026, 11, 6), D(2026, 11, 20),
+               D(2026, 12, 7), D(2026, 12, 22), D(2027, 1, 7), D(2027, 1, 22), D(2027, 2, 6), D(2027, 2, 20)]
+    values = dict(
+        start=D(2026, 10, 7), horizon=D(2026, 12, 7), data_end=D(2027, 2, 7), months=2, paydays=paydays,
+        buffer_in={p: (58000 if p.day == 7 else 43000) * RUB for p in paydays},
+        bills_out={p: (15400 if p.day == 7 else 27700) * RUB for p in paydays},
+    )
+    plain = run_ledger(ledger(D(2026, 10, 7), **values))
+    result = run_ledger(ledger(D(2026, 10, 7), buffer_floor=2000 * RUB, **values))
+    assert min(plain.buffer_end.values()) < 2000 * RUB
+    assert 2000 * RUB <= min(result.buffer_end.values()) < 2001 * RUB
+    assert result.shortfall == 0
+
+
 def test_buffer_floor_holds_through_weak_periods():
     # 30 000 ₽ now, nothing on 7 October, 30 000 ₽ on 22 October.
     values = dict(start=D(2026, 9, 22), start_capital=0, months=2, data_end=D(2026, 12, 1),

@@ -629,8 +629,8 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
          for d, v in sorted(inp.buffer_in.items()) if d > today and v > 0),
         None,
     )
-    # The lowest buffer of the forecast below «Минимум буфера»: obligatory
-    # payments are paid from the buffer even when they take it below.
+    # «Минимум буфера» the buffer cannot hold: even without card spending
+    # the income does not cover the obligatory payments plus the minimum.
     floor_gap, floor_gap_date = 0, None
     if inp.buffer_floor:
         low_day = min(daterange(today, inp.data_end), key=lambda d: result.buffer_end[d])
@@ -641,9 +641,16 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             f"Буфер не покрывает обязательные платежи: к {result.shortfall_date:%d.%m.%Y} "
             f"не хватает {amount(result.shortfall):.2f}. Дневной лимит новых периодов снижен до нуля."
         )
-    else:
+    elif floor_gap > 0:
         reason = (
-            "Буфер держит обязательные платежи на их даты и деньги для будущих слабых периодов. "
+            f"Буфер не покрывает обязательные платежи и минимум {amount(inp.buffer_floor):.2f}: "
+            f"к {floor_gap_date:%d.%m.%Y} не хватает {amount(floor_gap):.2f}. "
+            "Дневной лимит новых периодов снижен до нуля."
+        )
+    else:
+        floor_text = f", минимум {amount(inp.buffer_floor):.2f}" if inp.buffer_floor else ""
+        reason = (
+            f"Буфер держит обязательные платежи на их даты{floor_text} и деньги для будущих слабых периодов. "
             "Он не входит в «можно сегодня» и не покрывает перерасход."
         )
 
