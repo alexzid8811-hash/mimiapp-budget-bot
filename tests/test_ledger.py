@@ -193,3 +193,44 @@ def test_payday_money_is_not_spendable_before_next_day(day):
     assert result.today_limit == 0
     if day == D(2026, 9, 22):
         assert result.tomorrow_limit > 0
+
+
+def yearly_ledger(**overrides):
+    from app.ledger import Sinking
+    paydays = [p for p in PAYDAYS if p >= D(2026, 9, 22)]
+    values = dict(
+        start_capital=30000 * RUB, paydays=PAYDAYS,
+        buffer_in={p: 30000 * RUB for p in paydays if p <= D(2026, 11, 8)},
+        sinking=[Sinking(D(2027, 1, 10), 9000 * RUB, D(2026, 9, 8))],
+    )
+    values.update(overrides)
+    return ledger(D(2026, 9, 8), **values)
+
+
+def test_yearly_payment_is_saved_up_in_equal_parts_on_every_funding_day():
+    result = run_ledger(yearly_ledger())
+    # 8 Sep (the start) and the paydays of 22 Sep … 7 Jan: nine parts.
+    funding = [D(2026, 9, 8), D(2026, 9, 22), D(2026, 10, 7), D(2026, 10, 22), D(2026, 11, 6)]
+    assert result.sinking_in == {day: 1000 * RUB for day in funding + [
+        D(2026, 11, 20), D(2026, 12, 7), D(2026, 12, 22), D(2027, 1, 7)]}
+    assert result.sinking_end[D(2026, 11, 8)] == 5000 * RUB
+    # Every card period gives up the same 1 000 ₽ part.
+    plain = run_ledger(yearly_ledger(sinking=[]))
+    for period in result.periods:
+        given_up = plain.allocations[period.start] - result.allocations[period.start]
+        assert abs(given_up - 1000 * RUB) <= period.days
+    # The buffer always holds at least what is saved up.
+    assert all(result.buffer_end[d] >= kept for d, kept in result.sinking_end.items())
+
+
+def test_saved_up_yearly_payment_is_not_paid_twice():
+    from app.ledger import Sinking
+    # Due inside the forecast: held by the parts, not again on its date.
+    due = D(2026, 10, 30)
+    inp = yearly_ledger(sinking=[Sinking(due, 3000 * RUB, D(2026, 9, 8))], bills_out={due: 3000 * RUB})
+    result = run_ledger(inp)
+    assert result.sinking_in == {D(2026, 9, 8): 750 * RUB, D(2026, 9, 22): 750 * RUB,
+                                 D(2026, 10, 7): 750 * RUB, D(2026, 10, 22): 750 * RUB}
+    assert result.sinking_end[due - timedelta(days=1)] == 3000 * RUB
+    assert result.sinking_end[due] == 0
+    assert result.buffer_end[due] >= 0

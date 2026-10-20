@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from . import clock, planning
 from .budget import add_months
 from .db import connect
-from .ledger import LedgerInput, buffer_rows, run_ledger
+from .ledger import LedgerInput, Sinking, buffer_rows, run_ledger
 from .money import amount, cents
 
 MARGIN = timedelta(days=62)
@@ -98,7 +98,10 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
                 confirm_from: str | None = None) -> tuple[LedgerInput, dict]:
     horizon = add_months(today, months)
     data_end = add_months(horizon, months)
-    schedule = payday_schedule(uid, start - MARGIN, data_end + MARGIN)
+    # Yearly payments are saved up for a year ahead, so their dates and the
+    # paydays before them are needed beyond the forecast.
+    sinking_end = add_months(data_end, 12)
+    schedule = payday_schedule(uid, start - MARGIN, sinking_end + MARGIN)
     paydays = sorted(schedule["paydays"])
     overrides, confirmed = income_overrides(uid, set(paydays))
     waiting = unconfirmed_payday(paydays, confirmed, start=start, today=today, confirm_from=confirm_from)
@@ -202,11 +205,18 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         }
 
     unpaid: dict[date, int] = {}
-    for event in planning.bill_events(uid, start, data_end):
+    sinking: list[Sinking] = []
+    since = planning.yearly_bill_since(uid, start, sinking_end)
+    for event in planning.bill_events(uid, start, sinking_end):
         if event.get("paid"):
             continue
         due = date.fromisoformat(event["due_date"])
         value = cents(event["amount"])
+        key = (event["id"], event["due_date"])
+        if key in since and due > today:
+            sinking.append(Sinking(due, value, max(since[key], add_months(due, -12))))
+        if due > data_end:
+            continue
         _add(bills_out, due, value)
         _add(unpaid, due, value)
         if due <= today:
@@ -216,7 +226,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         start=start, today=today, horizon=horizon, data_end=data_end, months=months,
         start_capital=cents(capital), paydays=paydays, buffer_in=buffer_in,
         bills_out=bills_out, card_in=card_in, card_cover=card_cover, card_out=card_out,
-        card_to_piggy=card_to_piggy, stored_allocations=stored,
+        card_to_piggy=card_to_piggy, stored_allocations=stored, sinking=sinking,
     )
     extras = {
         "titles": {day: ", ".join(item["titles"]) or "Выплата" for day, item in schedule["paydays"].items()},
@@ -412,6 +422,10 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "buffer_start": amount(row.buffer_start),
             "buffer": amount(row.buffer_end),
             "put_aside": amount(max(0, row.buffer_end - row.buffer_start)),
+            # Kept in this period for yearly payments, and the part of the
+            # buffer at its end that is saved up for them.
+            "yearly_put_aside": amount(sum(v for d, v in result.sinking_in.items() if row.start <= d <= row.end)),
+            "yearly_saved": amount(result.sinking_end.get(row.end, 0)),
             "take": amount(max(0, row.buffer_start - row.buffer_end)),
             "shortfall": amount(max(0, -row.lowest)),
             "current": current,
@@ -470,6 +484,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "buffer_balance": amount(buffer_now),
         "pending_card_allocation": amount(pending),
         "reserved_mandatory": amount(reserved),
+        "yearly_saved": amount(actual.sinking_end.get(today, 0)),
         "current_cash": amount(card_now + buffer_now + pending + reserved),
         "available_cash": amount(card_now + buffer_now + pending),
         "piggy_bank_balance": piggy_balance(uid),

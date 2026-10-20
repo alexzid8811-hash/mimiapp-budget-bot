@@ -134,6 +134,9 @@
     const toCardInner = p => `${formatMoney(p.to_card)}<br><small>${formatMoney(p.daily)} в день</small>`;
     const toCardLine = p => Number(p.to_card) > 0
       ? `<div><span>На карту</span><b>${toCardInner(p)}</b></div>` : "";
+    // Yearly payments are saved up in equal parts on every payday.
+    const yearlyLine = p => Number(p.yearly_saved) > 0 || Number(p.yearly_put_aside) > 0
+      ? `<div class="pc-foot pc-yearly"><span>Из них на годовые платежи${Number(p.yearly_put_aside) > 0 ? ` (+${formatMoney(p.yearly_put_aside)})` : ""}</span><b class="num">${formatMoney(p.yearly_saved)}</b></div>` : "";
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
     const pastToggle = document.getElementById("bufPastToggle");
@@ -174,7 +177,7 @@
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : i===0 ? '<span class="pc-chip">сейчас</span>' : "";
       const flow = `<div class="pc-flow pc-flow3 num">${toCardLine(p)}<div><span>Обязательные</span><b>${formatMoney(p.mandatory)}</b></div><div><span>Свободно</span><b>${formatMoney(p.free)}</b></div></div>`;
       const footLabel = p.past ? "Остаток буфера" : "Останется в буфере";
-      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div></article>`;
+      return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${payoutBlock(p,!p.past&&i===0)}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyLine(p)}</article>`;
     }).join("");
     document.getElementById("bufferHead").innerHTML = "<tr>"+["Период и выплата","Дней","Деньги периода","Обязательные","Свободно","На карту","Движение буфера","Остаток буфера"].map(t=>`<th>${t}</th>`).join("")+"</tr>";
     body.innerHTML = shown.map((p,j)=>{
@@ -183,7 +186,7 @@
       const cells=[`<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><br><small>${safe(p.kind)}</small>`,Number(p.days)];
       const tail=[formatMoney(p.mandatory),formatMoney(p.free)];
       const toCardCell=`<strong>${formatMoney(p.to_card)}</strong><br><small>${formatMoney(p.daily)} в день</small>`;
-      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}</td></tr>`;
+      return `<tr class="${rowClass(p,i)}">${cells.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${receivedMarkup(p,true,!p.past&&i===0)}</td>${tail.map(value=>`<td class="num">${value}</td>`).join("")}<td class="num">${toCardCell}</td><td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td><td class="num ${p.buffer<max*.1?"low":""}">${formatMoney(p.buffer)}${Number(p.yearly_saved) > 0 ? `<br><small>на годовые ${formatMoney(p.yearly_saved)}</small>` : ""}</td></tr>`;
     }).join("");
   }
 

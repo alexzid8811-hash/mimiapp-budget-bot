@@ -273,6 +273,24 @@ def bill_events(uid, start, end):
     return sorted(result, key=lambda e: (e['due_date'], e['id']))
 
 
+def yearly_bill_since(uid, start, end):
+    """From which day each yearly occurrence in [start, end] has been planned.
+
+    Keyed by ``(rule id, due date)``: the first day of the unbroken run of
+    plan versions in which the rule is an active yearly payment, never
+    earlier than ``start``.  Saving up for the payment starts on that day.
+    """
+    since, result = {}, {}
+    for left, right, conditions in condition_segments(uid, start, end):
+        yearly = {r['id']: r for r in conditions['bill_rules']
+                  if r['active'] and r.get('month_of_year') and not r.get('once_date')}
+        since = {rid: since.get(rid, left) for rid in yearly}
+        for rid, rule in yearly.items():
+            for day in bill_due_dates(rule, left, right):
+                result[(rid, day.isoformat())] = since[rid]
+    return result
+
+
 def mandatory_map(uid, start, end):
     totals = {}
     for event in bill_events(uid, start, end):
