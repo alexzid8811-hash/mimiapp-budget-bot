@@ -185,6 +185,7 @@ h1,h2,h3,p{margin:0}
 .plan-table .pos{color:var(--income);font-weight:650} .plan-table .neg{color:var(--expense);font-weight:650} .plan-table .zero{color:var(--muted)}
 .plan-table .sep{border-left:1px solid var(--line)}
 .plan-table td.low{color:var(--expense);font-weight:650}
+.free-short{color:var(--expense);font-weight:650}
 @media (min-width:720px){
   .plan-cards{display:none}
   .plan-table-wrap{display:block}
