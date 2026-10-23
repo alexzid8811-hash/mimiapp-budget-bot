@@ -936,3 +936,52 @@ def test_plan_lists_closed_periods_and_explains_daily_amount(client, monkeypatch
         # The daily amount spreads the card money plus the carry-over.
         days = row['card_period']['days']
         assert row['daily'] == pytest.approx((row['to_card'] + row['carry_in']) / days, abs=0.01 * days)
+
+
+def category_id(client, title):
+    return next(c['id'] for c in client.get('/api/bootstrap').json()['categories'] if c['title'] == title)
+
+
+@pytest.mark.parametrize('move', [True, False])
+def test_bill_of_a_deleted_category_can_still_be_marked_paid(client, move):
+    home, other = category_id(client, 'Дом'), category_id(client, 'Другое')
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Квартплата', 'amount': 500, 'day_of_month': 20, 'category_id': home,
+        'effective_date': '2026-08-01'}).json()
+    # A later edit: the August payment is planned from the older version.
+    edited = {'title': 'Квартплата', 'amount': 600, 'day_of_month': 20, 'category_id': home}
+    assert client.put(f"/api/bill-rules/{bill['id']}", json=edited).status_code == 200
+    query = f'?move_to={other}' if move else ''
+    assert client.delete(f'/api/categories/{home}{query}').status_code == 200
+    expected = other if move else None
+    planned = next(e for e in client.get('/api/plan').json() if e['id'] == bill['id'])
+    assert planned['category_id'] == expected
+    for due in ('2026-09-20', '2026-08-20'):
+        paid = client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': due})
+        assert paid.status_code == 200, (due, paid.text)
+        assert paid.json()['category_id'] == expected
+
+
+def test_startup_repairs_plan_versions_with_a_deleted_category_and_keeps_a_copy(client, tmp_path):
+    home, other = category_id(client, 'Дом'), category_id(client, 'Другое')
+    bill = client.post('/api/bill-rules', json={
+        'title': 'Квартплата', 'amount': 500, 'day_of_month': 20, 'category_id': home}).json()
+    # What deleting a category did before the fix: only the live rules moved.
+    with connect() as con:
+        con.execute('UPDATE bill_rules SET category_id=? WHERE category_id=?', (other, home))
+        con.execute('DELETE FROM categories WHERE id=?', (home,))
+    # Even before the repair a payment is not refused.
+    paid = client.post(f"/api/bills/{bill['id']}/pay", json={'due_date': '2026-09-20'})
+    assert paid.status_code == 200 and paid.json()['category_id'] == other
+    client.delete(f"/api/transactions/{paid.json()['id']}")
+
+    init_db()
+    planned = next(e for e in client.get('/api/plan').json() if e['id'] == bill['id'])
+    assert planned['category_id'] == other and planned['category_title'] == 'Другое'
+    copies = list((tmp_path / 'backups').glob('*-before-repair/1.sqlite3'))
+    assert len(copies) == 1
+    with sqlite3.connect(copies[0]) as copy:
+        snapshots = [row[0] for row in copy.execute('SELECT snapshot FROM plan_history')]
+    assert any(f'"category_id": {home}' in snapshot for snapshot in snapshots)
+    init_db()
+    assert len(list((tmp_path / 'backups').glob('*/1.sqlite3'))) == 1

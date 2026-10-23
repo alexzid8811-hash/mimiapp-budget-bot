@@ -1,11 +1,16 @@
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import clock
+from app.backup import export_user_data, restore_user_data
 from app.cashflow_app import app, cashflow_snapshot, piggy_bank_balance
-from app.db import connect, ensure_user, init_db
+from app.db import connect, ensure_user, init_db, user_scope
 
 TODAY = date(2026, 9, 13)
 
@@ -403,3 +408,62 @@ def test_morning_report_on_the_first_day_of_a_period_has_no_daily_change(client,
     monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 24))
     report = pending_morning_reports(datetime(2026, 9, 24, 12, 0))[0]
     assert not report["new_period"] and report["daily_change"] == round(1200 / 14 - 80, 2)
+
+
+def test_parallel_calculations_deposit_the_excess_once(client):
+    """The home screen asks for several numbers at once (loadAll): each of
+    them calculates the budget, and the day's excess used to be deposited by
+    two of them."""
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+
+    def calculate(barrier):
+        with user_scope(1):
+            barrier.wait()
+            cashflow_snapshot(1)
+
+    for _ in range(10):
+        with connect() as con:
+            con.execute("DELETE FROM piggy_bank_movements WHERE purpose='cap_excess'")
+        barrier = threading.Barrier(4)
+        with ThreadPoolExecutor(4) as pool:
+            list(pool.map(calculate, [barrier] * 4))
+        assert piggy_bank_balance(1) == 200
+
+
+def test_startup_merges_a_doubled_excess_and_keeps_a_copy(client, tmp_path):
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    assert cashflow_snapshot(1)["piggy_bank_balance"] == 200
+    # A database from before the fix: no index, the day's excess deposited twice.
+    with connect() as con:
+        con.execute("DROP INDEX ux_piggy_cap_excess")
+        con.execute(
+            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
+            "SELECT user_id,direction,amount,movement_date,note,source,purpose FROM piggy_bank_movements "
+            "WHERE purpose='cap_excess'"
+        )
+    assert piggy_bank_balance(1) == 400
+
+    init_db()
+    assert piggy_bank_balance(1) == 200
+    assert cashflow_snapshot(1)["piggy_bank_balance"] == 200
+    with connect() as con:
+        assert con.execute("SELECT 1 FROM sqlite_master WHERE name='ux_piggy_cap_excess'").fetchone()
+    # The file as it was before the repair, for a rollback.
+    copies = list((tmp_path / "backups").glob("*-before-repair/1.sqlite3"))
+    assert len(copies) == 1
+    with closing(sqlite3.connect(copies[0])) as copy:
+        assert copy.execute("SELECT COUNT(*) FROM piggy_bank_movements WHERE purpose='cap_excess'").fetchone()[0] == 2
+    # Nothing left to repair: no second copy.
+    init_db()
+    assert len(list((tmp_path / "backups").glob("*/1.sqlite3"))) == 1
+
+
+def test_restoring_a_copy_with_a_doubled_excess_keeps_one_deposit(client):
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    cashflow_snapshot(1)
+    payload = export_user_data(1)
+    movements = payload["data"]["piggy_bank_movements"]
+    movements.append({**movements[0], "id": max(m["id"] for m in movements) + 1})
+    restore_user_data(1, payload)
+    assert piggy_bank_balance(1) == 200
+    assert cashflow_snapshot(1)["piggy_bank_balance"] == 200

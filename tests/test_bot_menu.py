@@ -1,6 +1,7 @@
 """The quick menu of the bot: the same numbers as the home screen, and the
 existing bot behaviour (/start, morning reports) kept as it was."""
 import asyncio
+import sqlite3
 from datetime import date, datetime
 from types import SimpleNamespace
 
@@ -477,3 +478,86 @@ def test_morning_report_on_the_first_day_of_a_period_tells_where_the_leftover_we
     assert "Остаток" not in first_day_report(carry=0.0, carry_piggy=0.0)
     # Any other day keeps the change.
     assert "Изменение дневной суммы: +14,93 ₽" in first_day_report(new_period=False, daily_change=14.93)
+
+
+def run_morning_reports(monkeypatch, reports, send_message, record=None):
+    recorded = []
+    monkeypatch.setattr(bot, "pending_morning_reports", lambda now: reports)
+    monkeypatch.setattr(bot, "morning_report_text", lambda report: "Отчёт")
+    monkeypatch.setattr(bot, "record_morning_report", record or recorded.append)
+    application = SimpleNamespace(bot=SimpleNamespace(send_message=send_message))
+    asyncio.run(bot.send_morning_reports(application))
+    return recorded
+
+
+def test_undeliverable_morning_report_is_not_repeated_every_minute(monkeypatch):
+    from telegram.error import BadRequest, Forbidden, NetworkError
+
+    errors = {5: Forbidden("Forbidden: bot was blocked by the user"), 6: BadRequest("Chat not found"),
+              7: NetworkError("Timed out")}
+
+    async def send_message(chat_id, **kwargs):
+        raise errors[chat_id]
+
+    recorded = run_morning_reports(monkeypatch, [{"user_id": 5}, {"user_id": 6}, {"user_id": 7}], send_message)
+    # Blocked or gone: done for today.  A network error: tried again next minute.
+    assert [report["user_id"] for report in recorded] == [5, 6]
+
+
+def test_failed_record_of_one_report_does_not_stop_the_others(monkeypatch):
+    sent = []
+
+    async def send_message(chat_id, **kwargs):
+        sent.append(chat_id)
+
+    def record(report):
+        if report["user_id"] == 5:
+            raise sqlite3.OperationalError("database is locked")
+
+    run_morning_reports(monkeypatch, [{"user_id": 5}, {"user_id": 6}], send_message, record)
+    assert sent == [5, 6]
+
+
+def test_reminder_loop_keeps_running_after_a_failure(monkeypatch):
+    class Stop(BaseException):
+        pass
+
+    calls = []
+
+    async def send_morning_reports(application):
+        calls.append(application)
+        if len(calls) == 1:
+            raise sqlite3.DatabaseError("file is not a database")
+        if len(calls) == 3:
+            raise Stop
+
+    monkeypatch.setattr(bot, "send_morning_reports", send_morning_reports)
+    monkeypatch.setattr(bot, "REMINDER_CHECK_SECONDS", 0)
+    with pytest.raises(Stop):
+        asyncio.run(bot.reminder_loop("app"))
+    assert len(calls) == 3
+
+
+def test_one_broken_user_file_does_not_hold_back_the_other_reports(tmp_path, monkeypatch):
+    from app.morning_reports import pending_morning_reports
+
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "budget.sqlite3"))
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 15))
+    monkeypatch.setattr("app.russian_calendar._remote_year", lambda _: None)
+    init_db()
+    for uid in (1, 2, 3):
+        ensure_user(uid)
+    user_db_path(2).write_bytes(b"not a database" * 100)
+    token = set_current_user(None)  # like the bot: no ambient user
+    try:
+        reports = pending_morning_reports(datetime(2026, 9, 15, 12, 0))
+    finally:
+        reset_current_user(token)
+    assert [report["user_id"] for report in reports] == [1, 3]
+
+
+def test_long_morning_report_fits_one_telegram_message():
+    expenses = [{"title": "Продукты на неделю, бытовая химия и корм для кота " * 4, "amount": 350.0}] * 40
+    text = first_day_report(expenses=expenses, spent_total=14000.0)
+    assert len(text) <= 4096
+    assert "… и ещё 15 на 5 250,00 ₽" in text

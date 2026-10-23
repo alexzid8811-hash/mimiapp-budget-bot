@@ -1,11 +1,14 @@
 """Data for a once-a-day Telegram summary of the personal budget."""
 from __future__ import annotations
 
+import logging
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 
 from . import engine, planning
 from .db import all_user_ids, connect, user_scope
+
+logger = logging.getLogger(__name__)
 
 
 def _next_rule_due_date(day_of_month: int, today: date) -> date:
@@ -87,8 +90,13 @@ def pending_morning_reports(now: datetime) -> list[dict]:
     reports: list[dict] = []
     for user_id in all_user_ids():
         # One user at a time, each inside the scope of their own database.
-        with user_scope(user_id):
-            report = _pending_report(user_id, now)
+        # A failure with one user's file must not hold back everybody else.
+        try:
+            with user_scope(user_id):
+                report = _pending_report(user_id, now)
+        except Exception:
+            logger.exception("Не удалось подготовить утренний отчёт пользователю %s", user_id)
+            continue
         if report is not None:
             reports.append(report)
     return reports

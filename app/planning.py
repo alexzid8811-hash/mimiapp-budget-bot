@@ -77,6 +77,19 @@ def change_conditions(uid, effective_date=None, *, table=None, record_id=None, p
                     (uid, effective.isoformat()))
 
 
+def move_bill_category(con, uid, old, new):
+    """Bills of category ``old`` move to ``new`` (None: no category) in every
+    version of the plan too: bills are planned from the versions, and one
+    left with a deleted category could not be marked paid."""
+    for row in con.execute('SELECT id,snapshot FROM plan_history WHERE user_id=?', (uid,)).fetchall():
+        snapshot = json.loads(row['snapshot'])
+        bills = [bill for bill in snapshot.get('bill_rules', []) if bill.get('category_id') == old]
+        for bill in bills:
+            bill['category_id'] = new
+        if bills:
+            con.execute('UPDATE plan_history SET snapshot=? WHERE id=?', (json.dumps(snapshot), row['id']))
+
+
 def condition_segments(uid, start, end):
     if start > end:
         return []

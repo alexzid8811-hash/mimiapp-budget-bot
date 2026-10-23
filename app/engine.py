@@ -462,13 +462,24 @@ def sync_cap_piggy(uid: int, start: date, today: date, moved: dict[date, int]) -
     """Keep the piggy-bank deposits of «избыток в копилку» equal to what the
     ledger moved through today (one deposit per day).  They follow the
     budget: an edited expense or a new start changes them."""
+    window = (uid, start.isoformat(), today.isoformat())
     with connect() as con:
+        if not any(v > 0 for d, v in moved.items() if start <= d <= today) and not con.execute(
+            "SELECT 1 FROM piggy_bank_movements WHERE user_id=? AND purpose='cap_excess' "
+            "AND movement_date BETWEEN ? AND ? LIMIT 1",
+            window,
+        ).fetchone():
+            return
+        # One calculation at a time: the home screen asks for several numbers
+        # at once, and two parallel calculations would both find no deposit
+        # for the day and both make it.
+        con.execute("BEGIN IMMEDIATE")
         existing = {
             date.fromisoformat(r["movement_date"]): (r["id"], cents(r["amount"]))
             for r in con.execute(
                 "SELECT id,movement_date,amount FROM piggy_bank_movements WHERE user_id=? "
                 "AND purpose='cap_excess' AND movement_date BETWEEN ? AND ?",
-                (uid, start.isoformat(), today.isoformat()),
+                window,
             )
         }
         for day in set(existing) | {d for d, v in moved.items() if start <= d <= today and v > 0}:

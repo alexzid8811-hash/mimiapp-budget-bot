@@ -111,10 +111,14 @@ def one(sql: str, params: tuple = ()) -> dict | None:
         return dict(r) if r else None
 
 
-def require_category(con, uid: int, category_id: int | None) -> None:
-    if category_id is not None and not con.execute(
+def category_exists(con, uid: int, category_id: int | None) -> bool:
+    return category_id is not None and con.execute(
         "SELECT 1 FROM categories WHERE id=? AND user_id=?", (category_id, uid)
-    ).fetchone():
+    ).fetchone() is not None
+
+
+def require_category(con, uid: int, category_id: int | None) -> None:
+    if category_id is not None and not category_exists(con, uid, category_id):
         raise HTTPException(422, "Категория не найдена")
 
 
@@ -466,16 +470,22 @@ def pay_bill(bill_id: int, payload: BillPaymentIn, user: TelegramUser = Depends(
         raise HTTPException(422, "На эту дату обязательный платёж не запланирован")
     try:
         with connect() as con:
-            require_category(con, uid, event.get("category_id"))
             account_id = bill_account(con, uid, payload)
             rule = con.execute(
-                "SELECT title,credit_account_id FROM bill_rules WHERE id=? AND user_id=?", (bill_id, uid)
+                "SELECT title,credit_account_id,category_id FROM bill_rules WHERE id=? AND user_id=?", (bill_id, uid)
             ).fetchone()
+            # A plan version may still name a category deleted since: the
+            # rule's current category then, or none, never a refusal.
+            category_id = next(
+                (c for c in (event.get("category_id"), rule["category_id"] if rule else None)
+                 if category_exists(con, uid, c)),
+                None,
+            )
             cur = con.execute(
                 "INSERT INTO transactions(user_id,type,amount,tx_date,category_id,note,bill_rule_id,bill_due_date,"
                 "bill_planned_amount,account_id) VALUES(?, 'expense', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    uid, event["amount"], clock.today().isoformat(), event.get("category_id"),
+                    uid, event["amount"], clock.today().isoformat(), category_id,
                     event["title"], bill_id, payload.due_date.isoformat(), event["amount"], account_id,
                 ),
             )
@@ -723,6 +733,7 @@ def delete_category(
                 f"UPDATE {table} SET category_id=? WHERE category_id=? AND user_id=?",
                 (move_to, category_id, uid),
             )
+        planning.move_bill_category(con, uid, category_id, move_to)
         con.execute("DELETE FROM categories WHERE id=? AND user_id=?", (category_id, uid))
     return {"ok": True}
 
