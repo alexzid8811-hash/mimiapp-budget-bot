@@ -446,3 +446,34 @@ def test_only_menu_buttons_in_private_chats_reach_the_menu_handler(monkeypatch):
     assert not menu.check_update(update(bot.BTN_TODAY, edited=True))
     commands = {next(iter(h.commands)) for h in handlers if hasattr(h, "commands")}
     assert commands == {"start", "menu"}
+
+
+def first_day_report(**overrides):
+    report = {
+        "user_id": 1, "yesterday": date(2026, 10, 22), "expenses": [], "spent_total": 0.0,
+        "period_days_left": 15, "period_remaining": 27000.0, "daily_amount": 1800.0, "daily_limit": 1800.0,
+        "daily_change": None, "new_period": True, "carry": 197.4, "carry_piggy": 197.4, "carry_buffer": 0.0,
+        "buffer_balance": 10265.59, "piggy_balance": 57635.33, "nearest_due_date": None,
+    }
+    report.update(overrides)
+    return bot.morning_report_text(report)
+
+
+def test_morning_report_on_the_first_day_of_a_period_tells_where_the_leftover_went():
+    text = first_day_report()
+    assert "Изменение дневной суммы" not in text
+    assert "Сегодня начался новый период.\n" in text
+    assert "Остаток прошлого периода 197,40 ₽ ушёл в копилку: это сверх максимума в день." in text
+    assert "Остаток прошлого периода 197,40 ₽ ушёл в буфер" in first_day_report(carry_piggy=0.0, carry_buffer=197.4)
+    assert ("Остаток прошлого периода 500,00 ₽: 300,00 ₽ добавлены к новому периоду, 200,00 ₽ ушли в копилку"
+            in first_day_report(carry=500.0, carry_piggy=200.0))
+    assert ("Остаток прошлого периода 500,00 ₽ добавлен к новому периоду."
+            in first_day_report(carry=500.0, carry_piggy=0.0))
+    assert ("Перерасход прошлого периода 300,00 ₽ вычтен из нового периода."
+            in first_day_report(carry=-300.0, carry_piggy=0.0))
+    # Before «Получил ✓» the maximum may still take part of the leftover.
+    assert "Остаток прошлого периода: 197,40 ₽." in first_day_report(payday_waiting="2026-10-22")
+    # Spent to the kopeck: only the new period.
+    assert "Остаток" not in first_day_report(carry=0.0, carry_piggy=0.0)
+    # Any other day keeps the change.
+    assert "Изменение дневной суммы: +14,93 ₽" in first_day_report(new_period=False, daily_change=14.93)

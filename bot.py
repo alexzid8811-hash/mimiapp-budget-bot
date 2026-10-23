@@ -253,6 +253,31 @@ def accounts_lines(summary: dict | None) -> list[str]:
     return lines
 
 
+def new_period_lines(report: dict) -> list[str]:
+    """The first morning of a card period: what happened to the money left
+    from the previous period."""
+    lines = ["Сегодня начался новый период."]
+    carry = report["carry"]
+    if carry < 0:
+        lines.append(f"Перерасход прошлого периода {money(-carry)} ₽ вычтен из нового периода.")
+    elif carry > 0 and report.get("payday_waiting"):
+        # Until the payday is confirmed the new period has no money of its
+        # own, and the daily maximum may still take part of the leftover.
+        lines.append(f"Остаток прошлого периода: {money(carry)} ₽.")
+    elif carry > 0:
+        away, where = ((report["carry_piggy"], "в копилку") if report["carry_piggy"] > 0
+                       else (report["carry_buffer"], "в буфер"))
+        kept = round(carry - away, 2)
+        if away <= 0:
+            lines.append(f"Остаток прошлого периода {money(carry)} ₽ добавлен к новому периоду.")
+        elif kept <= 0:
+            lines.append(f"Остаток прошлого периода {money(carry)} ₽ ушёл {where}: это сверх максимума в день.")
+        else:
+            lines.append(f"Остаток прошлого периода {money(carry)} ₽: {money(kept)} ₽ добавлены к новому "
+                         f"периоду, {money(away)} ₽ ушли {where} — это сверх максимума в день.")
+    return lines
+
+
 def morning_report_text(report: dict) -> str:
     expenses = "\n".join(f"• {item['title']} — {money(item['amount'])} ₽" for item in report["expenses"])
     spending = f"Вчера потрачено: {money(report['spent_total'])} ₽"
@@ -277,7 +302,7 @@ def morning_report_text(report: dict) -> str:
         "", spending, "",
         f"До конца периода: {report['period_days_left']} дн. · осталось {money(report['period_remaining'])} ₽",
         f"На день сегодня: {money(report['daily_amount'])} ₽",
-        f"Изменение дневной суммы: {change}",
+        *(new_period_lines(report) if report.get("new_period") else [f"Изменение дневной суммы: {change}"]),
         "", f"Буфер: {money(report['buffer_balance'])} ₽",
         f"Копилка: {money(report['piggy_balance'])} ₽",
     ]

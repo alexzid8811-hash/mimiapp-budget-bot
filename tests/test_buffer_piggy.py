@@ -379,3 +379,27 @@ def test_leftover_moved_to_piggy_is_not_taken_from_the_next_periods_card_money(c
         assert row["buffer"] == round(
             row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"]
             - row["cap_from_card"], 2)
+
+
+def test_morning_report_on_the_first_day_of_a_period_has_no_daily_change(client, monkeypatch):
+    from datetime import datetime
+
+    from app.morning_reports import pending_morning_reports, record_morning_report
+    from bot import morning_report_text
+
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 22))
+    record_morning_report(pending_morning_reports(datetime(2026, 9, 22, 12, 0))[0])
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 23))
+    response = client.put("/api/cashflow/income-overrides/2026-09-23", json={"amount": 100000, "confirmed": True})
+    assert response.status_code == 200
+    report = pending_morning_reports(datetime(2026, 9, 23, 12, 0))[0]
+    assert report["new_period"] and report["daily_change"] is None
+    assert report["carry"] == report["carry_piggy"] == 800
+    assert "Остаток прошлого периода 800,00 ₽ ушёл в копилку" in morning_report_text(report)
+    # The next morning the change is back: nothing spent on the 23rd,
+    # 1 200 ₽ for the 14 days left.
+    record_morning_report(report)
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 24))
+    report = pending_morning_reports(datetime(2026, 9, 24, 12, 0))[0]
+    assert not report["new_period"] and report["daily_change"] == round(1200 / 14 - 80, 2)
