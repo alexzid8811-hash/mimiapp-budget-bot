@@ -523,10 +523,14 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     def kept_by_cap(first: date, last: date, *, funded: bool = True) -> tuple[int, int]:
         """Money the daily maximum held back from the card in ``[first, last]``
         (at funding and returned from the card), and the part of it that went
-        to the piggy bank."""
+        to the piggy bank.  A buffer period (``funded``) leaves out the
+        previous card period's leftover moved to the piggy bank: it was not
+        the buffer's money."""
         periods = [p for p in result.periods if first <= (p.funded_on if funded else p.start) <= last]
         in_range = lambda values: sum(v for d, v in values.items() if first <= d <= last)  # noqa: E731
         piggy_trims = in_range(actual.cap_piggy_trims)
+        if funded:
+            piggy_trims -= in_range(actual.carry_piggy_trims)
         held = sum(result.cap_kept.get(p.start, 0) for p in periods)
         held_to_piggy = sum(result.cap_kept.get(p.start, 0) for p in periods
                             if cap_rule(inp.caps, p.funded_on)[1])

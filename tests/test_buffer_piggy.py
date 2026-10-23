@@ -355,3 +355,27 @@ def test_buffer_floor_reports_when_it_cannot_be_held(client):
 
 def test_buffer_floor_rejects_negative_amount(client):
     assert client.put("/api/buffer-floor", json={"amount": -1}).status_code == 422
+
+
+def test_leftover_moved_to_piggy_is_not_taken_from_the_next_periods_card_money(client, monkeypatch):
+    # 80 ₽ a day for 13–22 September, nothing spent: 800 ₽ are left on the card.
+    assert client.put("/api/daily-cap", json={"amount": 80, "excess_to": "piggy"}).status_code == 200
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 9, 23))
+    # «Получил ✓» for the payday of 22 September.
+    response = client.put("/api/cashflow/income-overrides/2026-09-23", json={"amount": 100000, "confirmed": True})
+    assert response.status_code == 200
+    flow = cashflow_snapshot(1)
+    row = flow["periods"][0]
+    days = row["card_period"]["days"]
+    assert row["card_period"]["start"] == "2026-09-23"
+    # The new period gets 80 ₽ a day, the leftover goes to the piggy bank.
+    assert flow["card_balance"] == 80 * days
+    assert row["to_card"] == 80 * days
+    assert row["cap_from_card"] == 0
+    # The buffer row counts only the buffer's money above the maximum; the
+    # period on the home screen also counts the leftover.
+    assert flow["period_cap_kept_piggy"] == row["cap_kept_piggy"] + 800
+    for row in flow["periods"]:
+        assert row["buffer"] == round(
+            row["buffer_start"] + row["received"] - row["mandatory"] - row["to_card"] - row["to_piggy"]
+            - row["cap_from_card"], 2)

@@ -369,6 +369,34 @@ def test_excess_to_piggy_trims_the_card_into_the_piggy_bank():
     assert after.cap_piggy_trims == {D(2026, 9, 18): 100 * RUB}
     assert not after.cap_trims
     assert after.buffer_end[D(2026, 9, 18)] == before.buffer_end[D(2026, 9, 18)]
+    # Trimmed mid-period: the period's own money, not a leftover.
+    assert not after.carry_piggy_trims
+
+
+def test_leftover_moved_to_piggy_is_not_taken_from_the_new_periods_card_money():
+    # Nothing is spent from 13 to 22 September: the 1 000 ₽ are carried over
+    # and go to the piggy bank on the first day of the next period.
+    nxt = D(2026, 9, 23)
+    inp = ten_days_with_1000(today=nxt, caps=[(D(2026, 9, 13), 2000 * RUB, True)])
+    result = run_ledger(inp)
+    assert result.allocations[nxt] == 2000 * RUB * 15
+    assert result.cap_piggy_trims == result.carry_piggy_trims == {nxt: 1000 * RUB}
+    row = next(r for r in buffer_rows(inp, result) if r.start == D(2026, 9, 22))
+    assert row.to_card == 2000 * RUB * 15
+    assert row.card_to_piggy == 0
+
+
+def test_lowered_cap_on_the_first_day_trims_the_leftover_first():
+    nxt = D(2026, 9, 23)
+    inp = ten_days_with_1000(today=nxt, caps=[(nxt, 1500 * RUB, True)])
+    result = run_ledger(inp)
+    # The period was funded without the maximum, above 1 500 ₽ a day.
+    assert result.allocations[nxt] > 1500 * RUB * 15
+    assert result.carry_piggy_trims == {nxt: 1000 * RUB}
+    own = result.cap_piggy_trims[nxt] - 1000 * RUB
+    row = next(r for r in buffer_rows(inp, result) if r.start == D(2026, 9, 22))
+    assert row.to_card == 1500 * RUB * 15
+    assert row.card_to_piggy == own == result.allocations[nxt] - 1500 * RUB * 15
 
 
 # «Минимум буфера».
