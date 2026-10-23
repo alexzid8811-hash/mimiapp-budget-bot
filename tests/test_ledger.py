@@ -231,6 +231,8 @@ def test_daily_cap_trims_money_left_from_the_previous_period():
     # Option «а»: the cap holds for the whole daily amount, the carried
     # 1 000 ₽ go back to the buffer on the first day of the period.
     assert result.cap_trims == {nxt: 1000 * RUB}
+    assert result.carry_in[nxt] == 1000 * RUB
+    assert result.carry_buffer_trims == {nxt: 1000 * RUB} and not result.carry_piggy_trims
     assert result.card_start_today == cap * 15
     assert result.today_limit == cap
     plain = run_ledger(replace(inp, caps=[]))
@@ -380,7 +382,9 @@ def test_leftover_moved_to_piggy_is_not_taken_from_the_new_periods_card_money():
     inp = ten_days_with_1000(today=nxt, caps=[(D(2026, 9, 13), 2000 * RUB, True)])
     result = run_ledger(inp)
     assert result.allocations[nxt] == 2000 * RUB * 15
+    assert result.carry_in[nxt] == 1000 * RUB
     assert result.cap_piggy_trims == result.carry_piggy_trims == {nxt: 1000 * RUB}
+    assert not result.carry_buffer_trims
     row = next(r for r in buffer_rows(inp, result) if r.start == D(2026, 9, 22))
     assert row.to_card == 2000 * RUB * 15
     assert row.card_to_piggy == 0
@@ -472,3 +476,11 @@ def test_safe_rate_keeps_the_floor():
     result = run_ledger(inp)
     # Only the 540 ₽ left on the card count: the 400 ₽ in the buffer stay.
     assert safe_rate_from(inp, result, D(2026, 9, 14), held=540 * RUB) == 60 * RUB
+
+
+def test_carry_in_is_the_previous_periods_leftover_or_overspend():
+    nxt = D(2026, 9, 23)
+    spent = {D(2026, 9, 22): 1300 * RUB}
+    result = run_ledger(ten_days_with_1000(today=nxt, card_out=spent))
+    assert result.carry_in[nxt] == -300 * RUB
+    assert result.card_start_today == result.allocations[nxt] - 300 * RUB

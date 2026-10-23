@@ -257,9 +257,14 @@ class LedgerResult:
     cap_to_piggy: dict[date, int] = field(default_factory=dict)
     piggy_from_buffer: dict[date, int] = field(default_factory=dict)
     cap_piggy_trims: dict[date, int] = field(default_factory=dict)  # card -> piggy by day
-    # The part of ``cap_piggy_trims`` left on the card from the previous
-    # period: on the first day of a period the leftover is trimmed first.
+    # Card money left from the previous period on the first day of each
+    # period, before the new money (negative: its overspend).
+    carry_in: dict[date, int] = field(default_factory=dict)
+    # The parts of ``cap_piggy_trims`` and ``cap_trims`` left on the card
+    # from the previous period: on the first day of a period the leftover is
+    # trimmed first.
     carry_piggy_trims: dict[date, int] = field(default_factory=dict)
+    carry_buffer_trims: dict[date, int] = field(default_factory=dict)
     # Kept for yearly payments on each funding day, and in the buffer at the
     # end of each day (a part of ``buffer_end``).
     sinking_in: dict[date, int] = field(default_factory=dict)
@@ -330,7 +335,9 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
     cap_to_piggy: dict[date, int] = {}
     piggy_from_buffer: dict[date, int] = {}
     cap_piggy_trims: dict[date, int] = {}
+    carry_in: dict[date, int] = {}
     carry_piggy_trims: dict[date, int] = {}
+    carry_buffer_trims: dict[date, int] = {}
     active: CardPeriod | None = None
     card = 0
     card_start_today = 0
@@ -378,6 +385,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
             carried = 0
             if day in starts:
                 active = starts[day]
+                carry_in[day] = card
                 carried = max(0, card)
                 card += allocations[day]
             trim = 0
@@ -400,6 +408,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
             elif trim:
                 buffer += trim
                 cap_trims[day] = trim
+                if min(trim, carried):
+                    carry_buffer_trims[day] = min(trim, carried)
             if day in starts:
                 opening_by_start[day] = card
             if day == inp.today:
@@ -460,7 +470,9 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         cap_to_piggy=cap_to_piggy,
         piggy_from_buffer=piggy_from_buffer,
         cap_piggy_trims=cap_piggy_trims,
+        carry_in=carry_in,
         carry_piggy_trims=carry_piggy_trims,
+        carry_buffer_trims=carry_buffer_trims,
         sinking_in=sinking_in,
         sinking_end=sinking_end,
     )

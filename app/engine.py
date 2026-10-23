@@ -692,6 +692,12 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "daily_cap_to": "piggy" if cap_to_piggy else "buffer",
         "period_cap_kept": amount(period_kept[0]),
         "period_cap_kept_piggy": amount(period_kept[1]),
+        # Card money left from the previous period on the first day of the
+        # current one (negative: its overspend) and the parts of it the daily
+        # maximum moved to the piggy bank or returned to the buffer.
+        "period_carry": amount(actual.carry_in.get(current.start, 0)),
+        "period_carry_piggy": amount(actual.carry_piggy_trims.get(current.start, 0)),
+        "period_carry_buffer": amount(actual.carry_buffer_trims.get(current.start, 0)),
         "spare_buffer": amount(spare),
         "pending_card_allocation": amount(pending),
         "reserved_mandatory": amount(reserved),

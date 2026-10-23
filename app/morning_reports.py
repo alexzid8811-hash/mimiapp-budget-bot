@@ -145,6 +145,10 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
     nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
     daily_amount = float(flow.get("available_today", 0))
     daily_limit = float(flow.get("today_target", daily_amount))
+    # The first morning of a card period: yesterday's sum was the rest of the
+    # previous period, so the change says nothing.  The report tells what
+    # happened to the money left from that period instead.
+    new_period = flow["period"]["start"] == today.isoformat()
     return {
         "user_id": user_id,
         "report_date": today,
@@ -160,8 +164,12 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
         "card_balance": float(flow.get("current_cash", 0)),
         "daily_amount": daily_amount,
         "daily_limit": daily_limit,
-        "daily_change": None if previous is None
+        "daily_change": None if previous is None or new_period
             else round(daily_limit - float(previous["daily_limit"]), 2),
+        "new_period": new_period,
+        "carry": float(flow["period_carry"]),
+        "carry_piggy": float(flow["period_carry_piggy"]),
+        "carry_buffer": float(flow["period_carry_buffer"]),
         "piggy_balance": float(flow.get("piggy_bank_balance", 0)),
         "buffer_balance": float(flow.get("buffer_balance", 0)),
         "nearest_due_date": nearest_date,
