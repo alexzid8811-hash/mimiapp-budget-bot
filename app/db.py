@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
 from contextvars import ContextVar, Token
+from datetime import datetime, timezone
 from pathlib import Path
 from . import clock
+
+logger = logging.getLogger(__name__)
 
 
 SCHEMA = """
@@ -232,6 +237,11 @@ def users_dir() -> Path:
     path = db_path().parent / "users"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def backups_dir() -> Path:
+    """Copies of user files taken before a data repair (see docs/ROLLBACK.md)."""
+    return db_path().parent / "backups"
 
 
 def user_db_path(user_id: int) -> Path:
@@ -607,6 +617,79 @@ def _prepare(con: sqlite3.Connection) -> None:
         columns = {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
         if 'archived' not in columns:
             con.execute(f'ALTER TABLE {table} ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
+    _repair(con)
+
+
+def _duplicated_cap_excess(con: sqlite3.Connection) -> bool:
+    return con.execute(
+        "SELECT 1 FROM piggy_bank_movements WHERE purpose='cap_excess' "
+        "GROUP BY user_id,movement_date HAVING COUNT(*)>1 LIMIT 1"
+    ).fetchone() is not None
+
+
+def _dangling_plan_categories(con: sqlite3.Connection) -> list[tuple[int, str]]:
+    """Plan versions whose bills point at a deleted category, each with its
+    fixed snapshot: such a bill takes the category of its current rule, or
+    none.  Deleting a category used to change only bill_rules."""
+    valid = {int(row[0]) for row in con.execute("SELECT id FROM categories")}
+    live = {int(row[0]): row[1] for row in con.execute("SELECT id,category_id FROM bill_rules")}
+    fixed = []
+    for row in con.execute("SELECT id,snapshot FROM plan_history").fetchall():
+        try:
+            snapshot = json.loads(row[1])
+            bills = snapshot.get("bill_rules", [])
+        except (ValueError, AttributeError):
+            continue  # not this repair's business; the start must not fail on it
+        changed = False
+        for bill in bills:
+            category = bill.get("category_id")
+            if category is not None and category not in valid:
+                current = live.get(bill.get("id"))
+                bill["category_id"] = current if current in valid else None
+                changed = True
+        if changed:
+            fixed.append((int(row[0]), json.dumps(snapshot)))
+    return fixed
+
+
+def _needs_repair(con: sqlite3.Connection) -> bool:
+    """Whether :func:`_repair` would change any data, checked before the copy.
+    A database older than a table or column has nothing of that to repair."""
+    for check in (_duplicated_cap_excess, _dangling_plan_categories):
+        try:
+            if check(con):
+                return True
+        except sqlite3.OperationalError:
+            pass
+    return False
+
+
+def _repair(con: sqlite3.Connection) -> None:
+    """Data repairs; each one changes nothing on healthy data."""
+    # «Сверх максимума в день»: parallel calculations could deposit one day's
+    # excess twice.  One row per day stays (the next calculation sets its
+    # amount), and the index keeps it so.
+    con.execute(
+        "DELETE FROM piggy_bank_movements WHERE purpose='cap_excess' AND id NOT IN ("
+        "SELECT MIN(id) FROM piggy_bank_movements WHERE purpose='cap_excess' GROUP BY user_id,movement_date)"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_piggy_cap_excess "
+        "ON piggy_bank_movements(user_id, movement_date) WHERE purpose='cap_excess'"
+    )
+    con.executemany(
+        "UPDATE plan_history SET snapshot=? WHERE id=?",
+        [(snapshot, row_id) for row_id, snapshot in _dangling_plan_categories(con)],
+    )
+
+
+def _backup_before_repair(con: sqlite3.Connection, user_id: int, folder: Path) -> None:
+    """A consistent copy of the user's file as it is, for a rollback."""
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{int(user_id)}.sqlite3"
+    with closing(sqlite3.connect(target)) as copy:
+        con.backup(copy)
+    logger.warning("Данные пользователя %s будут исправлены; копия до исправления: %s", user_id, target)
 
 
 def _split_legacy_database() -> None:
@@ -668,8 +751,12 @@ def _split_legacy_database() -> None:
 
 def init_db() -> None:
     _split_legacy_database()
+    folder = None
     for uid in all_user_ids():
         with closing(_open(user_db_path(uid))) as con:
+            if _needs_repair(con):
+                folder = folder or backups_dir() / f"{datetime.now(timezone.utc):%Y-%m-%dT%H-%M-%SZ}-before-repair"
+                _backup_before_repair(con, uid, folder)
             _prepare(con)
             con.commit()
 

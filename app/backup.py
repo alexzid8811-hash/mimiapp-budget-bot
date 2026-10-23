@@ -276,7 +276,13 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     ),
                 )
             piggy_ids: dict[Any, int] = {}
+            cap_excess_days: dict[Any, int] = {}
             for row in data["piggy_bank_movements"]:
+                if row.get('purpose') == 'cap_excess' and row['movement_date'] in cap_excess_days:
+                    # A copy made while one day's excess was deposited twice:
+                    # one deposit a day (the calculation sets its amount).
+                    piggy_ids[row['id']] = cap_excess_days[row['movement_date']]
+                    continue
                 cur = con.execute(
                     "INSERT INTO piggy_bank_movements"
                     "(user_id,direction,amount,movement_date,note,source,purpose,bill_payment_id,income_transaction_id,"
@@ -289,6 +295,8 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                     ),
                 )
                 piggy_ids[row['id']] = int(cur.lastrowid)
+                if row.get('purpose') == 'cap_excess':
+                    cap_excess_days[row['movement_date']] = int(cur.lastrowid)
             reserve_ids: dict[Any, int] = {}
             for row in data["emergency_reserve_movements"]:
                 cur = con.execute(

@@ -6,3 +6,4 @@ data/*.sqlite3
 *.pyc
 data/users/
 data/*.migrated*
+data/backups/

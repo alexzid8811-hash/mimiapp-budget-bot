@@ -6,6 +6,7 @@ from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, ReplyKeyboardMarkup, Update, WebAppInfo,
 )
 from telegram.constants import ChatType
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app import clock
@@ -279,7 +280,9 @@ def new_period_lines(report: dict) -> list[str]:
 
 
 def morning_report_text(report: dict) -> str:
-    expenses = "\n".join(f"• {item['title']} — {money(item['amount'])} ₽" for item in report["expenses"])
+    # Shortened like «Траты сегодня»: long notes could take the report over
+    # Telegram's 4096 characters, and such a report never arrived.
+    expenses = "\n".join(_items(report["expenses"]))
     spending = f"Вчера потрачено: {money(report['spent_total'])} ₽"
     if expenses:
         spending += "\n" + expenses
@@ -326,18 +329,30 @@ async def send_morning_reports(application) -> None:
                 chat_id=report["user_id"], text=morning_report_text(report),
                 reply_markup=menu_keyboard(report.get("mode") == "irregular"),
             )
+        except (Forbidden, BadRequest) as exc:
+            # Telegram will not take it (the user blocked the bot, the chat
+            # is gone): today's report counts as done instead of repeating
+            # the calculation and the error every minute until midnight.
+            logger.warning("Утренний отчёт пользователю %s не доставлен: %s", report["user_id"], exc)
         except Exception:
             logger.exception(
                 "Не удалось отправить утренний отчёт пользователю %s",
                 report["user_id"],
             )
             continue
-        record_morning_report(report)
+        try:
+            record_morning_report(report)
+        except Exception:
+            logger.exception("Не удалось записать утренний отчёт пользователя %s", report["user_id"])
 
 
 async def reminder_loop(application) -> None:
     while True:
-        await send_morning_reports(application)
+        try:
+            await send_morning_reports(application)
+        except Exception:
+            # Whatever went wrong, the next minutes' reports still go out.
+            logger.exception("Сбой цикла утренних отчётов")
         await asyncio.sleep(REMINDER_CHECK_SECONDS)
 
 
