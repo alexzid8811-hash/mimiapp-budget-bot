@@ -536,6 +536,8 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .analytics-kind{display:grid;grid-template-columns:10px 1fr auto auto;gap:8px;align-items:center;font-size:14px}
 .analytics-kind i,.analytics-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
 .analytics-kind .pct{color:var(--muted);font-size:13px;min-width:38px;text-align:right}
+.analytics-kind-taken{border-top:1px solid var(--line);padding-top:6px}
+.analytics-kind-taken i{box-sizing:border-box;border:2px solid var(--kind-piggy)}
 .analytics-cats{display:grid;gap:8px;padding-bottom:6px}
 .analytics-cat{display:grid;grid-template-columns:38px minmax(0,1fr);gap:12px;align-items:center;width:100%;border:0;background:transparent;text-align:left;padding:4px;border-radius:10px;cursor:pointer}
 .analytics-cat-item.open{background:var(--surface-2);border-radius:10px}

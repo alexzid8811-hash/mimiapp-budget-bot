@@ -51,6 +51,8 @@ def test_month_summary_splits_spending_by_destination_and_category(client):
     assert data['label'] == 'Сентябрь 2026'
     assert (data['start'], data['end']) == ('2026-09-01', '2026-09-30')
     assert data['totals'] == {'daily': 1650.5, 'bills': 3000.0, 'piggy': 700.0, 'total': 5350.5}
+    # Taken from the piggy bank: shown, but not subtracted from the total.
+    assert data['piggy_taken'] == 200
     # September is in progress (today is the 15th): August is compared up to the 15th.
     assert data['previous_partial'] is True
     assert data['previous_totals']['daily'] == 0
@@ -73,6 +75,7 @@ def test_month_summary_splits_spending_by_destination_and_category(client):
 def test_previous_month_can_step_forward_and_future_anchor_is_clamped(client):
     data = client.get('/api/analytics', params={'mode': 'month', 'anchor': '2026-08-01'}).json()
     assert data['totals']['daily'] == 500
+    assert data['piggy_taken'] == 0
     assert data['previous_partial'] is False
     assert data['next_anchor'] == '2026-09-01'
     future = client.get('/api/analytics', params={'mode': 'month', 'anchor': '2027-01-01'}).json()
@@ -85,6 +88,7 @@ def test_year_summary_has_twelve_months_and_no_days(client):
     assert data['days'] == []
     assert len(data['months']) == 12
     assert data['totals']['piggy'] == 750
+    assert data['piggy_taken'] == 200
     # Unpaid months before the current card period are history, not plans.
     rent = data['bills'][0]
     assert (rent['count'], rent['paid_count'], rent['paid_amount'], rent['due_amount']) == (4, 1, 3000, 9000)

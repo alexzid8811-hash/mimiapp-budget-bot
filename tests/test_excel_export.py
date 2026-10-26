@@ -56,6 +56,7 @@ def test_excel_export_contains_operations_pivot_and_piggy(tmp_path, monkeypatch)
     values = [row for row in charts.iter_rows(values_only=True) if any(v is not None for v in row)]
     kinds = {r[0]: r[1] for r in values}
     assert (kinds["Повседневные траты"], kinds["Обязательные платежи"], kinds["Отложено в копилку"]) == (700, 0, 1000)
+    assert (kinds["Итого"], kinds["Взято из копилки"]) == (1700, 400)
     assert any(r[0] == "☕ Тестовая кофейня" and r[1] == 700 and r[3] == 300 for r in values)
     assert any(r[0] == "сен 26" and r[1] == 700 and r[3] == 1000 for r in values)
     # Months before the first record are left out of «По месяцам».

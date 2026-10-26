@@ -9,6 +9,7 @@ const sample = {
   previous_anchor: '2026-08-01', next_anchor: null, previous_partial: true,
   totals: {daily: 1000, bills: 3000, piggy: 1000, total: 5000},
   previous_totals: {daily: 800, bills: 3000, piggy: 200, total: 4000},
+  piggy_taken: 1500,
   categories: [
     {id: 2, title: 'Кафе', emoji: '☕', amount: 600, previous: 300, share: 0.6, count: 4,
      top: [{date: '2026-09-12', amount: 400, note: '<b>ужин</b>'}],
@@ -71,6 +72,10 @@ test('analytics page renders totals, categories and bills', async () => {
   assert.match(get('analyticsTotal').textContent, /5[\s ]000/);
   assert.match(get('analyticsDelta').textContent, /▲ 25% к этому дню прошлого месяца/);
   assert.equal(get('analyticsNext').disabled, true);
+  const kinds = get('analyticsKinds').innerHTML;
+  assert.match(kinds, /Отложено в копилку<\/span><span class="num">1[\s\u00a0]000[\s\u00a0]₽<\/span><span class="pct num">20%/);
+  // Taken from the piggy bank: its own row after the split, without a share.
+  assert.match(kinds, /analytics-kind-taken"><i><\/i><span>Взято из копилки<\/span><span class="num">1[\s\u00a0]500[\s\u00a0]₽<\/span><span class="pct"><\/span>/);
 
   const cats = get('analyticsCategories').innerHTML;
   assert.match(cats, /Кафе[\s\S]*Продукты/);

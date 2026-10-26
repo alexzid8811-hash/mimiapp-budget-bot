@@ -75,7 +75,9 @@
     $("analyticsStack").innerHTML = t.total > 0
       ? KINDS.filter(k => t[k.key] > 0).map(k => `<span style="flex:${t[k.key]};background:${k.color}"></span>`).join("")
       : "";
-    $("analyticsKinds").innerHTML = KINDS.map(k => `<div class="analytics-kind"><i style="background:${k.color}"></i><span>${k.title}</span><span class="num">${rub(t[k.key])}</span><span class="pct num">${t.total > 0 ? Math.round(t[k.key] / t.total * 100) : 0}%</span></div>`).join("");
+    $("analyticsKinds").innerHTML = KINDS.map(k => `<div class="analytics-kind"><i style="background:${k.color}"></i><span>${k.title}</span><span class="num">${rub(t[k.key])}</span><span class="pct num">${t.total > 0 ? Math.round(t[k.key] / t.total * 100) : 0}%</span></div>`).join("")
+      // Not a share of the total: it says where money came from, not where it went.
+      + `<div class="analytics-kind analytics-kind-taken"><i></i><span>Взято из копилки</span><span class="num">${rub(data.piggy_taken)}</span><span class="pct"></span></div>`;
   }
 
   function renderCategories() {
