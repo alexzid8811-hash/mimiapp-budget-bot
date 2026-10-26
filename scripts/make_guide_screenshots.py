@@ -1369,14 +1369,14 @@ def ch11(app: App, sh: Shooter, texts: dict) -> None:
         M(3, ".analytics-total-row", pad=3), M(4, "#analyticsKinds", pad=3),
     ], facts={"Подпись": "#analyticsTotalCaption", "Всего": "#analyticsTotal", "Сравнение": "#analyticsDelta",
               "Виды": "#analyticsKinds", "Месяц": "#analyticsLabel"})
-    first = sh.page.locator("#analyticsCategories .analytics-cat").first
-    first.click()
+    sh.page.locator("#analyticsCategories .analytics-cat").first.click()
     sh.page.wait_for_timeout(200)
-    first = sh.page.locator("#analyticsCategories .analytics-cat").first
+    # The list of operations is next to the category's button, not inside it.
+    first = sh.page.locator("#analyticsCategories .analytics-cat-item").first
     sh.scroll(".analytics-cats-card", "start")
     sh.shot("11-analytics-categories.png", [
         M(1, first.locator(".top"), pad=3), M(2, first.locator(".meta"), pad=3),
-        M(3, first.locator(".analytics-drill"), pad=3),
+        M(3, first.locator(".analytics-drill > span").first, pad=3), M(4, first.locator(".analytics-sort"), pad=3),
     ], facts={"Категории": "#analyticsCategories"})
     sh.scroll("#analyticsDaysCard", "center")
     sh.shot("11-analytics-days.png", [M(1, "#analyticsDays", pad=3), M(2, "#analyticsDaysLegend", pad=3)],

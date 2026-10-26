@@ -123,7 +123,9 @@ def _categories(expenses: list[dict], previous: list[dict]) -> list[dict]:
     result = []
     for g in sorted(groups.values(), key=lambda g: (-g["cents"], g["order"], g["title"])):
         operations = [
-            {"date": e["tx_date"], "amount": amount(cents(e["amount"])), "note": e["note"] or ""}
+            # The id keeps operations of one day in the order they were added
+            # when the app lists them by date.
+            {"id": e["id"], "date": e["tx_date"], "amount": amount(cents(e["amount"])), "note": e["note"] or ""}
             for e in sorted(g["operations"], key=lambda e: (-cents(e["amount"]), e["tx_date"], e["id"]))
         ]
         result.append({

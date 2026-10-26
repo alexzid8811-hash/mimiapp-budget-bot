@@ -119,6 +119,9 @@ def test_category_lists_every_operation_besides_the_largest_three(client):
         (900, '2026-09-12'), (300, '2026-09-04'), (300, '2026-09-05'), (120, '2026-09-03'), (80, '2026-09-07'),
     ]
     assert cafe['top'] == cafe['operations'][:3]
+    # Ids let the app keep one day's operations in the order they were added.
+    assert all(isinstance(op['id'], int) for op in cafe['operations'])
+    assert len({op['id'] for op in cafe['operations']}) == 5
 
 
 def test_unknown_mode_is_rejected(client):
