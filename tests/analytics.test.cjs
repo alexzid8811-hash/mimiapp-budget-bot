@@ -189,7 +189,7 @@ test('operations of an open category can be listed by date or by amount', async 
   let html = get('analyticsCategories').innerHTML;
   // Largest first by default, and that chip is pressed.
   assert.match(html, /data-sort="amount_desc" aria-pressed="true"/);
-  assert.match(html, /data-sort="date" aria-pressed="false" title="От прошлых к новым">По дате/);
+  assert.match(html, /data-sort="date_desc" aria-pressed="false" title="От новых к прошлым">Дата ↓[\s\S]*data-sort="date" aria-pressed="false" title="От прошлых к новым">Дата ↑[\s\S]*Сумма ↓[\s\S]*Сумма ↑/);
   assert.deepEqual(order(), ['ужин', 'обед', 'кофе']);
 
   // By date, old to new; one day keeps the order the operations were added.
@@ -198,6 +198,11 @@ test('operations of an open category can be listed by date or by amount', async 
   assert.equal(storage['analytics-ops-sort'], 'date');
   click('more', '2');
   assert.deepEqual(order(), ['обед', 'чай', 'кофе', 'ужин']);
+
+  // And new to old: one day goes from the latest added.
+  click('sort', 'date_desc');
+  assert.deepEqual(order(), ['ужин', 'кофе', 'чай', 'обед']);
+  assert.match(get('analyticsCategories').innerHTML, /data-sort="date_desc" aria-pressed="true"/);
 
   click('sort', 'amount_asc');
   assert.deepEqual(order(), ['чай', 'кофе', 'обед', 'ужин']);
@@ -208,6 +213,13 @@ test('operations of an open category can be listed by date or by amount', async 
   await next.sandbox.window.budgetAnalytics.load();
   next.get('analyticsCategories').listeners.click({target: {closest: sel => sel === '[data-cat]' ? {dataset: {cat: '2'}} : null}});
   assert.match(next.get('analyticsCategories').innerHTML, /data-sort="amount_asc" aria-pressed="true"/);
+});
+
+test('a saved «По дате» of the earlier version is still old to new', async () => {
+  const {sandbox, get} = setup(sample, {'analytics-ops-sort': 'date'});
+  await sandbox.window.budgetAnalytics.load();
+  get('analyticsCategories').listeners.click({target: {closest: sel => sel === '[data-cat]' ? {dataset: {cat: '2'}} : null}});
+  assert.match(get('analyticsCategories').innerHTML, /data-sort="date" aria-pressed="true" title="От прошлых к новым">Дата ↑/);
 });
 
 test('a category with one operation has no order to choose', async () => {
