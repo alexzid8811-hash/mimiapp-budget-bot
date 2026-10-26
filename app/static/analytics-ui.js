@@ -21,8 +21,12 @@
   // category, remembered between visits.
   const SORT_KEY = "analytics-ops-sort";
   const byDate = (a, b) => a.date.localeCompare(b.date) || (a.id ?? 0) - (b.id ?? 0);
+  // The arrow means the same for both: ↓ from the latest date or the
+  // largest sum, ↑ the other way round.  "date" is the old key of «По дате»,
+  // kept so a saved choice still works.
   const SORTS = [
-    {key:"date", title:"По дате", hint:"От прошлых к новым", compare:byDate},
+    {key:"date_desc", title:"Дата ↓", hint:"От новых к прошлым", compare:(a, b) => byDate(b, a)},
+    {key:"date", title:"Дата ↑", hint:"От прошлых к новым", compare:byDate},
     {key:"amount_desc", title:"Сумма ↓", hint:"От большой к меньшей", compare:(a, b) => b.amount - a.amount || byDate(a, b)},
     {key:"amount_asc", title:"Сумма ↑", hint:"От меньшей к большой", compare:(a, b) => a.amount - b.amount || byDate(a, b)},
   ];
