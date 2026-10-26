@@ -42,6 +42,9 @@ TZ = "Europe/Moscow"
 # Один цвет отметок на всю инструкцию: такого нет ни в интерфейсе, ни в цветах категорий.
 MARK = "#E0009A"
 VIEWPORT = {"width": 390, "height": 844}
+# Ширина картинки в тексте инструкции: снимки сделаны с device_scale_factor 2 (780 px),
+# а показываются в размер экрана телефона — так они не огромные и остаются чёткими.
+IMAGE_WIDTH = VIEWPORT["width"]
 
 # Заглушка Telegram Mini App SDK: приложение работает в DEV_MODE без initData.
 TELEGRAM_STUB = """
@@ -1879,19 +1882,35 @@ def check_guide() -> int:
     for page in sorted(guide.glob("*.md")):
         text = page.read_text(encoding="utf-8")
         lines = text.splitlines()
-        for target in re.findall(r"\]\(([^)\s]+)\)", text):
+        for target in re.findall(r"\]\(([^)\s]+)\)", text) + re.findall(r'<img src="([^"]+)"', text):
             if target.startswith(("http://", "https://", "#")):
                 continue
             if not (guide / target.split("#")[0]).exists():
                 problems.append(f"{page.name}: нет файла {target}")
             if target.startswith("images/"):
                 used.add(target[len("images/"):])
+        in_code = False
         for number, line in enumerate(lines):
-            image = re.match(r"!\[(.*)\]\((images/[^)]+)\)", line)
-            if not image:
+            # Примеры в блоках кода (как в HOWTO-UPDATE.md) — не картинки.
+            if line.lstrip().startswith("```"):
+                in_code = not in_code
+            if in_code:
                 continue
-            if not image.group(1).strip():
+            if re.match(r"!\[.*\]\(images/", line):
+                problems.append(f"{page.name}:{number + 1}: картинка вставлена через ![](), "
+                                f'нужен <img src="…" alt="…" width="{IMAGE_WIDTH}">')
+                continue
+            image = re.match(r'<img src="(images/[^"]+)" alt="([^"]*)" width="(\d+)">$', line)
+            if not image:
+                if line.startswith("<img"):
+                    problems.append(f'{page.name}:{number + 1}: картинка не в виде <img src="…" alt="…" '
+                                    f'width="{IMAGE_WIDTH}">')
+                continue
+            if not image.group(2).strip():
                 problems.append(f"{page.name}:{number + 1}: у картинки нет alt-текста")
+            if image.group(3) != str(IMAGE_WIDTH):
+                problems.append(f'{page.name}:{number + 1}: у картинки width="{image.group(3)}", '
+                                f'нужно {IMAGE_WIDTH}')
             following = next((l for l in lines[number + 1:] if l.strip()), "")
             if not following.startswith("*"):
                 problems.append(f"{page.name}:{number + 1}: под картинкой нет подписи")
