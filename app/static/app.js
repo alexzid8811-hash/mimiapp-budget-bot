@@ -65,11 +65,16 @@ function shiftISODate(iso, days) { return window.budgetDate.shift(iso, days); }
 
 let loadVersion = 0;
 
+// The operations list holds the latest operations and, once the card period
+// is known from an earlier load, every operation since its start: «Период».
+let transactionsSince = null;
+
 async function loadAll() {
   const version = ++loadVersion;
+  const since = state.dashboard?.period?.start || null;
   try {
     const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts] = await Promise.all([
-      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api("/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
+      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api(since ? `/api/transactions?since=${since}` : "/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
       api("/api/piggy-bank").catch(() => ({ movements: [] })),
       api("/api/irregular").catch(() => null),
       api("/api/accounts").catch(() => null)
@@ -77,6 +82,7 @@ async function loadAll() {
     if (version !== loadVersion) return;
     window.budgetDate.configure(bootstrap.budget_timezone);
     state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts };
+    transactionsSince = since;
     window.accountsUi?.render(state);
     render();
     window.applyCashflowSettings?.(cashflowSettings);
@@ -215,8 +221,9 @@ function renderPiggyTransferRow(m) {
 // weekly totals) only holds day-to-day spending, income and piggy transfers.
 let transactionView = "daily";
 let transactionFilter = "all";
-// «Сегодня» combines with the type chips: «Сегодня» + «Расходы» is today's spending.
-let transactionTodayOnly = false;
+// «Сегодня» and «Период» (the card period in the header) combine with the
+// type chips: «Сегодня» + «Расходы» is today's spending.
+let transactionRange = "all";
 const TRANSACTION_FILTERS = {
   all: () => true,
   expense: t => !t.piggy && t.type === "expense",
@@ -239,21 +246,25 @@ function renderTransactions() {
   const el = $("transactionsList");
   const query = String($("txSearch")?.value || "").trim().toLowerCase();
   const all = [...state.transactions, ...cardPiggyTransfers()].filter(inTransactionView);
-  const today = transactionView !== "bills" && transactionTodayOnly ? todayISO() : null;
-  const items = all.filter(t => (!today || t.tx_date === today) && transactionMatches(t, query))
+  const daily = transactionView !== "bills";
+  const today = daily && transactionRange === "today" ? todayISO() : null;
+  const period = daily && transactionRange === "period" && !isIrregular() ? state.dashboard?.period : null;
+  const inRange = t => today ? t.tx_date === today : !period || (t.tx_date >= period.start && t.tx_date <= period.end);
+  const items = all.filter(t => inRange(t) && transactionMatches(t, query))
     .sort((a, b) => b.tx_date.localeCompare(a.tx_date) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
   if (!items.length) {
     const message = !all.length
       ? (transactionView === "bills" ? "Оплаченных обязательных платежей пока нет." : "Пока нет операций.")
-      : today && !query && transactionFilter === "all" ? "Сегодня операций пока нет." : "Ничего не найдено.";
+      : query || transactionFilter !== "all" ? "Ничего не найдено."
+        : today ? "Сегодня операций пока нет." : period ? "В этом периоде операций пока нет." : "Ничего не найдено.";
     el.innerHTML = `<div class="empty">${message}</div>`;
     return;
   }
 
-  // With «Сегодня» on, the one group is today instead of its week.
+  // With «Сегодня» or «Период» on, the one group is today or the period instead of weeks.
   const weeks = new Map();
   items.forEach(t => {
-    const weekStart = today ? "today" : transactionWeekStart(t.tx_date);
+    const weekStart = today ? "today" : period ? "period" : transactionWeekStart(t.tx_date);
     if (!weeks.has(weekStart)) weeks.set(weekStart, []);
     weeks.get(weekStart).push(t);
   });
@@ -270,7 +281,7 @@ function renderTransactions() {
         : `${transactions.length} операций`;
       return `<section class="transaction-week ${collapsed ? "collapsed" : ""}">
         <button class="transaction-week-toggle" type="button" onclick="toggleTransactionWeek('${weekStart}')" aria-expanded="${!collapsed}">
-          <span><strong>${today ? `Сегодня, ${fmtDate(today)}` : transactionWeekTitle(weekStart)}</strong><small>${countLabel}</small></span>
+          <span><strong>${today ? `Сегодня, ${fmtDate(today)}` : period ? `${fmtDate(period.start)} — ${fmtDate(period.end)}` : transactionWeekTitle(weekStart)}</strong><small>${countLabel}</small></span>
           <span class="transaction-week-summary">${expenseTotal ? `−${money(expenseTotal)}` : ""}<i aria-hidden="true">⌄</i></span>
         </button>
         <div class="transaction-week-rows">${transactions.map(t => t.piggy ? renderPiggyTransferRow(t) : renderTransactionRow(t)).join("")}</div>
@@ -685,11 +696,18 @@ document.querySelectorAll("[data-txf]").forEach(btn => btn.addEventListener("cli
   document.querySelectorAll("[data-txf]").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
   renderTransactions();
 }));
-$("txToday")?.addEventListener("click", () => {
-  transactionTodayOnly = !transactionTodayOnly;
-  $("txToday").setAttribute("aria-pressed", String(transactionTodayOnly));
+// «Сегодня» and «Период» exclude each other; a second tap turns the chip off.
+function toggleTransactionRange(range) {
+  transactionRange = transactionRange === range ? "all" : range;
+  $("txToday")?.setAttribute("aria-pressed", String(transactionRange === "today"));
+  $("txPeriod")?.setAttribute("aria-pressed", String(transactionRange === "period"));
   renderTransactions();
-});
+  // The first load did not know the period yet and may hold only its latest operations.
+  const start = state.dashboard?.period?.start;
+  if (transactionRange === "period" && start && !(transactionsSince && transactionsSince <= start)) loadAll();
+}
+$("txToday")?.addEventListener("click", () => toggleTransactionRange("today"));
+$("txPeriod")?.addEventListener("click", () => toggleTransactionRange("period"));
 document.querySelectorAll("[data-txview]").forEach(btn => btn.addEventListener("click", () => {
   transactionView = btn.dataset.txview;
   document.querySelectorAll("[data-txview]").forEach(b => b.setAttribute("aria-selected", String(b === btn)));

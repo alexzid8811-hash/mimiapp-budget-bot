@@ -44,7 +44,7 @@ function setup() {
     document: {addEventListener(){}, body:{classList:{toggle(){}}}, createElement:()=>({}),getElementById:get, querySelectorAll:()=>[],querySelector:()=>null},
     fetch: async (url, options) => {
       requests.push({url,body:options?.body,method:options?.method});
-      return {ok:true,status:200,json:async()=>responses[url] ?? {}};
+      return {ok:true,status:200,json:async()=>responses[url] ?? responses[url.split('?')[0]] ?? {}};
     },
   };
   vm.createContext(sandbox);
@@ -571,6 +571,63 @@ test('«Сегодня» narrows everyday operations to today and combines with 
   html = get('transactionsList').innerHTML;
   assert.match(html, /Обед/);
   assert.doesNotMatch(html, /Сегодня,/);
+});
+
+test('«Период» shows the card period from the header and excludes «Сегодня»', async () => {
+  const {sandbox,get,responses,requests} = setup();
+  responses['/api/transactions'] = [
+    {id:1,type:'expense',amount:100,tx_date:'2026-09-15',note:'Кофе',category_title:'Кафе'},
+    {id:2,type:'income',amount:500,tx_date:'2026-09-10',note:'Возврат'},
+    {id:3,type:'expense',amount:250,tx_date:'2026-09-07',note:'Обед'},
+    {id:4,type:'expense',amount:700,tx_date:'2026-09-06',note:'Такси'},
+    {id:5,type:'expense',amount:900,tx_date:'2026-09-10',bill_rule_id:4,bill_title:'Интернет'},
+  ];
+  responses['/api/piggy-bank'] = {balance:300,movements:[
+    {id:7,direction:'deposit',amount:300,movement_date:'2026-09-12',source:'daily_budget'},
+  ]};
+  await get('refreshBtn').listeners.click();
+  sandbox.window.budgetDate.today = () => '2026-09-15';
+
+  // The first load did not know the period: «Период» loads it whole.
+  vm.runInContext('transactionsSince = null', sandbox);
+  get('txPeriod').listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(requests.some(r => r.url === '/api/transactions?since=2026-09-07'));
+
+  let html = get('transactionsList').innerHTML;
+  assert.match(html, /7 сент\. — 21 сент\./);
+  assert.match(html, /4 операции/);
+  assert.match(html, /Кофе[\s\S]*Карта → копилка[\s\S]*Возврат[\s\S]*Обед/);
+  assert.doesNotMatch(html, /Такси|Интернет/);
+  // Only everyday spending is in the total: 100 + 250.
+  assert.match(html, /−350,00/);
+
+  vm.runInContext('transactionFilter="income"; renderTransactions()', sandbox);
+  html = get('transactionsList').innerHTML;
+  assert.match(html, /Возврат/);
+  assert.doesNotMatch(html, /Кофе|Обед/);
+  vm.runInContext('transactionFilter="all"', sandbox);
+
+  // «Сегодня» replaces «Период», a second tap turns it off.
+  get('txToday').listeners.click();
+  assert.equal(vm.runInContext('transactionRange', sandbox), 'today');
+  assert.match(get('transactionsList').innerHTML, /Сегодня, 15 сент\./);
+  get('txToday').listeners.click();
+  assert.equal(vm.runInContext('transactionRange', sandbox), 'all');
+  assert.match(get('transactionsList').innerHTML, /Такси/);
+
+  // «Подработки» have no card period: the chip is hidden and changes nothing.
+  get('txPeriod').listeners.click();
+  vm.runInContext('state.bootstrap.settings.budget_mode="irregular"; renderTransactions()', sandbox);
+  assert.match(get('transactionsList').innerHTML, /Такси/);
+  vm.runInContext('state.bootstrap.settings.budget_mode="payroll"', sandbox);
+
+  responses['/api/transactions'] = [{id:4,type:'expense',amount:700,tx_date:'2026-09-06',note:'Такси'}];
+  responses['/api/piggy-bank'] = {balance:300,movements:[]};
+  await get('refreshBtn').listeners.click();
+  assert.match(get('transactionsList').innerHTML, /В этом периоде операций пока нет/);
+  const html2 = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
+  assert.match(html2, /class="chip payroll-only" type="button" id="txPeriod"/);
 });
 
 test('mandatory bill payments are kept in their own operations tab', async () => {

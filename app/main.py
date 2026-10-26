@@ -278,8 +278,19 @@ def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
 
 
 @app.get("/api/transactions")
-def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) -> list[dict]:
+def transactions(
+    limit: int = 80, since: date | None = None, user: TelegramUser = Depends(current_user)
+) -> list[dict]:
+    """The latest ``limit`` operations.  ``since`` adds every operation from
+    that day on, however many: «Период» in the list shows the whole card period."""
     uid = user_ready(user)
+    limit = min(max(limit, 1), 300)
+    if since is None:
+        where, params = "ORDER BY tx_date DESC,id DESC LIMIT ?", (limit,)
+    else:
+        where = ("AND (t.tx_date>=? OR t.id IN (SELECT id FROM transactions WHERE user_id=? "
+                 "ORDER BY tx_date DESC,id DESC LIMIT ?)) ORDER BY tx_date DESC,id DESC")
+        params = (since.isoformat(), uid, limit)
     return rows(
         "SELECT t.*, c.title AS category_title, c.emoji AS category_emoji, b.title AS bill_title, "
         "p.amount AS remainder_amount, a.title AS account_title, a.emoji AS account_emoji, "
@@ -289,8 +300,8 @@ def transactions(limit: int = 80, user: TelegramUser = Depends(current_user)) ->
         "LEFT JOIN bill_rules b ON b.id=t.bill_rule_id AND b.user_id=t.user_id "
         "LEFT JOIN piggy_bank_movements p ON p.user_id=t.user_id AND p.bill_payment_id=t.id "
         "LEFT JOIN accounts a ON a.id=t.account_id AND a.user_id=t.user_id "
-        "WHERE t.user_id=? ORDER BY tx_date DESC,id DESC LIMIT ?",
-        (uid, min(max(limit, 1), 300)),
+        f"WHERE t.user_id=? {where}",
+        (uid, *params),
     )
 
 
