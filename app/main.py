@@ -305,6 +305,18 @@ def transactions(
     )
 
 
+@app.get("/api/card-period")
+def card_period(day: date | None = None, user: TelegramUser = Depends(current_user)) -> dict:
+    """The card period containing ``day`` (today by default): «Период» in the
+    operations list steps through them."""
+    uid = user_ready(user)
+    try:
+        period = planning.user_period(uid, day or clock.today())
+    except ValueError as exc:
+        raise HTTPException(400, "Период карты недоступен: задайте зарплату и аванс в настройках") from exc
+    return {"start": period.start.isoformat(), "end": period.end.isoformat()}
+
+
 @app.post("/api/transactions")
 def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = user_ready(user)

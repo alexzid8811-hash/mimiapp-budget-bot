@@ -65,17 +65,18 @@ function shiftISODate(iso, days) { return window.budgetDate.shift(iso, days); }
 
 let loadVersion = 0;
 
-// The operations list holds the latest operations and, once the card period
-// is known from an earlier load, every operation since its start: «Период».
+// The operations list holds the latest operations and every operation since
+// transactionsFrom(): «Период» shows a whole card period.  The first load
+// does not know the period yet.
 let transactionsSince = null;
 
 async function loadAll() {
   const version = ++loadVersion;
-  const since = state.dashboard?.period?.start || null;
+  const since = transactionsFrom();
   try {
     const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts] = await Promise.all([
       api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api(since ? `/api/transactions?since=${since}` : "/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
-      api("/api/piggy-bank").catch(() => ({ movements: [] })),
+      api(since ? `/api/piggy-bank?since=${since}` : "/api/piggy-bank").catch(() => ({ movements: [] })),
       api("/api/irregular").catch(() => null),
       api("/api/accounts").catch(() => null)
     ]);
@@ -85,6 +86,8 @@ async function loadAll() {
     transactionsSince = since;
     window.accountsUi?.render(state);
     render();
+    // A period picked with ‹ while this load was running is loaded now.
+    if (transactionRange === "period") coverTransactionPeriod();
     window.applyCashflowSettings?.(cashflowSettings);
     window.applyCashflow?.(cashflow);
     await window.refreshBuffer?.(cashflow);
@@ -224,6 +227,33 @@ let transactionFilter = "all";
 // «Сегодня» and «Период» (the card period in the header) combine with the
 // type chips: «Сегодня» + «Расходы» is today's spending.
 let transactionRange = "all";
+// The period «Период» shows after ‹: null is the current one.
+let transactionPeriod = null;
+
+// The earliest day the operations list must hold: the start of the period on
+// screen, the current one at least.
+function transactionsFrom() {
+  return [state.dashboard?.period?.start, transactionPeriod?.start].filter(Boolean).sort()[0] || null;
+}
+
+// Loads operations and card ↔ piggy transfers back to transactionsFrom() when
+// the list does not reach that far yet.
+async function coverTransactionPeriod() {
+  const since = transactionsFrom();
+  if (!since || (transactionsSince && transactionsSince <= since)) return;
+  const version = loadVersion;
+  try {
+    const [transactions, piggy] = await Promise.all([
+      api(`/api/transactions?since=${since}`), api(`/api/piggy-bank?since=${since}`),
+    ]);
+    // A newer load replaces the list and covers the period itself.
+    if (version !== loadVersion) return;
+    state.transactions = transactions;
+    state.piggy = piggy;
+    transactionsSince = since;
+    renderTransactions();
+  } catch (e) { toast(e.message); }
+}
 const TRANSACTION_FILTERS = {
   all: () => true,
   expense: t => !t.piggy && t.type === "expense",
@@ -248,7 +278,12 @@ function renderTransactions() {
   const all = [...state.transactions, ...cardPiggyTransfers()].filter(inTransactionView);
   const daily = transactionView !== "bills";
   const today = daily && transactionRange === "today" ? todayISO() : null;
-  const period = daily && transactionRange === "period" && !isIrregular() ? state.dashboard?.period : null;
+  const period = daily && transactionRange === "period" && !isIrregular() ? transactionPeriod || state.dashboard?.period : null;
+  $("txPeriodNav")?.classList.toggle("hidden", !period);
+  if (period) {
+    $("txPeriodLabel").textContent = `${fmtDate(period.start)} — ${fmtDate(period.end)}`;
+    $("txPeriodNext").disabled = !transactionPeriod;
+  }
   const inRange = t => today ? t.tx_date === today : !period || (t.tx_date >= period.start && t.tx_date <= period.end);
   const items = all.filter(t => inRange(t) && transactionMatches(t, query))
     .sort((a, b) => b.tx_date.localeCompare(a.tx_date) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
@@ -276,9 +311,8 @@ function renderTransactions() {
       const expenseTotal = transactions
         .filter(t => t.type === "expense")
         .reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      const countLabel = transactions.length === 1 ? "1 операция"
-        : transactions.length < 5 ? `${transactions.length} операции`
-        : `${transactions.length} операций`;
+      const n = transactions.length, tens = n % 100, ones = n % 10;
+      const countLabel = `${n} ${tens >= 11 && tens <= 14 ? "операций" : ones === 1 ? "операция" : ones >= 2 && ones <= 4 ? "операции" : "операций"}`;
       return `<section class="transaction-week ${collapsed ? "collapsed" : ""}">
         <button class="transaction-week-toggle" type="button" onclick="toggleTransactionWeek('${weekStart}')" aria-expanded="${!collapsed}">
           <span><strong>${today ? `Сегодня, ${fmtDate(today)}` : period ? `${fmtDate(period.start)} — ${fmtDate(period.end)}` : transactionWeekTitle(weekStart)}</strong><small>${countLabel}</small></span>
@@ -697,17 +731,43 @@ document.querySelectorAll("[data-txf]").forEach(btn => btn.addEventListener("cli
   renderTransactions();
 }));
 // «Сегодня» and «Период» exclude each other; a second tap turns the chip off.
+// «Период» always opens on the current period.
 function toggleTransactionRange(range) {
   transactionRange = transactionRange === range ? "all" : range;
+  transactionPeriod = null;
   $("txToday")?.setAttribute("aria-pressed", String(transactionRange === "today"));
   $("txPeriod")?.setAttribute("aria-pressed", String(transactionRange === "period"));
   renderTransactions();
-  // The first load did not know the period yet and may hold only its latest operations.
-  const start = state.dashboard?.period?.start;
-  if (transactionRange === "period" && start && !(transactionsSince && transactionsSince <= start)) loadAll();
+  if (transactionRange === "period") coverTransactionPeriod();
 }
 $("txToday")?.addEventListener("click", () => toggleTransactionRange("today"));
 $("txPeriod")?.addEventListener("click", () => toggleTransactionRange("period"));
+
+// ‹ › step through card periods: their bounds come from the paydays, which
+// only the server knows; › stops at the current period.
+let transactionPeriodStep = null;
+function stepTransactionPeriod(direction) {
+  const current = state.dashboard?.period;
+  const shown = transactionPeriod || current;
+  if (!current || transactionPeriodStep) return transactionPeriodStep;
+  const day = direction < 0 ? shiftISODate(shown.start, -1) : shiftISODate(shown.end, 1);
+  if (day >= current.start) {
+    transactionPeriod = null;
+    renderTransactions();
+    return Promise.resolve();
+  }
+  transactionPeriodStep = api(`/api/card-period?day=${day}`)
+    .then(period => {
+      transactionPeriod = period;
+      renderTransactions();
+      return coverTransactionPeriod();
+    })
+    .catch(e => toast(e.message))
+    .finally(() => { transactionPeriodStep = null; });
+  return transactionPeriodStep;
+}
+$("txPeriodPrev")?.addEventListener("click", () => stepTransactionPeriod(-1));
+$("txPeriodNext")?.addEventListener("click", () => stepTransactionPeriod(1));
 document.querySelectorAll("[data-txview]").forEach(btn => btn.addEventListener("click", () => {
   transactionView = btn.dataset.txview;
   document.querySelectorAll("[data-txview]").forEach(b => b.setAttribute("aria-selected", String(b === btn)));

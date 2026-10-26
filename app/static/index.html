@@ -98,6 +98,11 @@
             <button class="chip" type="button" data-txf="income" aria-pressed="false">Доходы</button>
             <button class="chip" type="button" data-txf="piggy" aria-pressed="false">Копилка</button>
           </div>
+          <div class="analytics-nav tx-period-nav hidden" id="txPeriodNav">
+            <button class="icon-btn" id="txPeriodPrev" type="button" aria-label="Предыдущий период">‹</button>
+            <strong id="txPeriodLabel">—</strong>
+            <button class="icon-btn" id="txPeriodNext" type="button" aria-label="Следующий период">›</button>
+          </div>
         </div>
         <div id="transactionsList" class="list cards-list"></div>
       </section>
@@ -698,7 +703,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20261020-daily-cap"></script>
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
-  <script src="/static/app.js?v=20261026-tx-period"></script>
+  <script src="/static/app.js?v=20261026-tx-period-nav"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/buffer-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
