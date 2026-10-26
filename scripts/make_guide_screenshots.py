@@ -1136,8 +1136,11 @@ def ch07(app: App, sh: Shooter, texts: dict) -> None:
     sh.page.wait_for_timeout(200)
     sh.page.click("#txPeriod")
     sh.settle()
+    sh.page.click("#txPeriodPrev")
+    sh.settle()
     sh.shot("07-operations-period.png", [
-        M(1, "#txPeriod", "al", pad=3), M(2, "#transactionsList .transaction-week-toggle", pad=2),
+        M(1, "#txPeriod", "al", pad=3), M(2, "#txPeriodNav", pad=2),
+        M(3, "#transactionsList .transaction-week-toggle", pad=2),
     ], facts={"Период": "#transactionsList .transaction-week-toggle"})
     sh.page.click("#txPeriod")
     sh.page.wait_for_timeout(200)

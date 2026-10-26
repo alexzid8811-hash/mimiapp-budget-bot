@@ -630,6 +630,80 @@ test('«Период» shows the card period from the header and excludes «Се
   assert.match(html2, /class="chip payroll-only" type="button" id="txPeriod"/);
 });
 
+test('‹ › step «Период» through earlier card periods and load them whole', async () => {
+  const {sandbox,get,responses,requests} = setup();
+  responses['/api/transactions'] = [
+    {id:1,type:'expense',amount:100,tx_date:'2026-09-15',note:'Кофе'},
+    {id:2,type:'expense',amount:250,tx_date:'2026-09-01',note:'Обед'},
+    {id:3,type:'expense',amount:40,tx_date:'2026-08-20',note:'Метро'},
+  ];
+  responses['/api/piggy-bank'] = {balance:300,movements:[
+    {id:7,direction:'deposit',amount:300,movement_date:'2026-08-30',source:'daily_budget'},
+  ]};
+  await get('refreshBtn').listeners.click();
+  await get('refreshBtn').listeners.click();
+  const card = {'2026-09-06':{start:'2026-08-22',end:'2026-09-06'},'2026-08-21':{start:'2026-08-07',end:'2026-08-21'}};
+  sandbox.fetch = (fetch => async (url, options) => {
+    const day = url.match(/card-period\?day=(.+)/)?.[1];
+    if (day) { requests.push({url}); return {ok:true,status:200,json:async()=>card[day]}; }
+    return fetch(url, options);
+  })(sandbox.fetch);
+
+  get('txPeriod').listeners.click();
+  assert.equal(get('txPeriodNav').classList.contains('hidden'), false);
+  assert.equal(get('txPeriodLabel').textContent, '7 сент. — 21 сент.');
+  assert.equal(get('txPeriodNext').disabled, true);
+  assert.match(get('transactionsList').innerHTML, /Кофе/);
+  assert.doesNotMatch(get('transactionsList').innerHTML, /Обед/);
+
+  await get('txPeriodPrev').listeners.click();
+  assert.equal(get('txPeriodLabel').textContent, '22 авг. — 6 сент.');
+  assert.equal(get('txPeriodNext').disabled, false);
+  // The list did not reach so far back: operations and transfers are loaded from the period start.
+  assert.ok(requests.some(r => r.url === '/api/transactions?since=2026-08-22'));
+  assert.ok(requests.some(r => r.url === '/api/piggy-bank?since=2026-08-22'));
+  let html = get('transactionsList').innerHTML;
+  assert.match(html, /22 авг\. — 6 сент\./);
+  assert.match(html, /Обед[\s\S]*Карта → копилка/);
+  assert.doesNotMatch(html, /Кофе|Метро/);
+  assert.match(html, /−250,00/);
+
+  await get('txPeriodPrev').listeners.click();
+  assert.match(get('transactionsList').innerHTML, /Метро/);
+  // A reload keeps the period on screen whole.
+  await get('refreshBtn').listeners.click();
+  assert.ok(requests.some(r => r.url === '/api/transactions?since=2026-08-07'));
+  assert.equal(get('txPeriodLabel').textContent, '7 авг. — 21 авг.');
+
+  await get('txPeriodNext').listeners.click();
+  await get('txPeriodNext').listeners.click();
+  assert.equal(get('txPeriodLabel').textContent, '7 сент. — 21 сент.');
+  assert.equal(get('txPeriodNext').disabled, true);
+
+  // Turned off and on, «Период» starts from the current period again.
+  await get('txPeriodPrev').listeners.click();
+  get('txPeriod').listeners.click();
+  assert.equal(get('txPeriodNav').classList.contains('hidden'), true);
+  get('txPeriod').listeners.click();
+  assert.equal(get('txPeriodLabel').textContent, '7 сент. — 21 сент.');
+});
+
+test('operation counts agree with the number: 21 операция, 24 операции, 12 операций', async () => {
+  const {sandbox,get,responses} = setup();
+  const label = async count => {
+    responses['/api/transactions'] = Array.from({length:count}, (_, i) => ({id:i+1,type:'expense',amount:1,tx_date:'2026-09-15',note:'x'}));
+    await get('refreshBtn').listeners.click();
+    return get('transactionsList').innerHTML.match(/<small>(\d+ \S+)<\/small>/)[1];
+  };
+  sandbox.window.budgetDate.today = () => '2026-09-15';
+  assert.equal(await label(1), '1 операция');
+  assert.equal(await label(3), '3 операции');
+  assert.equal(await label(12), '12 операций');
+  assert.equal(await label(21), '21 операция');
+  assert.equal(await label(24), '24 операции');
+  assert.equal(await label(25), '25 операций');
+});
+
 test('mandatory bill payments are kept in their own operations tab', async () => {
   const {sandbox,get,responses} = setup();
   responses['/api/transactions'] = [

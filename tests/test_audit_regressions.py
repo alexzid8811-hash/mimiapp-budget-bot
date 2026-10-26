@@ -1003,3 +1003,26 @@ def test_transactions_since_adds_every_operation_of_the_period(client):
     assert dates("/api/transactions?limit=5&since=2026-09-13") == [
         "2026-09-14", "2026-09-12", "2026-09-10", "2026-09-08", "2026-09-02"]
     assert client.get("/api/transactions?since=вчера").status_code == 422
+
+
+def test_card_period_steps_back_through_paydays(client):
+    # Salary on 7 September (Monday), the advance on 22 August falls on a
+    # Saturday and comes on Friday the 21st: periods start the day after.
+    current = client.get("/api/card-period").json()
+    assert current == {"start": "2026-09-08", "end": "2026-09-22"}
+    previous = client.get("/api/card-period?day=2026-09-07").json()
+    assert previous == {"start": "2026-08-22", "end": "2026-09-07"}
+    assert client.get("/api/card-period?day=2026-08-21").json()["end"] == "2026-08-21"
+    assert client.get("/api/card-period?day=завтра").status_code == 422
+
+
+def test_piggy_bank_since_adds_every_movement_of_the_period(client):
+    from app.cashflow_app import piggy_bank_snapshot
+    for day in ("2026-09-02", "2026-09-08", "2026-09-10"):
+        response = client.post("/api/piggy-bank/deposit", json={"amount": 10, "movement_date": day})
+        assert response.status_code == 200, response.text
+    dates = lambda **kw: [m["movement_date"] for m in as_user(1, piggy_bank_snapshot, 1, **kw)["movements"]]
+    assert dates(limit=1) == ["2026-09-10"]
+    assert dates(limit=1, since=date(2026, 9, 8)) == ["2026-09-10", "2026-09-08"]
+    listed = client.get("/api/piggy-bank?since=2026-09-08").json()["movements"]
+    assert [m["movement_date"] for m in listed] == ["2026-09-10", "2026-09-08", "2026-09-02"]

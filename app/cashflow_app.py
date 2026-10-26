@@ -109,12 +109,22 @@ def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
     return round(float(row["balance"]) if row else 0.0, 2)
 
 
-def piggy_bank_snapshot(user_id: int, limit: int = 80) -> dict:
+def piggy_bank_snapshot(user_id: int, limit: int = 80, since: date | None = None) -> dict:
+    """The balance and the latest ``limit`` movements.  ``since`` adds every
+    movement from that day on, like /api/transactions: «Период» lists the
+    card ↔ piggy transfers of earlier periods too."""
+    limit = min(max(limit, 1), 300)
+    if since is None:
+        where, params = "ORDER BY movement_date DESC,id DESC LIMIT ?", (limit,)
+    else:
+        where = ("AND (movement_date>=? OR id IN (SELECT id FROM piggy_bank_movements WHERE user_id=? "
+                 "ORDER BY movement_date DESC,id DESC LIMIT ?)) ORDER BY movement_date DESC,id DESC")
+        params = (since.isoformat(), user_id, limit)
     movements = legacy.rows(
         "SELECT id,direction,amount,movement_date,note,source,purpose,bill_payment_id,"
         "income_transaction_id,expense_transaction_id,created_at FROM piggy_bank_movements "
-        "WHERE user_id=? ORDER BY movement_date DESC,id DESC LIMIT ?",
-        (user_id, min(max(limit, 1), 300)),
+        f"WHERE user_id=? {where}",
+        (user_id, *params),
     )
     return {"balance": piggy_bank_balance(user_id), "movements": movements}
 
@@ -309,9 +319,9 @@ def delete_cashflow_income_override(
 
 
 @app.get("/api/piggy-bank")
-def get_piggy_bank(user: TelegramUser = Depends(current_user)) -> dict:
+def get_piggy_bank(since: date | None = None, user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
-    return piggy_bank_snapshot(uid)
+    return piggy_bank_snapshot(uid, since=since)
 
 
 def _insert_piggy(user_id: int, direction: str, amount: float, day: date, note: str,
