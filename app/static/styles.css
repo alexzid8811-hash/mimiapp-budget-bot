@@ -384,7 +384,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
       "today period"
       "overspend period"
       "expense period"
-      "buffer forecast";
+      "forecast forecast";
     gap:16px 20px;
     align-items:start;
   }
@@ -393,13 +393,12 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     grid-template-areas:
       "today period"
       "expense period"
-      "buffer forecast";
+      "forecast forecast";
   }
   .page[data-page="home"] .today{grid-area:today}
   .page[data-page="home"] .overspend-panel{grid-area:overspend;margin:0}
   .page[data-page="home"] .quick-expense{grid-area:expense;margin:0}
   .page[data-page="home"] .period{grid-area:period;margin:0}
-  .page[data-page="home"] .home-buffer{grid-area:buffer;margin:0}
   .page[data-page="home"] .home-forecast{grid-area:forecast;margin:0}
 
   /* A plain 2-column grid locks every row's height to its tallest cell, so a
@@ -721,7 +720,7 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
       "quick quick money money money money"
       "overspend overspend overspend overspend overspend overspend"
       "recent recent recent bills bills bills"
-      "buffer buffer buffer forecast forecast forecast";
+      "forecast forecast forecast forecast forecast forecast";
     gap:8px;
     align-items:start;
   }
@@ -730,7 +729,7 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
       "today today period period period period"
       "quick quick money money money money"
       "recent recent recent bills bills bills"
-      "buffer buffer buffer forecast forecast forecast";
+      "forecast forecast forecast forecast forecast forecast";
   }
   .page[data-page="home"] .today.hero-card{grid-area:today;margin:0;align-self:stretch}
   .page[data-page="home"] .quick-actions{grid-area:quick;margin:0;align-self:stretch;grid-template-columns:1fr}
@@ -738,7 +737,6 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
   .page[data-page="home"] .period{grid-area:period;margin:0;align-self:stretch}
   .page[data-page="home"] .home-recent{grid-area:recent;margin:0}
   .page[data-page="home"] .home-bills{grid-area:bills;margin:0}
-  .page[data-page="home"] .home-buffer{grid-area:buffer;margin:0}
   .page[data-page="home"] .home-forecast{grid-area:forecast;margin:0}
   .page[data-page="home"] .overspend-panel{grid-area:overspend;margin:0}
   .hero-big{font-size:40px}
@@ -787,7 +785,7 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
 body:not(.mode-irregular) .irregular-only{display:none !important}
 body.mode-irregular .payroll-only{display:none !important}
 /* Home cards of the payroll mode (card period, buffer, forecast). */
-body.mode-irregular .page[data-page="home"] :is(.money-tiles,.period,.home-buffer,.home-forecast){display:none !important}
+body.mode-irregular .page[data-page="home"] :is(.money-tiles,.period,.home-forecast){display:none !important}
 .irr-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .irr-stat{display:flex;flex-direction:column;gap:2px;min-width:0}
 .irr-stat span{color:var(--muted);font-size:13px}
@@ -929,14 +927,14 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
       "quick quick quick period period period"
       "overspend overspend overspend overspend overspend overspend"
       "recent recent recent bills bills bills"
-      "buffer buffer buffer forecast forecast forecast";
+      "forecast forecast forecast forecast forecast forecast";
   }
   .page[data-page="home"].active:has(#overspendPanel.hidden){
     grid-template-areas:
       "today today today period period period"
       "quick quick quick period period period"
       "recent recent recent bills bills bills"
-      "buffer buffer buffer forecast forecast forecast";
+      "forecast forecast forecast forecast forecast forecast";
   }
   .page[data-page="home"] .quick-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
   .hero-card .money-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -966,6 +964,8 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .buf-chart-keys .k-cur{background:var(--accent)} .buf-chart-keys .k-ok{background:var(--bar-ok)} .buf-chart-keys .k-low{background:var(--bar-low)}
 .pc{border-radius:16px}
 .page[data-page="buffer"] .buffer-summary .card{text-align:center}
+.page[data-page="buffer"] .buffer-now{margin:0 0 8px}
+.page[data-page="buffer"] .buffer-summary{align-items:stretch}
 
 /* Аналитика: средняя сумма — отдельной строкой под графиком */
 .analytics-legend span:last-child{flex-basis:100%;padding-top:8px;border-top:1px solid var(--line);font-size:13px;color:var(--text);font-weight:600}

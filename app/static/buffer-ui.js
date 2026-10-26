@@ -86,7 +86,7 @@
     const disabled = document.getElementById("bufferDisabled");
     disabled?.classList.toggle("hidden", Boolean(data.enabled));
     setText("bufferHorizon", data.enabled ? `до ${formatDate(data.horizon_end, true)}` : "выключен");
-    setText("bufferPageBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
+    setText("reserveBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
     const shortfall = document.getElementById("bufferShortfall");
     if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
@@ -113,8 +113,7 @@
     const cards = document.getElementById("planCards");
     const chart = document.getElementById("bufChart");
     const warning = document.getElementById("bufWarn");
-    const homeWarning = document.getElementById("bufferForecastWarning");
-    warning.classList.add("hidden"); homeWarning.classList.add("hidden");
+    warning.classList.add("hidden");
     chart.innerHTML = ""; setText("bufChartEnd", "—"); setText("planDaily", "");
     const periods = data.enabled ? (data.periods || []).map(withStartCapital) : [];
     if (!periods.length) {
@@ -143,8 +142,8 @@
     const worst = periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
     if(worst.length) {
       const text = "Больше всего возьмёте из буфера в периоды "+worst.map(p=>formatDate(p.start)+" — "+formatDate(p.end)).join(" и ")+": "+formatMoney(worst.reduce((a,p)=>a+Number(p.take),0))+". К концу прогноза останется "+formatMoney(last.buffer)+".";
-      warning.textContent=text;homeWarning.textContent=text;
-      warning.classList.remove("hidden");homeWarning.classList.remove("hidden");
+      warning.textContent=text;
+      warning.classList.remove("hidden");
     }
     // What the period does with the buffer, in words: green goes into it,
     // red is taken from it.
