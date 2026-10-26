@@ -74,6 +74,17 @@ def _piggy_deposits(con, uid: int, start: date, end: date) -> list[dict]:
     ).fetchall()]
 
 
+def _piggy_taken(con, uid: int, start: date, end: date) -> float:
+    """Everything taken out of the piggy bank: to the card, «Снять», expenses
+    and credit card repayments paid from it.  Not a part of the total: it
+    says where money came from, not where it went."""
+    return amount(sum(cents(r["amount"]) for r in con.execute(
+        "SELECT amount FROM piggy_bank_movements "
+        "WHERE user_id=? AND direction='withdraw' AND movement_date BETWEEN ? AND ?",
+        (uid, start.isoformat(), end.isoformat()),
+    )))
+
+
 def _kinds(expenses: list[dict], deposits: list[dict]) -> dict:
     daily = sum(cents(e["amount"]) for e in expenses if e["bill_rule_id"] is None)
     bills = sum(cents(e["amount"]) for e in expenses if e["bill_rule_id"] is not None)
@@ -270,6 +281,7 @@ def summary(uid: int, mode: Mode, anchor: date, today: date | None = None) -> di
     with connect() as con:
         expenses = _expenses(con, uid, start, end)
         deposits = _piggy_deposits(con, uid, start, end)
+        piggy_taken = _piggy_taken(con, uid, start, end)
         prev_expenses = _expenses(con, uid, prev_start, compare_end)
         prev_deposits = _piggy_deposits(con, uid, prev_start, compare_end)
     kinds = _kinds(expenses, deposits)
@@ -290,6 +302,7 @@ def summary(uid: int, mode: Mode, anchor: date, today: date | None = None) -> di
         "today": today.isoformat(),
         "totals": kinds,
         "previous_totals": previous,
+        "piggy_taken": piggy_taken,
         "categories": _categories(expenses, prev_expenses),
         "days": [] if mode == "year" else _days(expenses, start, end),
         "daily_limit": _daily_limit(uid, start, end, today) if mode == "period" else None,

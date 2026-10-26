@@ -225,6 +225,9 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
     ws.cell(row=end, column=1, value="Итого").font = TOTAL_FONT
     ws.cell(row=end, column=2, value=total).number_format = MONEY_FORMAT
     ws.cell(row=end, column=2).font = TOTAL_FONT
+    # Below the total and outside the pie: not a part of it.
+    ws.cell(row=end + 1, column=1, value="Взято из копилки")
+    ws.cell(row=end + 1, column=2, value=data["piggy_taken"]).number_format = MONEY_FORMAT
     if total:
         pie = PieChart()
         pie.title = "Куда ушли деньги"
@@ -244,9 +247,9 @@ def build_charts_sheet(wb: Workbook, user_id: int, currency: str, today) -> None
         pie.legend.position = "r"
         _tidy(pie)
         ws.add_chart(pie, f"{CHART_COLUMN}{row}")
-        row = max(end + 2, row + _chart_rows(pie))
+        row = max(end + 3, row + _chart_rows(pie))
     else:
-        row = end + 2
+        row = end + 3
 
     # 2. What it was spent on.
     ws.cell(row=row, column=1, value="На что потрачено (обычные траты)").font = SECTION_FONT
