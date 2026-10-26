@@ -30,7 +30,7 @@ const sample = {
   ],
 };
 
-function setup(response = sample) {
+function setup(response = sample, storage = {}) {
   const elements = new Map(), requests = [];
   const element = () => {
     const classes = new Set();
@@ -50,7 +50,7 @@ function setup(response = sample) {
   const modes = ['period', 'month', 'year'].map(mode => ({...element(), dataset: {amode: mode}}));
   const sandbox = {
     console, URLSearchParams, Intl, Date, Math, Number, String,
-    window: {},
+    window: {localStorage: {getItem: k => storage[k] ?? null, setItem: (k, v) => { storage[k] = String(v); }}},
     state: {bootstrap: {categories: [{id: 1}, {id: 2}]}},
     api: async url => { requests.push(url); return response; },
     document: {
@@ -170,4 +170,52 @@ test('switching mode and expanding a category', async () => {
   assert.equal(requests.at(-1), '/api/analytics?mode=year');
   await get('analyticsPrev').listeners.click();
   assert.equal(requests.at(-1), '/api/analytics?mode=year&anchor=2026-08-01');
+});
+
+test('operations of an open category can be listed by date or by amount', async () => {
+  const ops = [
+    {id: 11, date: '2026-09-12', amount: 400, note: 'ужин'}, {id: 12, date: '2026-09-03', amount: 100, note: 'обед'},
+    {id: 14, date: '2026-09-05', amount: 60, note: 'кофе'}, {id: 13, date: '2026-09-05', amount: 40, note: 'чай'},
+  ];
+  const data = {...sample, categories: [{...sample.categories[0], top: ops.slice(0, 3), operations: ops}]};
+  const storage = {};
+  const {sandbox, get} = setup(data, storage);
+  await sandbox.window.budgetAnalytics.load();
+  const click = (attr, key) => get('analyticsCategories').listeners.click({target: {
+    closest: sel => sel === `[data-${attr}]` ? {dataset: {[attr]: key}} : null,
+  }});
+  const order = () => [...get('analyticsCategories').innerHTML.matchAll(/<span><span>([^,<]+),/g)].map(m => m[1]);
+  click('cat', '2');
+  let html = get('analyticsCategories').innerHTML;
+  // Largest first by default, and that chip is pressed.
+  assert.match(html, /data-sort="amount_desc" aria-pressed="true"/);
+  assert.match(html, /data-sort="date" aria-pressed="false" title="От прошлых к новым">По дате/);
+  assert.deepEqual(order(), ['ужин', 'обед', 'кофе']);
+
+  // By date, old to new; one day keeps the order the operations were added.
+  click('sort', 'date');
+  assert.deepEqual(order(), ['обед', 'чай', 'кофе']);
+  assert.equal(storage['analytics-ops-sort'], 'date');
+  click('more', '2');
+  assert.deepEqual(order(), ['обед', 'чай', 'кофе', 'ужин']);
+
+  click('sort', 'amount_asc');
+  assert.deepEqual(order(), ['чай', 'кофе', 'обед', 'ужин']);
+  assert.match(get('analyticsCategories').innerHTML, /data-sort="amount_asc" aria-pressed="true"/);
+
+  // The choice is remembered for the next visit.
+  const next = setup(data, storage);
+  await next.sandbox.window.budgetAnalytics.load();
+  next.get('analyticsCategories').listeners.click({target: {closest: sel => sel === '[data-cat]' ? {dataset: {cat: '2'}} : null}});
+  assert.match(next.get('analyticsCategories').innerHTML, /data-sort="amount_asc" aria-pressed="true"/);
+});
+
+test('a category with one operation has no order to choose', async () => {
+  const one = [{id: 1, date: '2026-09-12', amount: 400, note: 'ужин'}];
+  const data = {...sample, categories: [{...sample.categories[0], top: one, operations: one}]};
+  const {sandbox, get} = setup(data);
+  await sandbox.window.budgetAnalytics.load();
+  get('analyticsCategories').listeners.click({target: {closest: sel => sel === '[data-cat]' ? {dataset: {cat: '2'}} : null}});
+  assert.match(get('analyticsCategories').innerHTML, /ужин/);
+  assert.doesNotMatch(get('analyticsCategories').innerHTML, /data-sort/);
 });

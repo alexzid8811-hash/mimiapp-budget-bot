@@ -15,8 +15,22 @@
   let data = null;
   let loadId = 0;
   const open = new Set();
-  // Categories whose whole list of operations is shown, not just the largest.
+  // Categories whose whole list of operations is shown, not just the first few.
   const showAll = new Set();
+  // Order of the operations of an open category: one choice for every
+  // category, remembered between visits.
+  const SORT_KEY = "analytics-ops-sort";
+  const byDate = (a, b) => a.date.localeCompare(b.date) || (a.id ?? 0) - (b.id ?? 0);
+  const SORTS = [
+    {key:"date", title:"По дате", hint:"От прошлых к новым", compare:byDate},
+    {key:"amount_desc", title:"Сумма ↓", hint:"От большой к меньшей", compare:(a, b) => b.amount - a.amount || byDate(a, b)},
+    {key:"amount_asc", title:"Сумма ↑", hint:"От меньшей к большой", compare:(a, b) => a.amount - b.amount || byDate(a, b)},
+  ];
+  let sort = "amount_desc";
+  try {
+    const saved = window.localStorage?.getItem(SORT_KEY);
+    if (SORTS.some(s => s.key === saved)) sort = saved;
+  } catch (e) { /* no storage: the default order */ }
 
   async function request(path) {
     // Reuse the authenticated helper from app.js.
@@ -91,12 +105,16 @@
       // Without any spending in the previous range there is nothing to compare with.
       const hadPrevious = data.previous_totals.daily > 0;
       const change = d === null ? (hadPrevious ? "новая" : "") : d === 0 ? "без изменений" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}%`;
-      const all = c.operations || c.top, full = showAll.has(key);
-      const shown = full ? all : c.top;
+      const all = (c.operations || c.top).slice().sort(SORTS.find(s => s.key === sort).compare), full = showAll.has(key);
+      // Collapsed, the list shows as many operations as the server's «top».
+      const shown = full ? all : all.slice(0, c.top.length);
       const more = all.length > c.top.length
         ? `<button type="button" class="analytics-more" data-more="${esc(key)}" aria-expanded="${full}">${full ? "Свернуть" : `Показать все операции (${all.length})`}</button>`
         : "";
-      const drill = expanded ? `<div class="analytics-drill">${shown.map(op => `<span><span>${esc(op.note || "Без комментария")}, ${day(op.date)}</span><span class="num">${rub(op.amount)}</span></span>`).join("")}${more}</div>` : "";
+      const sorter = all.length > 1
+        ? `<div class="analytics-sort" role="group" aria-label="Порядок операций">${SORTS.map(s => `<button type="button" class="chip" data-sort="${s.key}" aria-pressed="${s.key === sort}" title="${s.hint}">${s.title}</button>`).join("")}</div>`
+        : "";
+      const drill = expanded ? `<div class="analytics-drill">${sorter}${shown.map(op => `<span><span>${esc(op.note || "Без комментария")}, ${day(op.date)}</span><span class="num">${rub(op.amount)}</span></span>`).join("")}${more}</div>` : "";
       return `<div class="analytics-cat-item${expanded ? " open" : ""}"><button type="button" class="analytics-cat" aria-expanded="${expanded}" data-cat="${esc(key)}">
         <span class="emoji">${esc(c.emoji)}</span>
         <span><span class="top"><span>${esc(c.title)}</span><strong class="num">${rub(c.amount)}</strong></span>
@@ -230,6 +248,13 @@
   $("analyticsPrev")?.addEventListener("click", () => { if (data) { view.anchor = data.previous_anchor; open.clear(); showAll.clear(); load(); } });
   $("analyticsNext")?.addEventListener("click", () => { if (data?.next_anchor) { view.anchor = data.next_anchor; open.clear(); showAll.clear(); load(); } });
   $("analyticsCategories")?.addEventListener("click", e => {
+    const order = e.target.closest?.("[data-sort]");
+    if (order) {
+      sort = order.dataset.sort;
+      try { window.localStorage?.setItem(SORT_KEY, sort); } catch (err) { /* kept for this visit only */ }
+      renderCategories();
+      return;
+    }
     const more = e.target.closest?.("[data-more]");
     if (more) {
       const key = more.dataset.more;
