@@ -772,9 +772,8 @@ def ch03(app: App, sh: Shooter, texts: dict) -> None:
         M(3, "#periodStrip .day.bill >> nth=-1", pad=2), M(4, "#periodStrip .day.payday", pad=2),
         M(5, ".card.home-bills"), M(6, ".card.home-recent"),
     ], facts={"Заголовок": "#nextPayTitle", "Скоро платежи": "#homeBills"})
-    sh.scroll(".card.home-buffer", "start")
-    sh.shot("03-home-buffer.png", [M(1, ".card.home-buffer"), M(2, ".card.home-forecast")],
-            facts={"В буфере сейчас": "#reserveBalance", "Пояснение": "#reserveReason"})
+    sh.scroll(".card.home-forecast", "start")
+    sh.shot("03-home-forecast.png", [M(1, ".card.home-forecast")])
     # Пример: обед в кафе за 450 ₽.
     sh.scroll_top()
     sh.page.click("#quickExpenseBtn")
@@ -891,9 +890,9 @@ def ch05(app: App, sh: Shooter, texts: dict) -> None:
     # Раздел «Резервы» → «Буфер»
     sh.nav("buffer")
     sh.shot("05-payroll-buffer-page.png", [
-        M(1, "#bufferPageBalance >> xpath=.."), M(2, "#bufferHorizon >> xpath=.."),
-        M(3, "#bufferPageDaily >> xpath=..", pad=2), M(4, "#bufChart"),
-    ], facts={"В буфере сейчас": "#bufferPageBalance", "Прогноз до": "#bufferHorizon",
+        M(1, ".card.buffer-now"), M(2, "#bufferHorizon >> xpath=.."),
+        M(3, "#bufferPageDaily >> xpath=.."), M(4, "#bufChart"),
+    ], facts={"В буфере сейчас": "#reserveBalance", "Пояснение": "#reserveReason", "Прогноз до": "#bufferHorizon",
               "Можно сегодня": "#bufferPageDaily", "В день": "#planDaily", "Конец прогноза": "#bufChartEnd"})
     cur = sh.page.locator("#planCards article.pc.cur")
     sh.scroll(cur, "center")

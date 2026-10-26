@@ -215,6 +215,18 @@ test('category can be renamed and deleted from settings', async () => {
   assert.equal(del.method,'DELETE');
 });
 
+test('"В буфере сейчас" lives on the buffer tab, not on home', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
+  const page = name => html.match(new RegExp(`<section class="page[^"]*" data-page="${name}">[\\s\\S]*?</section>`))[0];
+  for (const id of ['reserveBalance','bufferMeter','reserveReason']) {
+    assert.match(page('buffer'),new RegExp(`id="${id}"`));
+    assert.doesNotMatch(page('home'),new RegExp(`id="${id}"`));
+  }
+  assert.equal((html.match(/В буфере сейчас/g) || []).length,1);
+  // The forecast hint already sits under the plan chart on the same tab.
+  assert.doesNotMatch(html,/bufferForecastWarning|bufferPageBalance|deficitWarning/);
+});
+
 test('buffer has no separate vacation reserve card', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
   assert.doesNotMatch(html,/Отложено из отпускных|vacationReserve/);
@@ -223,7 +235,6 @@ test('buffer has no separate vacation reserve card', () => {
 test('layout expands responsively on tablets and desktop screens', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
   const styles = fs.readFileSync(path.join(__dirname,'../app/static/styles.css'),'utf8');
-  assert.match(html,/class="card home-buffer"/);
   assert.match(html,/class="card home-forecast"/);
   assert.match(styles,/#app\{width:100%;max-width:none/);
   assert.match(styles,/@media\(min-width:900px\)[\s\S]*\.page\[data-page="home"\]\.active[\s\S]*grid-template-columns/);

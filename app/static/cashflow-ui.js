@@ -126,16 +126,6 @@
     }
     setText("reserveReason", reason.trim());
 
-    const warning = document.getElementById("deficitWarning");
-    if (warning) {
-      if (Number(flow.capital_shortfall || 0) > 0) {
-        warning.textContent = `Чтобы не уйти в минус даже без ежедневных трат, не хватает ${formatMoney(flow.capital_shortfall)}.`;
-        warning.classList.remove("hidden");
-      } else {
-        warning.classList.add("hidden");
-      }
-    }
-
     const progress = document.getElementById("dayProgress");
     if (progress) {
       const budget = Number(flow.period_budget || 0);

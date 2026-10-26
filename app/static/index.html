@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20261020-daily-cap"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261026-date-sort" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261026-buffer-move" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -77,13 +77,6 @@
         <div class="card home-recent">
           <div class="section-head"><h3>Последние операции</h3><button class="link-btn" type="button" data-go="operations">Все</button></div>
           <div id="homeRecent" class="list"></div>
-        </div>
-        <div class="card home-buffer">
-          <div class="section-head"><h3>В буфере сейчас</h3><strong class="summary-number num" id="reserveBalance">—</strong></div>
-          <div class="meter"><span id="bufferMeter"></span></div>
-          <p class="muted" id="reserveReason">—</p>
-          <div id="deficitWarning" class="warning hidden"></div>
-          <div id="bufferForecastWarning" class="warning hidden"></div>
         </div>
         <div class="card home-forecast"><div class="section-head"><h3>Следующие периоды</h3><button class="link-btn" type="button" data-go="buffer">Все</button></div><div id="forecastList" class="list"></div></div>
       </section>
@@ -168,11 +161,15 @@
       <section class="page" data-page="buffer"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="false" class="payroll-only">Буфер</button><button role="tab" data-seg="obligations" aria-selected="false" class="irregular-only">На обязательные</button><button role="tab" data-seg="reserve" aria-selected="false" class="irregular-only">Резерв</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button><button role="tab" data-seg="plan" aria-selected="false">Платежи</button></div>
         <p class="muted buffer-intro">Приложение откладывает деньги из периодов с большими выплатами для будущих обязательных платежей и периодов с меньшими выплатами. Деньги остаются на вашем счёте.</p>
         <div id="bufferDisabled" class="warning hidden">Включите безопасный дневной лимит в настройках.</div>
-        <div class="grid2 buffer-summary">
-          <div class="card"><span class="muted">В буфере сейчас</span><strong class="summary-number" id="bufferPageBalance">—</strong></div>
-          <div class="card"><span class="muted">Прогноз до</span><strong class="summary-number" id="bufferHorizon">—</strong></div>
+        <div class="card buffer-now">
+          <div class="section-head"><h3>В буфере сейчас</h3><strong class="summary-number num" id="reserveBalance">—</strong></div>
+          <div class="meter"><span id="bufferMeter"></span></div>
+          <p class="muted" id="reserveReason">—</p>
         </div>
-        <div class="muted">Можно сегодня: <strong id="bufferPageDaily">—</strong></div>
+        <div class="grid2 buffer-summary">
+          <div class="card"><span class="muted">Прогноз до</span><strong class="summary-number" id="bufferHorizon">—</strong></div>
+          <div class="card"><span class="muted">Можно сегодня</span><strong class="summary-number" id="bufferPageDaily">—</strong></div>
+        </div>
         <div id="bufferShortfall" class="warning hidden"></div>
         <div id="bufferSpare" class="card buffer-spare hidden">
           <div class="section-head"><h3>Лишнее в буфере</h3><strong class="summary-number num" id="bufferSpareAmount">—</strong></div>
@@ -700,9 +697,9 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20261020-daily-cap"></script>
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
-  <script src="/static/app.js?v=20261020-daily-cap"></script>
-  <script src="/static/cashflow-ui.js?v=20261020-daily-cap"></script>
-  <script src="/static/buffer-ui.js?v=20261020-plan-sum"></script>
+  <script src="/static/app.js?v=20261026-buffer-move"></script>
+  <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
+  <script src="/static/buffer-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261026-date-sort"></script>
