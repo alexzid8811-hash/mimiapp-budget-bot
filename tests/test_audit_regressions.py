@@ -985,3 +985,21 @@ def test_startup_repairs_plan_versions_with_a_deleted_category_and_keeps_a_copy(
     assert any(f'"category_id": {home}' in snapshot for snapshot in snapshots)
     init_db()
     assert len(list((tmp_path / 'backups').glob('*/1.sqlite3'))) == 1
+
+
+def test_transactions_since_adds_every_operation_of_the_period(client):
+    for day in ("2026-09-02", "2026-09-08", "2026-09-10", "2026-09-12", "2026-09-14"):
+        response = client.post("/api/transactions", json={
+            "type": "income", "amount": 100, "tx_date": day, "category_id": None, "note": day,
+        })
+        assert response.status_code == 200
+    dates = lambda url: [row["tx_date"] for row in client.get(url).json()]
+    # The list alone stops at the limit.
+    assert dates("/api/transactions?limit=2") == ["2026-09-14", "2026-09-12"]
+    # «Период» needs the whole card period, however many operations it has.
+    assert dates("/api/transactions?limit=2&since=2026-09-08") == [
+        "2026-09-14", "2026-09-12", "2026-09-10", "2026-09-08"]
+    # The latest operations stay even when they are older than ``since``.
+    assert dates("/api/transactions?limit=5&since=2026-09-13") == [
+        "2026-09-14", "2026-09-12", "2026-09-10", "2026-09-08", "2026-09-02"]
+    assert client.get("/api/transactions?since=вчера").status_code == 422

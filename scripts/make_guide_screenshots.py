@@ -1134,6 +1134,13 @@ def ch07(app: App, sh: Shooter, texts: dict) -> None:
     sh.page.fill("#txSearch", "")
     sh.page.locator("#txSearch").dispatch_event("input")
     sh.page.wait_for_timeout(200)
+    sh.page.click("#txPeriod")
+    sh.settle()
+    sh.shot("07-operations-period.png", [
+        M(1, "#txPeriod", "al", pad=3), M(2, "#transactionsList .transaction-week-toggle", pad=2),
+    ], facts={"Период": "#transactionsList .transaction-week-toggle"})
+    sh.page.click("#txPeriod")
+    sh.page.wait_for_timeout(200)
     sh.page.locator("#transactionsList .list-row", has_text="Обед").first.locator(".actions .tiny:not(.danger)").click()
     sh.page.fill("#expenseAmount", "520")
     sh.shot("07-expense-edit.png", [M(1, label(d, "Сумма"), pad=3), M(2, "#saveExpenseBtn", pad=3)])

@@ -91,6 +91,7 @@
           <input id="txSearch" type="search" placeholder="Поиск по операциям" autocomplete="off" aria-label="Поиск по операциям" />
           <div class="chips" id="txChips" role="group" aria-label="Тип операций">
             <button class="chip" type="button" id="txToday" aria-pressed="false">Сегодня</button>
+            <button class="chip payroll-only" type="button" id="txPeriod" aria-pressed="false">Период</button>
             <span class="chips-sep" aria-hidden="true"></span>
             <button class="chip" type="button" data-txf="all" aria-pressed="true">Все</button>
             <button class="chip" type="button" data-txf="expense" aria-pressed="false">Расходы</button>
@@ -697,7 +698,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20261020-daily-cap"></script>
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
-  <script src="/static/app.js?v=20261026-buffer-move"></script>
+  <script src="/static/app.js?v=20261026-tx-period"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/buffer-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
