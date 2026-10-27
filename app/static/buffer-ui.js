@@ -85,7 +85,13 @@
     if (!data) return;
     const disabled = document.getElementById("bufferDisabled");
     disabled?.classList.toggle("hidden", Boolean(data.enabled));
-    setText("bufferHorizon", data.enabled ? `до ${formatDate(data.horizon_end, true)}` : "выключен");
+    // The forecast ends with its last period: the date the chart and the plan below end on.
+    // The year goes on its own small line so the date fits the tile.
+    const horizon = document.getElementById("bufferHorizon");
+    const planned = data.periods || [];
+    const forecastEnd = planned.length ? planned[planned.length - 1].end : data.horizon_end;
+    if (horizon) horizon.innerHTML = !data.enabled ? "выключен" : !forecastEnd ? "—"
+      : `${formatDate(forecastEnd)} <small>${forecastEnd.slice(0, 4)} г.</small>`;
     setText("reserveBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
     const shortfall = document.getElementById("bufferShortfall");

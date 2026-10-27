@@ -74,8 +74,10 @@ test('paid bill card keeps title, amount and paid total in horizontal rows', () 
   const html = get('planList').innerHTML;
   assert.match(html, /bill-heading/);
   assert.match(html, /интернет<\/div><div class="amount expense">0,00/);
-  assert.match(html, /17 сент\. · уже учтено в бюджете/);
-  assert.match(html, /bill-paid-caption">Оплачено из 1[\s\u00a0]400,00[\s\u00a0]₽<\/div>/);
+  // The paid status sits next to the date; the button only offers to change the payment.
+  assert.match(html, /17 сент\. · оплачено из 1[\s\u00a0]400,00[\s\u00a0]₽<\/div>/);
+  assert.match(html, /editBillPayment\(19\)">Изменить<\/button><\/div>/);
+  assert.doesNotMatch(html, /bill-paid-caption/);
 });
 
 test('editing manual salary preserves kind, payday flag and active state', async () => {
@@ -322,7 +324,8 @@ test('start row shows the start capital as its money and the horizon with a year
  assert.match(table,/20.564,38.₽<\/span><small>положить в буфер/);
  assert.doesNotMatch(table,/47.969,95/);
  assert.doesNotMatch(get('bufWarn').textContent,/23 сент/);
- assert.match(get('bufferHorizon').textContent,/2027/);
+ // The forecast ends with its last period, the date the plan ends on; the year is always shown.
+ assert.match(get('bufferHorizon').innerHTML,/^21 окт\. <small>2026 г\.<\/small>$/);
 });
 
 test('a period whose money falls short of its payments shows the minus in red with a buffer note', async () => {

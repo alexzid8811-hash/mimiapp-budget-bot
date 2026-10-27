@@ -332,17 +332,19 @@ function renderPlan() {
   el.innerHTML = plan.map(p => {
     const planned = Number(p.planned_amount ?? p.amount);
     const paidCaption = Number(p.amount) === planned
-      ? 'Оплачено'
-      : `Оплачено из ${money(planned)}`;
+      ? 'оплачено'
+      : `оплачено из ${money(planned)}`;
     const remainderCaption = Number(p.remainder_amount || 0) > 0
       ? ` · ${money(p.remainder_amount)} в копилке`
       : '';
+    // The button names the action; whether the bill is paid is said next to its date.
     const action = p.paid
-      ? `<div class="bill-payment-action"><button class="tiny" onclick="editBillPayment(${p.payment_id})">Изменить</button><div class="bill-paid-caption">${paidCaption}${remainderCaption}</div></div>`
-      : `<div class="bill-payment-action"><button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Оплачено</button></div>`;
-    // In the irregular mode the money put aside for a bill is shown instead.
-    const meta = p.reserved === undefined ? "уже учтено в бюджете"
-      : p.paid ? "оплачено" : Number(p.missing) > 0 ? `отложено ${money(p.reserved)}, не хватает ${money(p.missing)}` : `отложено ${money(p.reserved)}`;
+      ? `<div class="bill-payment-action"><button class="tiny" onclick="editBillPayment(${p.payment_id})">Изменить</button></div>`
+      : `<div class="bill-payment-action"><button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Отметить оплату</button></div>`;
+    // In the irregular mode an unpaid bill shows the money put aside for it.
+    const meta = p.paid ? `${paidCaption}${remainderCaption}`
+      : p.reserved === undefined ? "уже учтено в бюджете"
+      : Number(p.missing) > 0 ? `отложено ${money(p.reserved)}, не хватает ${money(p.missing)}` : `отложено ${money(p.reserved)}`;
     return `<div class="list-row bill-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="bill-heading"><div class="row-title">${escapeHtml(p.title)}</div><div class="amount expense">${money(p.amount)}</div></div><div class="row-sub bill-meta">${fmtDate(p.due_date)} · ${meta}</div></div></div>${action}</div>`;
   }).join("");
 }

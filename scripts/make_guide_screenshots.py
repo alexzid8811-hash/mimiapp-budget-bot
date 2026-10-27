@@ -1215,7 +1215,7 @@ def ch08(app: App, sh: Shooter, texts: dict) -> None:
     unpaid = sh.page.locator("#planList .bill-row:not(.paid)").first
     paid = sh.page.locator("#planList .bill-row.paid").first
     sh.shot("08-bills-plan.png", [
-        M(1, paid.locator(".bill-paid-caption"), pad=3), M(2, unpaid.locator(".bill-payment-action .tiny"), pad=3),
+        M(1, paid.locator(".bill-meta"), pad=3), M(2, unpaid.locator(".bill-payment-action .tiny"), pad=3),
     ], facts={"Платежи": "#planList"})
     unpaid.locator(".bill-payment-action .tiny").click()
     sh.settle()
@@ -1237,7 +1237,7 @@ def ch08(app: App, sh: Shooter, texts: dict) -> None:
     d.locator("button.primary").click()
     sh.settle()
     sh.shot("08-bills-partial-result.png", [
-        M(1, sh.page.locator("#planList .bill-row", has_text="Интернет").locator(".bill-paid-caption"), pad=3),
+        M(1, sh.page.locator("#planList .bill-row", has_text="Интернет").locator(".bill-meta"), pad=3),
     ], facts={"Платежи": "#planList"})
     # Просроченный платёж: 16 октября, интернет так и не оплачен.
     app.load("payroll", date(2026, 10, 16))
