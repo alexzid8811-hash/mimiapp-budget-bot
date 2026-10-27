@@ -347,7 +347,9 @@ button:disabled{opacity:.5;cursor:not-allowed}
 #planList .bill-meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal}
 #planList .bill-payment-action{margin-top:6px}
 #planList .bill-payment-action .tiny{width:100%;padding:6px;font-size:13px;min-height:30px}
-#planList .bill-paid-caption{margin-top:6px;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Paid: the status line («оплачено из … · … в копилке») may wrap and is not dimmed; the sum is grey. */
+#planList .bill-row.paid .bill-meta{white-space:normal;opacity:1}
+#planList .bill-row.paid .amount{color:var(--muted)}
 
 /* Fluid application shell: phone, tablet and desktop. */
 html,body{width:100%;max-width:100%;overflow-x:hidden}
@@ -625,8 +627,16 @@ html,body{background:var(--page-bg)}
 .cards-list{background:var(--bg);border-radius:14px;padding:0 12px;margin-top:6px;box-shadow:var(--tile-shadow)}
 .segmented{background:var(--bg);margin:4px 0 6px;box-shadow:var(--tile-shadow)}
 .segmented button[aria-selected="true"]{background:var(--accent);color:var(--accent-text)}
-/* Резервы: Буфер · Копилка · Платежи */
-.page[data-page="buffer"] .segmented,.page[data-page="piggy"] .segmented,.page[data-page="plan"] .segmented{grid-template-columns:repeat(3,minmax(0,1fr))}
+/* Резервы. Зарплата: Буфер · Копилка · Платежи в один ряд. Подработки: четыре вкладки —
+   на телефоне 2×2, на широком экране в ряд, одинаково на каждой вкладке. */
+body:not(.mode-irregular) :is(.page[data-page="buffer"],.page[data-page="piggy"],.page[data-page="plan"]) .segmented{grid-template-columns:repeat(3,minmax(0,1fr))}
+body.mode-irregular :is(.page[data-page="obligations"],.page[data-page="reserve"],.page[data-page="piggy"],.page[data-page="plan"]) .segmented{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(min-width:720px){
+  body.mode-irregular :is(.page[data-page="obligations"],.page[data-page="reserve"],.page[data-page="piggy"],.page[data-page="plan"]) .segmented{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+/* «Резервы» уже написано в шапке: заголовок раздела остаётся только для чтения с экрана. */
+:is(.page[data-page="buffer"],.page[data-page="piggy"],.page[data-page="plan"],.page[data-page="obligations"],.page[data-page="reserve"])>.page-title{
+  position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .primary,.secondary{min-height:38px;padding:9px 14px;border-radius:12px}
 /* Blocks nested in a card used the page colour; cards are now that colour. */
 .card .pc,.card .preview,.card .payroll-preview,.category-order-item{background:var(--surface)}
@@ -976,6 +986,7 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .buf-chart-keys .k-cur{background:var(--accent)} .buf-chart-keys .k-ok{background:var(--bar-ok)} .buf-chart-keys .k-low{background:var(--bar-low)}
 .pc{border-radius:16px}
 .page[data-page="buffer"] .buffer-summary .card{text-align:center}
+#bufferHorizon small{display:block;margin-top:2px;font-size:13px;font-weight:500;color:var(--muted)}
 .page[data-page="buffer"] .buffer-now{margin:0 0 8px}
 .page[data-page="buffer"] .buffer-summary{align-items:stretch}
 
