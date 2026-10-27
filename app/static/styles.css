@@ -858,11 +858,11 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
   --expense:#C23A3F;
   --kind-daily:#1A6AB8; --kind-bills:#6B52C8; --kind-buffer:#6B52C8; --kind-piggy:#1C7F4E;
   --tile-shadow:0 1px 2px rgba(18,21,27,.06);
-  --bar-ok:#2E9E66; --bar-low:#D2484E; --bill-dot:#C2410C;
+  --bar-ok:#2E9E66; --bar-low:#D2484E; --bill-dot:#C2410C; --weekend:#C23A3F;
 }
-:root[data-theme="dark"]{--bar-ok:#3FB37A;--bar-low:#E86A6F;--bill-dot:#F08A4B}
+:root[data-theme="dark"]{--bar-ok:#3FB37A;--bar-low:#E86A6F;--bill-dot:#F08A4B;--weekend:#FF8A8F}
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){--bar-ok:#3FB37A;--bar-low:#E86A6F;--bill-dot:#F08A4B}
+  :root:not([data-theme="light"]){--bar-ok:#3FB37A;--bar-low:#E86A6F;--bill-dot:#F08A4B;--weekend:#FF8A8F}
 }
 
 .card{border-radius:20px;padding:12px 16px}
@@ -904,8 +904,12 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .day.today{background:var(--accent);color:#fff;font-weight:700}
 .day.payday{background:color-mix(in srgb,var(--income) 10%,transparent);border:1.5px dashed var(--income);color:var(--income);font-weight:700}
 .day.bill::after{bottom:4px;width:4px;height:4px;margin-left:-2px;background:var(--bill-dot)}
+/* Выходные: число красным, как в календаре. Сегодня и день выплаты сохраняют свой цвет. */
+.day.weekend:not(.today):not(.payday){color:var(--weekend)}
 /* Длинный период: ячейки слишком узкие для чисел — остаются только цвета. */
 .strip:has(.day:nth-child(22)) .day{font-size:0}
+/* Без чисел выходной виден по красной черте сверху. */
+.strip:has(.day:nth-child(22)) .day.weekend:not(.today):not(.payday){box-shadow:inset 0 2px 0 var(--weekend)}
 .strip-legend{font-size:12px}
 
 /* Переключатели: выбранная вкладка белая на сером */
