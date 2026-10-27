@@ -177,9 +177,10 @@
     const piggyColumn = shown.some(p => toPiggy(p) > 0.004);
     setText("planHint", `Пришло − обязательные − на карту${piggyColumn ? " − в копилку" : ""} = сколько положить в буфер или взять из него.`);
     // Yearly payments are saved up in equal parts on every payday; the sum
-    // is shown for the current period only.
+    // is shown for the current period only. In the table it may wrap: it is
+    // the widest text of the last column.
     const yearlyNote = (p, current) => current && Number(p.yearly_saved) > 0
-      ? `<small>из них на годовые ${formatMoney(p.yearly_saved)}</small>` : "";
+      ? `<small class="yearly-note">из них на годовые ${formatMoney(p.yearly_saved)}</small>` : "";
     const plural = n => n%100>=11&&n%100<=14?"дней":n%10===1?"день":n%10>=2&&n%10<=4?"дня":"дней";
     const pastToggle = document.getElementById("bufPastToggle");
     if (pastToggle) {
