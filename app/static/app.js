@@ -159,7 +159,7 @@ function renderDashboard() {
   const pct = d.period_budget > 0 ? Math.min(100, Math.max(0, d.spent / d.period_budget * 100)) : 0;
   $("dayProgress").style.width = `${pct}%`;
   $("forecastList").innerHTML = d.forecast.length ? d.forecast.map(p => `
-    <div class="list-row"><div class="row-text"><div class="row-title">${fmtDate(p.start)} — ${fmtDate(p.end)}</div><div class="row-sub">Доход ${money(p.income)} · платежи ${money(p.mandatory)}</div></div><div class="amount ${p.net < 0 ? 'expense':'income'}">${p.net >= 0 ? '+' : ''}${money(p.net)}</div></div>`).join("") : `<div class="empty">Добавьте суммы зарплаты и аванса, чтобы увидеть прогноз.</div>`;
+    <div class="list-row"><div class="row-text"><div class="row-title">${fmtDate(p.start)} — ${fmtDate(p.end)}</div><div class="row-sub"><span class="nowrap">Доход ${money(p.income)}</span> · <span class="nowrap">платежи ${money(p.mandatory)}</span></div></div><div class="amount ${p.net < 0 ? 'expense':'income'}">${p.net >= 0 ? '+' : ''}${money(p.net)}</div></div>`).join("") : `<div class="empty">Добавьте суммы зарплаты и аванса, чтобы увидеть прогноз.</div>`;
 }
 
 const COLLAPSED_TRANSACTION_WEEKS_KEY = "budget-collapsed-transaction-weeks";

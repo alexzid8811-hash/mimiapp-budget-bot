@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20261020-daily-cap"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261026-buffer-move" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261027-home-polish" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -33,7 +33,7 @@
         </div>
         </div>
         <div id="overspendPanel" class="card overspend-panel hidden">
-          <div class="section-head"><h3>Перерасход сегодня</h3><strong class="num" id="overspendAmount">—</strong></div>
+          <div class="section-head"><h2>Перерасход сегодня</h2><strong class="num" id="overspendAmount">—</strong></div>
           <p class="muted"><span class="payroll-only">Буфер не уменьшается.</span><span class="irregular-only">Резерв не уменьшается сам.</span> Выберите, как покрыть перерасход.</p>
           <div class="overspend-actions">
             <button class="secondary" id="spreadOverspendBtn" type="button">Распределить по дням периода</button>
@@ -57,7 +57,7 @@
           <div id="irrNoIncomeWarning" class="warning irr-no-income hidden"><span id="irrNoIncomeText"></span><button class="secondary" id="irrTakeReserveBtn" type="button">Взять из резерва</button></div>
         </div>
         <div class="card home-accounts hidden" id="homeAccounts">
-          <div class="section-head"><h3>Карты и счета</h3><button class="link-btn" type="button" data-go="settings" data-accounts-settings>Настроить</button></div>
+          <div class="section-head"><h2>Карты и счета</h2><button class="link-btn" type="button" data-go="settings" data-accounts-settings>Настроить</button></div>
           <div id="accDebt" class="acc-debt hidden"><span id="accDebtText"></span><button class="tiny" type="button" id="accDebtBtn">Погасить</button></div>
           <div class="acc-total"><span>Всего</span><strong class="num" id="accTotal">—</strong></div>
           <div id="accList" class="acc-list"></div>
@@ -65,20 +65,20 @@
           <div id="accHints"></div>
         </div>
         <div class="card period">
-          <div class="section-head"><h3 id="nextPayTitle">До следующей выплаты</h3><span class="muted" id="nextPayDate">—</span></div>
+          <div class="section-head"><h2 id="nextPayTitle">До следующей выплаты</h2><span class="muted" id="nextPayDate">—</span></div>
           <div class="strip" id="periodStrip" aria-label="Дни периода"></div>
           <div class="strip-legend"><span id="periodStartLabel">—</span><span class="pay" id="periodEndLabel">—</span></div>
           <span id="dayProgress" hidden></span>
         </div>
         <div class="card home-bills">
-          <div class="section-head"><h3>Скоро платежи</h3><button class="link-btn" type="button" data-go="plan">Все</button></div>
+          <div class="section-head"><h2>Скоро платежи</h2><button class="link-btn" type="button" data-go="plan">Все</button></div>
           <div id="homeBills" class="list"></div>
         </div>
         <div class="card home-recent">
-          <div class="section-head"><h3>Последние операции</h3><button class="link-btn" type="button" data-go="operations">Все</button></div>
+          <div class="section-head"><h2>Последние операции</h2><button class="link-btn" type="button" data-go="operations">Все</button></div>
           <div id="homeRecent" class="list"></div>
         </div>
-        <div class="card home-forecast"><div class="section-head"><h3>Следующие периоды</h3><button class="link-btn" type="button" data-go="buffer">Все</button></div><div id="forecastList" class="list"></div></div>
+        <div class="card home-forecast"><div class="section-head"><h2>Следующие периоды</h2><button class="link-btn" type="button" data-go="buffer">Все</button></div><div id="forecastList" class="list"></div></div>
       </section>
 
       <section class="page" data-page="operations">
@@ -703,7 +703,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20261020-daily-cap"></script>
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
-  <script src="/static/app.js?v=20261026-tx-period-nav"></script>
+  <script src="/static/app.js?v=20261027-home-polish"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/buffer-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/design-ui.js?v=20261011-canvas-design"></script>
