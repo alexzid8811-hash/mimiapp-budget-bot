@@ -329,7 +329,7 @@ def test_buffer_floor_is_kept_from_today(client):
     assert flow["buffer_balance"] == 400
     assert all(row["buffer"] >= 400 for row in flow["periods"])
     assert flow["floor_gap"] == 0
-    assert "минимум 400.00" in flow["reason"]
+    assert "минимум 400,00 ₽" in flow["reason"]
     # Removed: the next funding decisions give the money to the card again.
     assert client.put("/api/buffer-floor", json={"amount": None}).json()["buffer_floor"] == 0
     assert cashflow_snapshot(1)["today_target"] == 100
@@ -355,7 +355,7 @@ def test_buffer_floor_reports_when_it_cannot_be_held(client):
     assert flow["floor_gap"] == 4000
     assert flow["floor_gap_date"] == "2026-09-13"
     assert flow["capital_shortfall"] == 0
-    assert "минимум 5000.00: к 13.09.2026 не хватает 4000.00" in flow["reason"]
+    assert "минимум 5 000,00 ₽: к 13.09.2026 не хватает 4 000,00 ₽" in flow["reason"]
 
 
 def test_buffer_floor_rejects_negative_amount(client):

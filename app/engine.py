@@ -49,6 +49,11 @@ def _add(target: dict[date, int], day: date, value: int) -> None:
         target[day] = target.get(day, 0) + value
 
 
+def _rub(value: int) -> str:
+    """A sum in kopecks as the app shows it: «2 000,00 ₽»."""
+    return f"{amount(value):,.2f}".replace(",", " ").replace(".", ",") + " ₽"
+
+
 def payday_schedule(uid: int, start: date, end: date) -> dict:
     """Actual paydays with forecast amounts and titles in ``[start, end]``."""
     paydays: dict[date, dict] = {}
@@ -654,16 +659,16 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     if result.shortfall > 0:
         reason = (
             f"Буфер не покрывает обязательные платежи: к {result.shortfall_date:%d.%m.%Y} "
-            f"не хватает {amount(result.shortfall):.2f}. Дневной лимит новых периодов снижен до нуля."
+            f"не хватает {_rub(result.shortfall)}. Дневной лимит новых периодов снижен до нуля."
         )
     elif floor_gap > 0:
         reason = (
-            f"Буфер не покрывает обязательные платежи и минимум {amount(inp.buffer_floor):.2f}: "
-            f"к {floor_gap_date:%d.%m.%Y} не хватает {amount(floor_gap):.2f}. "
+            f"Буфер не покрывает обязательные платежи и минимум {_rub(inp.buffer_floor)}: "
+            f"к {floor_gap_date:%d.%m.%Y} не хватает {_rub(floor_gap)}. "
             "Дневной лимит новых периодов снижен до нуля."
         )
     else:
-        floor_text = f", минимум {amount(inp.buffer_floor):.2f}" if inp.buffer_floor else ""
+        floor_text = f", минимум {_rub(inp.buffer_floor)}" if inp.buffer_floor else ""
         reason = (
             f"Буфер держит обязательные платежи на их даты{floor_text} и деньги для будущих слабых периодов. "
             "Он не входит в «можно сегодня» и не покрывает перерасход."
