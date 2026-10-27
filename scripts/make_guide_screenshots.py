@@ -702,7 +702,8 @@ def payroll_today(app: App) -> None:
 def card(sh: Shooter, title: str):
     """Карточка раздела по её заголовку."""
     page = sh.page
-    return page.locator(".page.active .card").filter(has=page.locator(f'h3:text-is("{title}")')).first
+    # На главной заголовки карточек — h2, в остальных разделах — h3.
+    return page.locator(".page.active .card").filter(has=page.locator(f':is(h2, h3):text-is("{title}")')).first
 
 
 LABEL_JS = """(labels, text) => labels.findIndex(label => {
