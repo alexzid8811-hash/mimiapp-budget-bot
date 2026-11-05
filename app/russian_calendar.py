@@ -123,6 +123,21 @@ def is_working_day_ru(day: date) -> bool:
     return day.weekday() < 5
 
 
+def days_off_ru(start: date, end: date) -> dict[str, str]:
+    """Non-working days from *start* to *end* inclusive, by ISO date.
+
+    ``"holiday"`` is a federal public holiday; ``"weekend"`` is any other
+    day off: a Saturday, a Sunday or a day moved by the production calendar.
+    """
+    result: dict[str, str] = {}
+    day = start
+    while day <= end:
+        if not is_working_day_ru(day):
+            result[day.isoformat()] = "holiday" if (day.month, day.day) in FEDERAL_HOLIDAYS else "weekend"
+        day += timedelta(days=1)
+    return result
+
+
 def payday_on_or_before(nominal: date) -> date:
     """Move a salary/advance date to the latest preceding working day.
 

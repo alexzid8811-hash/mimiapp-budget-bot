@@ -57,12 +57,15 @@
     $("periodEndLabel").textContent=date(payday)+" · "+kind.toLowerCase();
     const strip=$("periodStrip");strip.replaceChildren();
     const bills=new Set((state.plan||[]).map(p=>p.due_date));
+    // Days off come from the production calendar (holidays, moved days off);
+    // without it only Saturdays and Sundays are known.
+    const daysOff=d.period.days_off;
     for(let i=0;i<=Math.min(62,days(start,payday));i++){
       const s=shift(start,i), el=document.createElement("div");
-      const weekend=[0,6].includes(new Date(s+"T12:00:00Z").getUTCDay());
-      el.className="day "+(s===payday?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"")+(weekend?" weekend":"");
+      const off=daysOff ? daysOff[s] : [0,6].includes(new Date(s+"T12:00:00Z").getUTCDay()) && "weekend";
+      el.className="day "+(s===payday?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"")+(off?" weekend":"");
       el.textContent=String(Number(s.slice(8)));
-      el.title=date(s)+(weekend?" · выходной":"")+(bills.has(s)?" · обязательный платёж":"");
+      el.title=date(s)+(off==="holiday"?" · праздник":off?" · выходной":"")+(bills.has(s)?" · обязательный платёж":"");
       strip.appendChild(el);
     }
     const periods=flow?.periods||[];

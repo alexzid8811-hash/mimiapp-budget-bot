@@ -266,6 +266,25 @@ test('redesign uses today target without subtracting expenses twice and preserve
  assert.match(get('leftToday').textContent,/2.975,00/);
 });
 
+test('day strip marks days off from the production calendar, holidays included', async () => {
+ const {get,responses}=setup();
+ const days=[];
+ get('periodStrip').appendChild=el=>days.push(el);
+ responses['/api/dashboard'].period={start:'2026-10-30',end:'2026-11-06',days_left:2,
+   days_off:{'2026-10-31':'weekend','2026-11-01':'weekend','2026-11-04':'holiday'}};
+ Object.assign(responses['/api/cashflow'].period,{start:'2026-10-30',end:'2026-11-06',payday:'2026-11-06'});
+ await get('refreshBtn').listeners.click();
+ const off=days.filter(el=>/ weekend/.test(el.className)).map(el=>el.textContent);
+ assert.deepEqual(off,['31','1','4']);
+ assert.match(days.find(el=>el.textContent==='4').title,/ · праздник$/);
+ assert.match(days.find(el=>el.textContent==='31').title,/ · выходной$/);
+ // Without the calendar only Saturdays and Sundays are known.
+ delete responses['/api/dashboard'].period.days_off;
+ days.length=0;
+ await get('refreshBtn').listeners.click();
+ assert.deepEqual(days.filter(el=>/ weekend/.test(el.className)).map(el=>el.textContent),['31','1']);
+});
+
 test('buffer renders responsive cards and table, escaping user-provided labels', async () => {
  const {get,responses}=setup();
  responses['/api/cashflow'].periods=[

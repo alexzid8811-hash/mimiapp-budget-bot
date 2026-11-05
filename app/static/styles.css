@@ -923,7 +923,7 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .day.today{background:var(--accent-fill);color:#fff;font-weight:700}
 .day.payday{background:color-mix(in srgb,var(--income) 7%,transparent);border:1.5px dashed var(--income);color:var(--income);font-weight:700}
 .day.bill::after{bottom:4px;width:4px;height:4px;margin-left:-2px;background:var(--bill-dot)}
-/* Выходные: число красным, как в календаре. Сегодня и день выплаты сохраняют свой цвет. */
+/* Выходные и праздники: число красным, как в календаре. Сегодня и день выплаты сохраняют свой цвет. */
 .day.weekend:not(.today):not(.payday){color:var(--weekend)}
 /* Длинный период: ячейки слишком узкие для чисел — остаются только цвета. */
 .strip:has(.day:nth-child(22)) .day{font-size:0}

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 
 from . import clock, planning
+from .russian_calendar import days_off_ru
 from .validation import APIModel, DatedConditionsIn
 from .savings import check_piggy_history
 from .money import amount as money_amount, cents
@@ -255,7 +256,11 @@ def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
     ]
     return {
         "today": flow["today"],
-        "period": {"start": period["start"], "end": period["end"], "days_left": period["days_left"]},
+        "period": {
+            "start": period["start"], "end": period["end"], "days_left": period["days_left"],
+            # Weekends and public holidays of the production calendar, for the day strip.
+            "days_off": days_off_ru(date.fromisoformat(period["start"]), date.fromisoformat(period["end"])),
+        },
         "income": flow["period_budget"],
         "mandatory": flow["mandatory_period"],
         "spent": flow["spent_period"],

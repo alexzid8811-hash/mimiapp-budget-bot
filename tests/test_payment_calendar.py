@@ -1,10 +1,12 @@
 from datetime import date, timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app import cashflow_app as flow
 from app import engine, planning
 from app.db import connect, ensure_user, init_db
+from app.russian_calendar import days_off_ru
 
 
 @pytest.fixture
@@ -103,3 +105,32 @@ def test_snapshot_uses_every_day_until_shifted_next_payment(uid, monkeypatch, pa
     assert (first["start"], first["end"]) == ("2026-02-20", "2026-03-05")
     assert snapshot["next_income"]["date"] == "2026-03-06"
     assert snapshot["remaining_period"] >= round(snapshot["daily_target"] * 14, 2)
+
+
+def test_days_off_follow_the_production_calendar(uid):
+    autumn = days_off_ru(date(2026, 10, 30), date(2026, 11, 8))
+    # 4 November is a public holiday on a Wednesday.
+    assert autumn == {
+        "2026-10-31": "weekend", "2026-11-01": "weekend", "2026-11-04": "holiday",
+        "2026-11-07": "weekend", "2026-11-08": "weekend",
+    }
+    # Days off moved by the government resolution are days off too.
+    assert days_off_ru(date(2026, 1, 9), date(2026, 1, 12)) == {
+        "2026-01-09": "weekend", "2026-01-10": "weekend", "2026-01-11": "weekend",
+    }
+    assert days_off_ru(date(2026, 12, 31), date(2026, 12, 31)) == {"2026-12-31": "weekend"}
+    # And a working Saturday is not.
+    assert days_off_ru(date(2027, 2, 19), date(2027, 2, 23)) == {
+        "2027-02-21": "weekend", "2027-02-22": "weekend", "2027-02-23": "holiday",
+    }
+
+
+def test_dashboard_lists_the_days_off_of_the_card_period(uid, monkeypatch):
+    monkeypatch.setenv("DEV_MODE", "true")
+    monkeypatch.setattr("app.clock.today", lambda: date(2026, 10, 27))
+    with TestClient(flow.app) as client:
+        period = client.get("/api/dashboard").json()["period"]
+    start, end = date.fromisoformat(period["start"]), date.fromisoformat(period["end"])
+    assert start <= date(2026, 11, 4) <= end
+    assert period["days_off"] == days_off_ru(start, end)
+    assert period["days_off"]["2026-11-04"] == "holiday"
