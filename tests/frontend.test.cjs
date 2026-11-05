@@ -80,6 +80,26 @@ test('paid bill card keeps title, amount and paid total in horizontal rows', () 
   assert.doesNotMatch(html, /bill-paid-caption/);
 });
 
+test('unpaid bills of earlier periods are debts, unpaid ones after their date are overdue', () => {
+  const {sandbox,get} = setup();
+  sandbox.window.budgetDate.today = () => '2026-12-08';
+  vm.runInContext(`state.plan=[
+    {id:1,title:'Страховка',amount:11000,due_date:'2026-12-06',paid:false,debt:true},
+    {id:2,title:'Интернет',amount:1400,due_date:'2026-12-07',paid:false},
+    {id:3,title:'Связь',amount:700,due_date:'2026-12-23',paid:false},
+    {id:4,title:'Коммуналка',amount:9000,planned_amount:9000,due_date:'2026-11-08',paid:true,debt:true,payment_id:5},
+  ]; renderPlan(); renderHomeLists();`, sandbox);
+  const html = get('planList').innerHTML;
+  assert.match(html, /bill-row  overdue[\s\S]*Страховка[\s\S]*6 дек\. · долг · деньги ждут в буфере[\s\S]*payBill\(1,'2026-12-06'\)">Отметить оплату/);
+  assert.match(html, /Интернет[\s\S]*7 дек\. · просрочен · деньги ждут в буфере/);
+  assert.match(html, /Связь[\s\S]*23 дек\. · уже учтено в бюджете/);
+  // A debt paid in this period is shown as any paid bill.
+  assert.match(html, /bill-row paid [^"]*"[\s\S]*Коммуналка[\s\S]*8 нояб\. · оплачено</);
+  const home = get('homeBills').innerHTML;
+  assert.match(home, /Страховка[\s\S]*6 дек\. · <span class="bill-overdue">долг<\/span>[\s\S]*Интернет[\s\S]*<span class="bill-overdue">просрочен<\/span>[\s\S]*Связь[\s\S]*через 15 дней/);
+  assert.doesNotMatch(home, /Коммуналка/);
+});
+
 test('editing manual salary preserves kind, payday flag and active state', async () => {
   const {sandbox,get,requests} = setup();
   vm.runInContext("openRule('income',{id:7,title:'Зарплата',amount:10000,day_of_month:7,kind:'salary',is_payday:true,active:0})",sandbox);

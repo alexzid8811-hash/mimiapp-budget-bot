@@ -350,6 +350,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
 /* Paid: the status line («оплачено из … · … в копилке») may wrap and is not dimmed; the sum is grey. */
 #planList .bill-row.paid .bill-meta{white-space:normal;opacity:1}
 #planList .bill-row.paid .amount{color:var(--muted)}
+/* Unpaid after its date (in an earlier period: a debt): the status is red. */
+#planList .bill-row.overdue .bill-meta,.bill-overdue{color:var(--expense)}
 
 /* Fluid application shell: phone, tablet and desktop. */
 html,body{width:100%;max-width:100%;overflow-x:hidden}

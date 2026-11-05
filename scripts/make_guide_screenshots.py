@@ -1244,6 +1244,15 @@ def ch08(app: App, sh: Shooter, texts: dict) -> None:
     sh.open()
     sh.scroll(".card.home-bills", "center")
     sh.shot("08-bills-overdue.png", [M(1, "#homeBills .list-row", pad=3)], facts={"Скоро платежи": "#homeBills"})
+    # Долг: 23 октября начался новый период, а интернет за 15 октября так и не оплачен.
+    app.load("payroll", date(2026, 10, 23))
+    sh.open()
+    sh.nav("buffer")
+    sh.tab("plan")
+    debt = sh.page.locator("#planList .bill-row.overdue", has_text="Интернет")
+    sh.shot("08-bills-debt.png", [
+        M(1, debt.locator(".bill-meta"), "ol", pad=3), M(2, debt.locator(".bill-payment-action .tiny"), "mr", pad=3),
+    ], facts={"Платежи": "#planList"})
 
 
 # --- 9. Копилка ------------------------------------------------------------------------

@@ -435,12 +435,15 @@ def plan(user: TelegramUser = Depends(current_user)) -> list[dict]:
     uid = user_ready(user)
     from . import irregular_engine  # local import: optional mode
 
+    from . import engine  # local import: engine is independent of this module
+
     if irregular_engine.is_irregular(uid):
         return irregular_plan(uid)
     today = clock.today()
     period = planning.user_period(uid, today)
     categories = {row['id']: row for row in rows("SELECT * FROM categories WHERE user_id=?", (uid,))}
-    events = planning.bill_events(uid, period.start, period.end)
+    # The period's bills and the unpaid ones of earlier periods (debts).
+    events = engine.period_bills(uid, period, today)
     for event in events:
         category = categories.get(event.get('category_id'), {})
         event.update(category_title=category.get('title'), category_emoji=category.get('emoji'))

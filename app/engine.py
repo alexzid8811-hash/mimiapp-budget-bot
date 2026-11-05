@@ -341,6 +341,60 @@ def _period_dict(period) -> dict:
     return {"start": period.start.isoformat(), "end": period.end.isoformat(), "days": period.days}
 
 
+def budget_start(uid: int, today: date, *, settings: dict | None = None, enabled: bool | None = None) -> date:
+    """The first day the budget counts: the start date, or with the start
+    capital switched off the latest payday.  Obligatory payments due earlier
+    are not the budget's: nothing is reserved for them and they are not owed."""
+    settings = settings or settings_for(uid)
+    if enabled is None:
+        enabled = bool(settings["cashflow_enabled"])
+    if enabled:
+        return min(date.fromisoformat(settings["start_date"]), today)
+    recent = [d for d in payday_schedule(uid, today - MARGIN, today)["paydays"] if d <= today]
+    return max(recent) if recent else today
+
+
+def _bills_since_start(uid: int, today: date, first: date, last: date) -> tuple[date, list[dict]]:
+    """The budget start and the bill occurrences from it (or from ``first``,
+    if earlier) through the end of ``last``'s year.  Whole months and years,
+    as the ledger sees them: a bill moved within its month (or a yearly one
+    within its year) is then due on the same day here and in the ledger."""
+    since = budget_start(uid, today)
+    return since, planning.bill_events(uid, min(since, first), date(last.year, 12, 31))
+
+
+def period_bills(uid: int, period, today: date) -> list[dict]:
+    """Obligatory payments of the card period ``period`` («Платежи»), the
+    debts first.
+
+    A debt is a bill due before the period, since the budget start, that has
+    not been paid.  Its money stays reserved in the buffer until it is paid,
+    so the debt is carried from period to period.  A debt paid during the
+    period stays in the list as paid until the period ends.
+    """
+    since, events = _bills_since_start(uid, today, period.start, period.end)
+    result = []
+    for event in events:
+        due = date.fromisoformat(event["due_date"])
+        if due > period.end:
+            continue
+        if due < period.start:
+            if due < since or (event.get("paid") and (event.get("paid_on") or "") < period.start.isoformat()):
+                continue
+            event["debt"] = True
+        result.append(event)
+    return result
+
+
+def overdue_bills(uid: int, today: date) -> list[dict]:
+    """Unpaid obligatory payments due before today, since the budget start."""
+    since, events = _bills_since_start(uid, today, today, today)
+    return [
+        event for event in events
+        if not event.get("paid") and since <= date.fromisoformat(event["due_date"]) < today
+    ]
+
+
 def _run(uid: int, *, force_enabled: bool = False) -> tuple[LedgerInput, dict, date, date, dict, bool]:
     """Resolve the start/capital, run the ledger and return it with the
     extras, today, start, settings and whether the calculation is enabled.
@@ -349,12 +403,8 @@ def _run(uid: int, *, force_enabled: bool = False) -> tuple[LedgerInput, dict, d
     today = clock.today()
     months = max(1, min(12, settings["forecast_months"]))
     enabled = bool(settings["cashflow_enabled"]) or force_enabled
-    if enabled:
-        start = min(date.fromisoformat(settings["start_date"]), today)
-        capital = settings["start_capital"]
-    else:
-        recent = [d for d in payday_schedule(uid, today - MARGIN, today)["paydays"] if d <= today]
-        start, capital = (max(recent) if recent else today), 0.0
+    start = budget_start(uid, today, settings=settings, enabled=enabled)
+    capital = settings["start_capital"] if enabled else 0.0
 
     inp, extras = build_input(uid, start=start, capital=capital, months=months, today=today,
                               confirm_from=settings["payday_confirm_from"], floor=settings["buffer_floor"])
@@ -568,10 +618,9 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "AND funding_envelope='spending' AND transaction_id IS NULL AND date BETWEEN ? AND ?",
             (uid, max(current.start, start).isoformat(), today.isoformat()),
         ).fetchone()[0]
-    # Obligations of the current card period that are still to be paid.
-    mandatory_period = sum(
-        v for d, v in extras["unpaid"].items() if max(current.start, start) <= d <= current.end
-    )
+    # Obligations of the current card period that are still to be paid,
+    # with the debts of earlier periods.
+    mandatory_period = sum(v for d, v in extras["unpaid"].items() if d <= current.end)
 
     period_kept = kept_by_cap(current.start, current.end, funded=False)
 
