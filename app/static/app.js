@@ -108,8 +108,11 @@ function daysUntil(iso) {
   return Math.round((Date.parse(`${iso}T12:00:00Z`) - Date.parse(`${todayISO()}T12:00:00Z`)) / 86400000);
 }
 
-function dueLabel(iso) {
+// A debt is a bill of an earlier period still unpaid: it stays in the list
+// until it is paid, and its money waits in the buffer.
+function dueLabel(iso, debt = false) {
   const n = daysUntil(iso);
+  if (debt) return "долг";
   if (n < 0) return "просрочен";
   if (n === 0) return "сегодня";
   if (n === 1) return "завтра";
@@ -123,7 +126,7 @@ function renderHomeLists() {
   if (bills) {
     const upcoming = (state.plan || []).filter(p => !p.paid)
       .sort((a, b) => a.due_date.localeCompare(b.due_date)).slice(0, 3);
-    bills.innerHTML = upcoming.length ? upcoming.map(p => `<div class="list-row compact-row"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || "📌"}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · ${dueLabel(p.due_date)}</div></div></div><div class="amount">${money(p.amount)}</div></div>`).join("")
+    bills.innerHTML = upcoming.length ? upcoming.map(p => `<div class="list-row compact-row"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || "📌"}</div><div class="row-text"><div class="row-title">${escapeHtml(p.title)}</div><div class="row-sub">${fmtDate(p.due_date)} · ${p.debt || daysUntil(p.due_date) < 0 ? `<span class="bill-overdue">${dueLabel(p.due_date, p.debt)}</span>` : dueLabel(p.due_date)}</div></div></div><div class="amount">${money(p.amount)}</div></div>`).join("")
       : `<div class="empty">В этом периоде всё оплачено.</div>`;
   }
   const recent = $("homeRecent");
@@ -342,10 +345,12 @@ function renderPlan() {
       ? `<div class="bill-payment-action"><button class="tiny" onclick="editBillPayment(${p.payment_id})">Изменить</button></div>`
       : `<div class="bill-payment-action"><button class="tiny" onclick="payBill(${p.id},'${p.due_date}')">Отметить оплату</button></div>`;
     // In the irregular mode an unpaid bill shows the money put aside for it.
+    const overdue = !p.paid && p.reserved === undefined && (p.debt || p.due_date < todayISO());
     const meta = p.paid ? `${paidCaption}${remainderCaption}`
+      : overdue ? `${p.debt ? "долг" : "просрочен"} · деньги ждут в буфере`
       : p.reserved === undefined ? "уже учтено в бюджете"
       : Number(p.missing) > 0 ? `отложено ${money(p.reserved)}, не хватает ${money(p.missing)}` : `отложено ${money(p.reserved)}`;
-    return `<div class="list-row bill-row ${p.paid?'paid':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="bill-heading"><div class="row-title">${escapeHtml(p.title)}</div><div class="amount expense">${money(p.amount)}</div></div><div class="row-sub bill-meta">${fmtDate(p.due_date)} · ${meta}</div></div></div>${action}</div>`;
+    return `<div class="list-row bill-row ${p.paid?'paid':''} ${overdue?'overdue':''}"><div class="row-main"><div class="emoji">${escapeHtml(p.category_emoji) || '📌'}</div><div class="row-text"><div class="bill-heading"><div class="row-title">${escapeHtml(p.title)}</div><div class="amount expense">${money(p.amount)}</div></div><div class="row-sub bill-meta">${fmtDate(p.due_date)} · ${meta}</div></div></div>${action}</div>`;
   }).join("");
 }
 

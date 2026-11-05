@@ -253,7 +253,7 @@ def bill_events(uid, start, end):
     with connect() as con:
         for row in con.execute(
             "SELECT t.bill_rule_id,t.bill_due_date,t.id AS payment_id,t.amount,t.note,t.category_id,"
-            "t.bill_planned_amount,p.amount AS remainder_amount "
+            "t.bill_planned_amount,t.tx_date,p.amount AS remainder_amount "
             "FROM transactions t LEFT JOIN piggy_bank_movements p "
             "ON p.user_id=t.user_id AND p.bill_payment_id=t.id "
             "WHERE t.user_id=? AND t.bill_rule_id IS NOT NULL AND t.bill_due_date BETWEEN ? AND ?",
@@ -267,6 +267,7 @@ def bill_events(uid, start, end):
                 amount=row['amount'],
                 planned_amount=row['bill_planned_amount'] or event.get('planned_amount') or row['amount'],
                 paid=True,
+                paid_on=row['tx_date'],
                 payment_id=row['payment_id'],
                 remainder_destination='piggy' if row['remainder_amount'] is not None else 'budget',
                 remainder_amount=row['remainder_amount'] or 0,

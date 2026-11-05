@@ -183,11 +183,18 @@ def monthly(uid: int, first_month: date, count: int) -> list[dict]:
 
 
 def _open_since(uid: int, today: date) -> date:
-    """Unpaid bills before the current card period are history, not plans."""
+    """Unpaid bills before the current card period are history, not plans,
+    except the debts: unpaid bills since the budget start are still owed
+    (mode «Зарплата и аванс»)."""
+    from . import engine, irregular_engine  # local import: engine reads analytics' tables only
+
     try:
-        return planning.user_period(uid, today).start
+        period_start = planning.user_period(uid, today).start
     except ValueError:
         return today.replace(day=1)
+    if irregular_engine.is_irregular(uid):
+        return period_start
+    return min(period_start, engine.budget_start(uid, today))
 
 
 def _credit_bills(uid: int) -> set[int]:

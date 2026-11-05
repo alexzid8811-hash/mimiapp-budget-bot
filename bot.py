@@ -316,8 +316,29 @@ def morning_report_text(report: dict) -> str:
         when = "сегодня" if days == 0 else "завтра" if days == 1 else f"через {days} дн."
         lines.extend(["", f"Ближайшие обязательные платежи: {report['nearest_due_date'][8:10]}.{report['nearest_due_date'][5:7]}.{report['nearest_due_date'][:4]} ({when})"])
         lines.extend(f"• {bill['title']} — {money(bill['amount'])} ₽" for bill in report["nearest_bills"])
+    lines.extend(overdue_bills_lines(report.get("overdue_bills") or []))
     lines.extend(accounts_lines(report.get("accounts")))
     return "\n".join(lines)
+
+
+OVERDUE_SHOWN = 10
+
+
+def overdue_bills_lines(bills: list[dict]) -> list[str]:
+    """Obligatory payments unpaid after their date: they stay in the report
+    until they are marked paid in the app."""
+    if not bills:
+        return []
+    lines = ["", "⚠️ Не оплачены в срок — деньги на них ждут в буфере. "
+                 "Когда заплатите, нажмите «Отметить оплату» на вкладке «Платежи»:"]
+    lines += [
+        f"• {bill['title']} — {money(bill['amount'])} ₽, срок был {_ddmm(bill['due_date'])}.{bill['due_date'][:4]}"
+        for bill in bills[:OVERDUE_SHOWN]
+    ]
+    rest = bills[OVERDUE_SHOWN:]
+    if rest:
+        lines.append(f"… и ещё {len(rest)} на {money(sum(bill['amount'] for bill in rest))} ₽")
+    return lines
 
 
 async def send_morning_reports(application) -> None:

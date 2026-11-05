@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20261020-daily-cap"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261027-table-edges" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261105-bill-debts" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -158,7 +158,7 @@
       </section>
 
       <section class="page" data-page="plan"><h2 class="page-title">Резервы</h2><div class="segmented" role="tablist" aria-label="Тип резерва"><button role="tab" data-seg="buffer" aria-selected="false" class="payroll-only">Буфер</button><button role="tab" data-seg="obligations" aria-selected="false" class="irregular-only">На обязательные</button><button role="tab" data-seg="reserve" aria-selected="false" class="irregular-only">Резерв</button><button role="tab" data-seg="piggy" aria-selected="false">Копилка</button><button role="tab" data-seg="plan" aria-selected="false">Платежи</button></div>
-        <p class="muted payroll-only">Обязательные платежи текущего периода. Эти суммы уже зарезервированы в буфере и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными.</p>
+        <p class="muted payroll-only">Обязательные платежи текущего периода. Эти суммы уже зарезервированы в буфере и не уменьшают дневной лимит второй раз, когда вы отмечаете их оплаченными. Неоплаченный платёж прошлого периода остаётся здесь долгом, пока вы его не отметите: деньги на него ждут в буфере.</p>
         <p class="muted irregular-only">Обязательные платежи текущего месяца. При оплате деньги берутся из отложенного под платёж; если отложено меньше, недостающее спишется из свободных денег.</p>
         <div id="planList" class="list cards-list"></div>
       </section>
@@ -703,7 +703,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20261020-daily-cap"></script>
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
-  <script src="/static/app.js?v=20261027-home-polish"></script>
+  <script src="/static/app.js?v=20261105-bill-debts"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
   <script src="/static/buffer-ui.js?v=20261027-yearly-wrap"></script>
   <script src="/static/design-ui.js?v=20261027-weekends"></script>

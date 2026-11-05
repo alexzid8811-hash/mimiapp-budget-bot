@@ -151,6 +151,11 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
     flow = engine.compute(user_id)
     period = planning.user_period(user_id, today)
     nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
+    # Unpaid after their date: the debts stay in the report until paid.
+    overdue = [
+        {"due_date": e["due_date"], "title": e.get("title") or "Платёж", "amount": float(e["amount"])}
+        for e in engine.overdue_bills(user_id, today)
+    ]
     daily_amount = float(flow.get("available_today", 0))
     daily_limit = float(flow.get("today_target", daily_amount))
     # The first morning of a card period: yesterday's sum was the rest of the
@@ -184,6 +189,7 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
         "nearest_days_left": None if nearest_date is None
             else (datetime.fromisoformat(nearest_date).date() - today).days,
         "nearest_bills": nearest,
+        "overdue_bills": overdue,
         "accounts": accounts_summary(user_id, today),
     }
 
