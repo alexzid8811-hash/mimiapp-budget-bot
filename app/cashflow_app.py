@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException
 from pydantic import Field
 
 from . import payroll_app as base
-from . import clock, engine, irregular_engine
+from . import clock, engine, irregular_engine, piggy_goals
 from .validation import APIModel
 from .savings import check_piggy_history
 from .auth import TelegramUser, current_user
@@ -39,6 +39,9 @@ class PiggyBankMovementIn(APIModel):
     account_id: int | None = None
     # False: the money already lies on the piggy bank's card («Добавить в копилку»).
     account_move: bool = True
+    # A goal of the piggy bank: the deposit is set aside for it, the
+    # withdrawal is taken from it.  None: no goal.
+    goal_id: int | None = None
 
 
 class PiggyToCardIn(APIModel):
@@ -50,6 +53,8 @@ class PiggyToCardIn(APIModel):
     # overspend.  In both cases the remaining days keep their limit.
     # "transfer" adds money to the period and is spread over the remaining days.
     purpose: Literal["transfer", "today", "cover_overspend"] = "transfer"
+    # The goal the money is taken from (None: the money set aside for no goal).
+    goal_id: int | None = None
 
 
 class DailyCapIn(APIModel):
@@ -110,9 +115,9 @@ def piggy_bank_balance(user_id: int, through: date | None = None) -> float:
 
 
 def piggy_bank_snapshot(user_id: int, limit: int = 80, since: date | None = None) -> dict:
-    """The balance and the latest ``limit`` movements.  ``since`` adds every
-    movement from that day on, like /api/transactions: «Период» lists the
-    card ↔ piggy transfers of earlier periods too."""
+    """The balance, the goals and the latest ``limit`` movements.  ``since``
+    adds every movement from that day on, like /api/transactions: «Период»
+    lists the card ↔ piggy transfers of earlier periods too."""
     limit = min(max(limit, 1), 300)
     if since is None:
         where, params = "ORDER BY movement_date DESC,id DESC LIMIT ?", (limit,)
@@ -122,11 +127,15 @@ def piggy_bank_snapshot(user_id: int, limit: int = 80, since: date | None = None
         params = (since.isoformat(), user_id, limit)
     movements = legacy.rows(
         "SELECT id,direction,amount,movement_date,note,source,purpose,bill_payment_id,"
-        "income_transaction_id,expense_transaction_id,created_at FROM piggy_bank_movements "
+        "income_transaction_id,expense_transaction_id,created_at,"
+        "(SELECT g.title FROM piggy_goal_moves m JOIN piggy_goals g ON g.id=m.goal_id "
+        "WHERE m.piggy_movement_id=piggy_bank_movements.id) AS goal_title FROM piggy_bank_movements "
         f"WHERE user_id=? {where}",
         (user_id, *params),
     )
-    return {"balance": piggy_bank_balance(user_id), "movements": movements}
+    with legacy.connect() as con:
+        goals = piggy_goals.summary(con, user_id)
+    return {"balance": piggy_bank_balance(user_id), "movements": movements, **goals}
 
 
 @app.get("/api/cashflow-settings")
@@ -326,18 +335,22 @@ def get_piggy_bank(since: date | None = None, user: TelegramUser = Depends(curre
 
 def _insert_piggy(user_id: int, direction: str, amount: float, day: date, note: str,
                   source: str, purpose: str | None = None, *, account_id: int | None = None,
-                  account_move: bool = True) -> dict:
+                  account_move: bool = True, goal_id: int | None = None) -> dict:
     from . import accounts_engine
     from .accounts_app import check_account
 
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         check_account(con, user_id, account_id, operation="piggy")
+        if direction == "withdraw":
+            # Money set aside for a goal leaves only from that goal.
+            piggy_goals.check_withdrawal(con, user_id, amount, goal_id)
         movement_id = con.execute(
             "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
             "VALUES(?,?,?,?,?,?,?)",
             (user_id, direction, amount, day.isoformat(), note, source, purpose),
         ).lastrowid
+        piggy_goals.link_movement(con, user_id, movement_id, goal_id, direction, amount, day.isoformat())
         # Cards and accounts: the money moves between the envelopes' cards.
         accounts_engine.link_piggy(
             con, user_id, movement_id, direction=direction, source=source, value=amount,
@@ -369,7 +382,7 @@ def add_piggy_bank_movement(
             raise HTTPException(422, "Нельзя перенести больше неизрасходованного остатка за день")
     return _insert_piggy(user_id, direction, payload.amount, payload.movement_date,
                          payload.note, payload.source, account_id=payload.account_id,
-                         account_move=payload.account_move)
+                         account_move=payload.account_move, goal_id=payload.goal_id)
 
 
 @app.post("/api/piggy-bank/deposit")
@@ -405,7 +418,7 @@ def piggy_bank_to_card(payload: PiggyToCardIn, user: TelegramUser = Depends(curr
         "cover_overspend": "Покрытие перерасхода", "today": "Перевод на сегодня",
     }.get(payload.purpose, "Перевод на карту")
     movement = _insert_piggy(uid, "withdraw", payload.amount, payload.movement_date, note,
-                             "daily_budget", payload.purpose)
+                             "daily_budget", payload.purpose, goal_id=payload.goal_id)
     return {"movement": movement, **piggy_bank_snapshot(uid)}
 
 
@@ -443,6 +456,9 @@ def delete_piggy_bank_movement(
             check_piggy_history(con, uid)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        # A deposit for a goal takes its goal money with it; a deposit for no
+        # goal may not leave the goals above the balance.
+        piggy_goals.check_fits(con, uid)
     return {"ok": True, **piggy_bank_snapshot(uid)}
 
 
@@ -465,3 +481,5 @@ app.include_router(irregular_router)
 from .accounts_app import router as accounts_router
 
 app.include_router(accounts_router)
+
+app.include_router(piggy_goals.router)

@@ -269,6 +269,26 @@ class AccountIncome(Record):
     note: str = Field(default='', max_length=160)
 
 
+class PiggyGoal(Record):
+    title: str = Field(min_length=1, max_length=40)
+    target: float = Field(gt=0)
+
+
+class PiggyGoalMove(Record):
+    goal_id: int = Field(gt=0)
+    amount: float
+    move_date: date
+    piggy_movement_id: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode='after')
+    def not_zero(self):
+        if self.amount == 0:
+            raise ValueError('Пустое движение цели копилки')
+        return self
+
+
+GOAL_TABLES = {'piggy_goals': PiggyGoal, 'piggy_goal_moves': PiggyGoalMove}
+
 ACCOUNT_TABLES = {'accounts': Account, 'account_transfers': AccountTransfer,
                   'account_adjustments': AccountAdjustment, 'account_incomes': AccountIncome}
 
@@ -291,11 +311,11 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'plan_history': History, 'card_allocations': CardAllocation,
           'payroll_changes': PayrollChange, 'emergency_reserve_movements': EmergencyReserve,
           'daily_caps': DailyCap,
-          **ACCOUNT_TABLES}
+          **ACCOUNT_TABLES, **GOAL_TABLES}
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 13):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 14):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -308,6 +328,8 @@ def validate_backup(payload):
         data['settings'].update(accounts_enabled=False, main_account_id=None, accounts_disabled_at=None)
     for table, model in MODELS.items():
         optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations', 'payroll_changes'}
+        if payload['backup_version'] < 13:
+            optional_legacy_tables.update(GOAL_TABLES)
         if payload['backup_version'] < 12:
             optional_legacy_tables.add('daily_caps')
         if payload['backup_version'] < 11:
@@ -384,8 +406,29 @@ def validate_backup(payload):
     if len(set(months)) != len(months):
         raise ValueError('Повторяющийся месяц изменения зарплаты')
     validate_piggy_history(data['piggy_bank_movements'])
+    _validate_goals(data)
     _validate_accounts(payload['backup_version'], source, data)
     return data
+
+
+def _validate_goals(data: dict) -> None:
+    """Every goal move belongs to a goal of the copy and to at most one
+    piggy-bank movement of it; no goal is below zero."""
+    goals = {r['id'] for r in data['piggy_goals']}
+    piggy = {r['id'] for r in data['piggy_bank_movements']}
+    linked = set()
+    saved: dict[int, int] = {}
+    for row in data['piggy_goal_moves']:
+        if row['goal_id'] not in goals:
+            raise ValueError('Не найдена цель копилки из резервной копии')
+        movement = row.get('piggy_movement_id')
+        if movement is not None:
+            if movement not in piggy or movement in linked:
+                raise ValueError('Неверная связь цели с операцией копилки')
+            linked.add(movement)
+        saved[row['goal_id']] = saved.get(row['goal_id'], 0) + round(row['amount'] * 100)
+    if any(value < 0 for value in saved.values()):
+        raise ValueError('На цели копилки отложено меньше нуля')
 
 
 def _validate_accounts(version: int, source: dict, data: dict) -> None:

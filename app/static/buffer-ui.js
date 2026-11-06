@@ -303,6 +303,7 @@
   function renderPiggy() {
     const piggy = bufferState.piggy || { balance: 0, movements: [] };
     setText("piggyBalance", formatMoney(piggy.balance));
+    renderGoals(piggy);
     const withdraw = document.getElementById("piggyWithdrawBtn");
     if (withdraw) withdraw.disabled = Number(piggy.balance || 0) <= 0;
     const list = document.getElementById("piggyMovements");
@@ -317,9 +318,196 @@
         : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера"
           : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : deposit ? "Пополнение"
         : toCard ? (item.purpose === "transfer" ? "На карту · по дням периода" : "На карту · на сегодня") : "Снятие";
-      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${formatDate(item.movement_date)}${item.note ? ` · ${safe(item.note)}` : ""}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
+      const sub = [formatDate(item.movement_date), item.goal_title && `${deposit ? "на цель" : "с цели"} «${safe(item.goal_title)}»`,
+        item.note && safe(item.note)].filter(Boolean).join(" · ");
+      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${sub}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
     }).join("");
   }
+
+  // ---------- Цели копилки ----------
+  // A goal is a label over the piggy bank: «Отпуск» 50 000 ₽, of them saved
+  // 12 500 ₽ (25 %).  The money stays in the piggy bank.
+
+  const goalsOf = piggy => (piggy || bufferState.piggy || {}).goals || [];
+  const goalById = id => goalsOf().find(g => g.id === Number(id));
+
+  // 12 500 ₽ rather than 12 500,00 ₽: goals are round numbers.
+  function goalMoney(value) {
+    const number = Number(value || 0);
+    const whole = Math.abs(number - Math.round(number)) < 0.005;
+    const code = document.getElementById("currency")?.value || "RUB";
+    return new Intl.NumberFormat("ru-RU", {
+      style: "currency", currency: code,
+      minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2,
+    }).format(number);
+  }
+
+  function goalCard(goal) {
+    const percent = Math.max(0, Number(goal.percent || 0));
+    const width = Math.min(100, percent);
+    const saved = Number(goal.saved || 0) > 0;
+    const status = goal.reached ? "Цель достигнута 🎉" : `осталось ${goalMoney(goal.left)}`;
+    return `<div class="goal${goal.reached ? " reached" : ""}">`
+      + `<div class="goal-head"><span class="goal-title">${safe(goal.title)}</span><strong class="goal-pct num">${percent}%</strong>`
+      + `<button class="icon-btn goal-edit" type="button" aria-label="Изменить цель «${safe(goal.title)}»" onclick="editPiggyGoal(${goal.id})">✎</button></div>`
+      + `<div class="goal-bar" role="progressbar" aria-label="${safe(goal.title)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${width}"><i style="width:${width}%"></i></div>`
+      + `<div class="goal-sub"><span class="num">${goalMoney(goal.saved)} из ${goalMoney(goal.target)}</span><span>${status}</span></div>`
+      + `<div class="goal-actions"><button class="tiny" type="button" onclick="depositToPiggyGoal(${goal.id})">Пополнить</button>`
+      + `<button class="tiny" type="button" onclick="withdrawFromPiggyGoal(${goal.id})"${saved ? "" : " disabled"}>Снять</button>`
+      + `<button class="tiny" type="button" onclick="movePiggyGoal(${goal.id})"${saved ? "" : " disabled"}>Перенести</button></div>`
+      + "</div>";
+  }
+
+  function renderGoals(piggy) {
+    const box = document.getElementById("piggyGoals");
+    if (!box) return;
+    const goals = goalsOf(piggy);
+    box.innerHTML = goals.length ? goals.map(goalCard).join("")
+      : '<div class="empty">Добавьте цель, например «Отпуск» на 50 000 ₽, и здесь будет видно, сколько процентов уже накоплено.</div>';
+    const free = Number(piggy.unassigned || 0);
+    document.getElementById("piggyGoalsUnassigned")?.classList.toggle("hidden", !goals.length || free <= 0);
+    setText("piggyGoalsUnassignedText", `Без цели: ${goalMoney(free)}`);
+    const gap = Number(piggy.goals_shortfall || 0);
+    const warning = document.getElementById("piggyGoalsShortfall");
+    if (warning) {
+      warning.classList.toggle("hidden", gap <= 0);
+      warning.textContent = `На цели отложено на ${goalMoney(gap)} больше, чем лежит в копилке: деньги ушли из копилки без цели. Уменьшите одну из целей кнопкой «Перенести» → «Без цели».`;
+    }
+  }
+
+  // «На цель» in the deposit dialog, «С цели» in the withdrawal ones.
+  function prepareGoalField(mode, goalId = null) {
+    const field = document.getElementById("piggyGoalField");
+    const select = document.getElementById("piggyGoal");
+    if (!field || !select) return;
+    const goals = goalsOf();
+    const deposit = mode === "deposit" || mode === "dailyToPiggy";
+    field.classList.toggle("hidden", !goals.length);
+    setText("piggyGoalLabel", deposit ? "На цель" : "С цели");
+    const free = Number(bufferState.piggy?.unassigned || 0);
+    const options = deposit
+      ? goals.map(g => `<option value="${g.id}">${safe(g.title)}</option>`)
+      : goals.filter(g => Number(g.saved) > 0 || g.id === Number(goalId))
+        .map(g => `<option value="${g.id}">${safe(g.title)} (${goalMoney(g.saved)})</option>`);
+    select.innerHTML = `<option value="">${deposit ? "Без цели" : `Без цели (${goalMoney(free)})`}</option>${options.join("")}`;
+    // Taking money: from the goal asked for, else from no goal while it has
+    // money, else from the first goal that has some.
+    const fallback = deposit || free > 0 ? "" : goals.find(g => Number(g.saved) > 0)?.id ?? "";
+    select.value = String(goalId ?? fallback);
+  }
+
+  function goalPayload() {
+    const field = document.getElementById("piggyGoalField");
+    const value = document.getElementById("piggyGoal")?.value;
+    return field && !field.classList.contains("hidden") && value ? { goal_id: Number(value) } : {};
+  }
+
+  function openGoal(goal = null) {
+    document.getElementById("piggyGoalId").value = goal ? goal.id : "";
+    setText("piggyGoalDialogTitle", goal ? "Изменить цель" : "Новая цель");
+    document.getElementById("piggyGoalTitle").value = goal ? goal.title : "";
+    const target = document.getElementById("piggyGoalTarget");
+    target.value = goal ? String(goal.target).replace(".", ",") : "";
+    document.getElementById("deletePiggyGoalBtn")?.classList.toggle("hidden", !goal);
+    // A new goal has nothing to delete: «Сохранить» takes the whole row.
+    document.getElementById("piggyGoalEditActions")?.classList.toggle("single", !goal);
+    document.getElementById("piggyGoalDialog").showModal();
+  }
+
+  function goalOptions(selected, { exclude = null } = {}) {
+    const free = Number(bufferState.piggy?.unassigned || 0);
+    const items = [{ value: "", label: `Без цели (${goalMoney(free)})` },
+      ...goalsOf().map(g => ({ value: String(g.id), label: `${g.title} (${goalMoney(g.saved)})` }))];
+    return items.filter(item => item.value !== exclude)
+      .map(item => `<option value="${item.value}"${item.value === selected ? " selected" : ""}>${safe(item.label)}</option>`)
+      .join("");
+  }
+
+  // «Перенести»: from a goal (or from no goal) to another one, inside the piggy bank.
+  function openGoalMove(fromId = null) {
+    const from = fromId === null ? "" : String(fromId);
+    const fromSelect = document.getElementById("piggyGoalMoveFrom");
+    const toSelect = document.getElementById("piggyGoalMoveTo");
+    fromSelect.innerHTML = goalOptions(from);
+    fromSelect.value = from;
+    const fillTo = () => {
+      const current = toSelect.value;
+      toSelect.innerHTML = goalOptions(current, { exclude: fromSelect.value });
+      if ([...toSelect.options].some(o => o.value === current)) toSelect.value = current;
+    };
+    toSelect.innerHTML = "";
+    fillTo();
+    // From no goal: into the first goal; from a goal: back to no goal.
+    toSelect.value = from === "" ? String(goalsOf()[0]?.id ?? "") : "";
+    fromSelect.onchange = fillTo;
+    const source = from === "" ? Number(bufferState.piggy?.unassigned || 0) : Number(goalById(from)?.saved || 0);
+    const target = from === "" ? goalById(toSelect.value) : null;
+    const suggested = target ? Math.min(source, Number(target.left || 0)) || source : source;
+    document.getElementById("piggyGoalMoveAmount").value = suggested > 0
+      ? (window.ruMoneyInput?.formatMoney ? window.ruMoneyInput.formatMoney(String(suggested)) : String(suggested)) : "";
+    document.getElementById("piggyGoalMoveDialog").showModal();
+  }
+
+  document.getElementById("piggyGoalAddBtn")?.addEventListener("click", () => openGoal());
+  document.getElementById("piggyGoalsPutBtn")?.addEventListener("click", () => openGoalMove(null));
+  window.editPiggyGoal = id => openGoal(goalById(id));
+  window.movePiggyGoal = id => openGoalMove(id);
+  window.depositToPiggyGoal = id => openMovement("deposit", id);
+  window.withdrawFromPiggyGoal = id => openMovement("withdraw", id);
+
+  const parseMoneyInput = raw => (window.ruMoneyInput?.parseMoney ? window.ruMoneyInput.parseMoney(raw) : Number(raw));
+
+  document.getElementById("piggyGoalForm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const id = document.getElementById("piggyGoalId").value;
+    const body = {
+      title: document.getElementById("piggyGoalTitle").value.trim(),
+      target: parseMoneyInput(document.getElementById("piggyGoalTarget").value),
+    };
+    try {
+      bufferState.piggy = await request(id ? `/api/piggy-goals/${id}` : "/api/piggy-goals",
+        { method: id ? "PUT" : "POST", body: JSON.stringify(body) });
+      document.getElementById("piggyGoalDialog").close();
+      renderPiggy();
+      if (typeof toast === "function") toast(id ? "Цель сохранена" : "Цель добавлена");
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  });
+
+  document.getElementById("deletePiggyGoalBtn")?.addEventListener("click", async () => {
+    const goal = goalById(document.getElementById("piggyGoalId").value);
+    if (!goal) return;
+    const kept = Number(goal.saved) > 0 ? ` ${goalMoney(goal.saved)} останутся в копилке без цели.` : "";
+    if (!confirm(`Удалить цель «${goal.title}»?${kept}`)) return;
+    try {
+      bufferState.piggy = await request(`/api/piggy-goals/${goal.id}`, { method: "DELETE" });
+      document.getElementById("piggyGoalDialog").close();
+      renderPiggy();
+      if (typeof toast === "function") toast("Цель удалена");
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  });
+
+  document.getElementById("piggyGoalMoveForm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const from = document.getElementById("piggyGoalMoveFrom").value;
+    const to = document.getElementById("piggyGoalMoveTo").value;
+    const body = {
+      amount: parseMoneyInput(document.getElementById("piggyGoalMoveAmount").value),
+      from_goal_id: from ? Number(from) : null,
+      to_goal_id: to ? Number(to) : null,
+    };
+    try {
+      bufferState.piggy = await request("/api/piggy-goals/transfer", { method: "POST", body: JSON.stringify(body) });
+      document.getElementById("piggyGoalMoveDialog").close();
+      renderPiggy();
+      if (typeof toast === "function") toast("Перенесено");
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    }
+  });
 
   async function refresh(flow) {
     try {
@@ -335,7 +523,8 @@
   }
 
   // mode: "deposit" | "withdraw" | "toCard" | "coverOverspend".
-  function openMovement(mode) {
+  // goalId: the goal the money goes to or is taken from.
+  function openMovement(mode, goalId = null) {
     const direction = mode === "withdraw" ? "withdraw" : "deposit";
     const purpose = mode === "coverOverspend" ? "cover_overspend" : "transfer";
     document.getElementById("piggyDirection").value = direction;
@@ -359,6 +548,12 @@
     document.getElementById("piggyNote").value = "";
     // Cards and accounts: outside money comes from / goes to a card or outside.
     window.accountsUi?.preparePiggy?.(mode);
+    prepareGoalField(mode, goalId);
+    // Opened from a goal card: the title names the goal.
+    const goal = goalId === null ? null : goalById(goalId);
+    if (goal) {
+      setText("piggyDialogTitle", mode === "deposit" ? `Пополнить «${goal.title}»` : `Снять с «${goal.title}»`);
+    }
     document.getElementById("piggyDialog").showModal();
   }
 
@@ -375,6 +570,7 @@
     document.getElementById("piggyDate").value = window.budgetDate.today();
     document.getElementById("piggyNote").value = "";
     window.accountsUi?.preparePiggy?.("dailyToPiggy");
+    prepareGoalField("dailyToPiggy");
     document.getElementById("piggyDialog").showModal();
   });
   document.getElementById("piggyToCardBtn")?.addEventListener("click", () => openMovement("toCard"));
@@ -396,9 +592,9 @@
       ? "/api/piggy-bank/to-card"
       : `/api/piggy-bank/${document.getElementById("piggyDirection").value}`;
     const body = isToCard
-      ? { amount, movement_date, note, purpose }
+      ? { amount, movement_date, note, purpose, ...goalPayload() }
       : { amount, movement_date, note, source: document.getElementById("piggySource").value,
-          ...(window.accountsUi?.fieldPayload?.("piggy") || {}) };
+          ...(window.accountsUi?.fieldPayload?.("piggy") || {}), ...goalPayload() };
     try {
       await request(path, { method: "POST", body: JSON.stringify(body) });
       document.getElementById("piggyDialog").close();

@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 12
+BACKUP_VERSION = 13
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -93,6 +93,9 @@ TABLE_COLUMNS = {
         "id", "account_id", "amount", "date", "source", "payroll_period_start", "piggy_movement_id",
         "reserve_movement_id", "note", "created_at",
     ),
+    # Цели копилки (v13).
+    "piggy_goals": ("id", "title", "target", "created_at"),
+    "piggy_goal_moves": ("id", "goal_id", "amount", "move_date", "piggy_movement_id", "created_at"),
 }
 
 
@@ -138,7 +141,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
     try:
         with user_scope(user_id), connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            for table in ("account_transfers", "account_adjustments", "account_incomes", "envelope_accounts",
+            for table in ("piggy_goal_moves", "piggy_goals", "account_transfers", "account_adjustments", "account_incomes", "envelope_accounts",
                           "emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "daily_caps", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories", "accounts"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
@@ -297,6 +300,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 piggy_ids[row['id']] = int(cur.lastrowid)
                 if row.get('purpose') == 'cap_excess':
                     cap_excess_days[row['movement_date']] = int(cur.lastrowid)
+            _restore_goals(con, user_id, data, piggy_ids)
             reserve_ids: dict[Any, int] = {}
             for row in data["emergency_reserve_movements"]:
                 cur = con.execute(
@@ -350,6 +354,24 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
         raise ValueError("Резервная копия повреждена или содержит неверные данные") from exc
 
     return {table: len(data[table]) for table in TABLE_COLUMNS}
+
+
+def _restore_goals(con, user_id: int, data: dict, piggy_ids: dict) -> None:
+    """Piggy-bank goals and their moves, linked to the restored movements."""
+    goal_ids: dict[Any, int] = {}
+    for row in data["piggy_goals"]:
+        cur = con.execute(
+            "INSERT INTO piggy_goals(user_id,title,target,created_at) VALUES(?,?,?,?)",
+            (user_id, str(row["title"]), float(row["target"]), _created_at(row)),
+        )
+        goal_ids[row["id"]] = int(cur.lastrowid)
+    for row in data["piggy_goal_moves"]:
+        con.execute(
+            "INSERT INTO piggy_goal_moves(user_id,goal_id,amount,move_date,piggy_movement_id,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (user_id, goal_ids[row["goal_id"]], float(row["amount"]), str(row["move_date"]),
+             piggy_ids.get(row.get("piggy_movement_id")), _created_at(row)),
+        )
 
 
 def _restore_accounts(con, user_id: int, data: dict, account_ids: dict, transaction_ids: dict,

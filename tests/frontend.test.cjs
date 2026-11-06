@@ -971,3 +971,68 @@ test('buffer floor is saved from settings and warned about on the buffer page', 
   assert.equal(put.method, 'PUT');
   assert.deepEqual(JSON.parse(put.body), {amount:7000});
 });
+
+const GOALS_PIGGY = {balance:14500,movements:[{id:7,direction:'deposit',amount:12500,movement_date:'2026-09-13',note:'',source:'external',purpose:null,goal_title:'Отпуск'}],
+  goals:[{id:1,title:'Отпуск',target:50000,saved:12500,left:37500,percent:25,reached:false},
+         {id:2,title:'Подарок',target:5000,saved:0,left:5000,percent:0,reached:false}],
+  goals_saved:12500,unassigned:2000,goals_shortfall:0};
+
+test('piggy goals show the saved percent, the amounts and the money without a goal', async () => {
+ const {get,responses}=setup();
+ responses['/api/piggy-bank']=GOALS_PIGGY;
+ await get('refreshBtn').listeners.click();
+ const html=get('piggyGoals').innerHTML;
+ assert.match(html,/Отпуск/);
+ assert.match(html,/25%/);
+ assert.match(html,/width:25%/);
+ assert.match(html,/12\s500\s₽ из 50\s000\s₽/);
+ assert.match(html,/осталось 37\s500\s₽/);
+ // A goal with nothing saved has nothing to take or move.
+ assert.match(html,/withdrawFromPiggyGoal\(2\)" disabled/);
+ assert.equal(get('piggyGoalsUnassigned').classList.contains('hidden'),false);
+ assert.match(get('piggyGoalsUnassignedText').textContent,/Без цели: 2\s000\s₽/);
+ assert.equal(get('piggyGoalsShortfall').classList.contains('hidden'),true);
+ assert.match(get('piggyMovements').innerHTML,/на цель «Отпуск»/);
+});
+
+test('piggy without goals invites to add one and sends no goal', async () => {
+ const {get,requests}=setup();
+ await get('refreshBtn').listeners.click();
+ assert.match(get('piggyGoals').innerHTML,/Добавьте цель/);
+ get('piggyDepositBtn').listeners.click();
+ assert.equal(get('piggyGoalField').classList.contains('hidden'),true);
+ get('piggyAmount').value='300';
+ await get('piggyForm').listeners.submit({preventDefault(){}});
+ const body=JSON.parse(requests.find(r=>r.url==='/api/piggy-bank/deposit').body);
+ assert.equal('goal_id' in body,false);
+});
+
+test('deposit from a goal card is set aside for that goal', async () => {
+ const {sandbox,get,requests,responses}=setup();
+ responses['/api/piggy-bank']=GOALS_PIGGY;
+ await get('refreshBtn').listeners.click();
+ sandbox.window.depositToPiggyGoal(1);
+ assert.equal(get('piggyGoalField').classList.contains('hidden'),false);
+ assert.equal(get('piggyGoalLabel').textContent,'На цель');
+ assert.equal(get('piggyGoal').value,'1');
+ assert.equal(get('piggyDialogTitle').textContent,'Пополнить «Отпуск»');
+ get('piggyAmount').value='1000';
+ await get('piggyForm').listeners.submit({preventDefault(){}});
+ const body=JSON.parse(requests.find(r=>r.url==='/api/piggy-bank/deposit').body);
+ assert.equal(body.goal_id,1);
+ assert.equal(body.amount,1000);
+});
+
+test('new piggy goal posts its title and target', async () => {
+ const {get,requests}=setup();
+ await get('refreshBtn').listeners.click();
+ get('piggyGoalAddBtn').listeners.click();
+ assert.equal(get('piggyGoalDialogTitle').textContent,'Новая цель');
+ assert.equal(get('deletePiggyGoalBtn').classList.contains('hidden'),true);
+ get('piggyGoalTitle').value=' Отпуск ';
+ get('piggyGoalTarget').value='50 000,00';
+ await get('piggyGoalForm').listeners.submit({preventDefault(){}});
+ const request=requests.find(r=>r.url==='/api/piggy-goals');
+ assert.equal(request.method,'POST');
+ assert.deepEqual(JSON.parse(request.body),{title:'Отпуск',target:50000});
+});
