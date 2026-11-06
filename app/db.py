@@ -142,6 +142,32 @@ CREATE TABLE IF NOT EXISTS piggy_bank_movements (
 CREATE INDEX IF NOT EXISTS ix_piggy_bank_user_date
 ON piggy_bank_movements(user_id, movement_date DESC, id DESC);
 
+-- Цели копилки («Отпуск» на 50 000): labels over the piggy bank.  A goal's
+-- saved amount is the sum of its moves; the money stays in the piggy bank.
+CREATE TABLE IF NOT EXISTS piggy_goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    target REAL NOT NULL CHECK(target > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- + set aside for the goal, − taken from it.  piggy_movement_id: the deposit
+-- or withdrawal that named the goal (the move goes with it); NULL: money
+-- already in the piggy bank set aside («Отложить») or given back («Убрать»).
+CREATE TABLE IF NOT EXISTS piggy_goal_moves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    goal_id INTEGER NOT NULL REFERENCES piggy_goals(id) ON DELETE CASCADE,
+    amount REAL NOT NULL CHECK(amount <> 0),
+    move_date TEXT NOT NULL,
+    piggy_movement_id INTEGER REFERENCES piggy_bank_movements(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_piggy_goal_moves_goal
+ON piggy_goal_moves(user_id, goal_id);
+
 CREATE TABLE IF NOT EXISTS cashflow_income_overrides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

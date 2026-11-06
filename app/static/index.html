@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20261020-daily-cap"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261105-bill-debts" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261106-piggy-goals" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -198,6 +198,12 @@
         <div class="card"><span class="muted">В копилке</span><strong class="piggy-balance" id="piggyBalance">—</strong>
           <p class="muted">Копилка ведётся отдельно и не влияет на дневной бюджет без вашего перевода.</p>
           <div class="piggy-actions"><button class="primary" id="piggyDepositBtn">Внести отдельно</button><button class="secondary" id="piggyTransferBtn">Перенести остаток дня</button><button class="secondary" id="piggyToCardBtn">На карту</button><button class="secondary" id="piggyWithdrawBtn">Снять</button></div>
+        </div>
+        <div class="card piggy-goals-card">
+          <div class="section-head"><h3>Цели</h3><button class="tiny" id="piggyGoalAddBtn" type="button">+ Новая цель</button></div>
+          <div id="piggyGoals" class="piggy-goals"></div>
+          <div id="piggyGoalsUnassigned" class="piggy-goals-free hidden"><span id="piggyGoalsUnassignedText"></span><button class="tiny" id="piggyGoalsPutBtn" type="button">Отложить на цель</button></div>
+          <div id="piggyGoalsShortfall" class="warning hidden"></div>
         </div>
         <div class="card"><h3>История</h3><div id="piggyMovements" class="list"></div></div>
       </section>
@@ -666,8 +672,31 @@
       <label>Сумма<input id="piggyAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата<input id="piggyDate" type="date" required /></label>
       <label id="piggyAccountField" class="hidden"><span id="piggyAccountLabel">Откуда</span><select id="piggyAccount"></select></label>
+      <label id="piggyGoalField" class="hidden"><span id="piggyGoalLabel">На цель</span><select id="piggyGoal"></select></label>
       <label>Комментарий<input id="piggyNote" maxlength="160" placeholder="Необязательно" /></label>
       <button class="primary big" value="default" id="savePiggyBtn">Сохранить</button>
+    </form>
+  </dialog>
+
+  <dialog id="piggyGoalDialog">
+    <form method="dialog" id="piggyGoalForm" class="dialog-card">
+      <div class="section-head"><h2 id="piggyGoalDialogTitle">Новая цель</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <input id="piggyGoalId" type="hidden" />
+      <label>На что копите<input id="piggyGoalTitle" required maxlength="40" placeholder="Например, «Отпуск»" autocomplete="off" /></label>
+      <label>Сколько нужно накопить<input id="piggyGoalTarget" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <p class="muted">Деньги цели лежат в копилке. Дневной бюджет цели не меняют.</p>
+      <div class="dialog-actions" id="piggyGoalEditActions"><button class="secondary danger" id="deletePiggyGoalBtn" type="button">Удалить цель</button><button class="primary big" value="default" id="savePiggyGoalBtn">Сохранить</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="piggyGoalMoveDialog">
+    <form method="dialog" id="piggyGoalMoveForm" class="dialog-card">
+      <div class="section-head"><h2>Перенести между целями</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <label>Откуда<select id="piggyGoalMoveFrom"></select></label>
+      <label>Куда<select id="piggyGoalMoveTo"></select></label>
+      <label>Сумма<input id="piggyGoalMoveAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
+      <p class="muted">Деньги остаются в копилке, меняется только цель, на которую они отложены.</p>
+      <button class="primary big" value="default" id="savePiggyGoalMoveBtn">Перенести</button>
     </form>
   </dialog>
 
@@ -705,7 +734,7 @@
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
   <script src="/static/app.js?v=20261105-bill-debts"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
-  <script src="/static/buffer-ui.js?v=20261027-yearly-wrap"></script>
+  <script src="/static/buffer-ui.js?v=20261106-piggy-goals"></script>
   <script src="/static/design-ui.js?v=20261027-weekends"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261026-date-sort"></script>
