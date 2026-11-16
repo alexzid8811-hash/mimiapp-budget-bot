@@ -539,8 +539,12 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .analytics-kind{display:grid;grid-template-columns:10px 1fr auto auto;gap:8px;align-items:center;font-size:14px}
 .analytics-kind i,.analytics-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
 .analytics-kind .pct{color:var(--muted);font-size:13px;min-width:38px;text-align:right}
-.analytics-kind-taken{border-top:1px solid var(--line);padding-top:6px}
+/* Копилка — отдельная карточка: без колонки долей, пополнения — сплошной
+   квадрат, снятия — контурный, под чертой — на сколько она изменилась. */
+.analytics-piggy .analytics-kind{grid-template-columns:10px 1fr auto}
+.analytics-kind-put i{background:var(--kind-piggy)}
 .analytics-kind-taken i{box-sizing:border-box;border:2px solid var(--kind-piggy)}
+.analytics-piggy-net{border-top:1px solid var(--line);padding-top:6px;font-weight:600}
 .analytics-cats{display:grid;gap:8px;padding-bottom:6px}
 .analytics-cat{display:grid;grid-template-columns:38px minmax(0,1fr);gap:12px;align-items:center;width:100%;border:0;background:transparent;text-align:left;padding:4px;border-radius:10px;cursor:pointer}
 .analytics-cat-item.open{background:var(--surface-2);border-radius:10px}
@@ -760,11 +764,12 @@ body{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
 @media(min-width:1024px){
   .page[data-page="analytics"].active{
     display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:8px;align-items:start;
-    grid-template-areas:"modes modes" "nav nav" "hero cats" "chart cats" "bills cats";
+    grid-template-areas:"modes modes" "nav nav" "hero cats" "piggy cats" "chart cats" "bills cats";
   }
   .page[data-page="analytics"] .analytics-modes{grid-area:modes;margin:0}
   .page[data-page="analytics"] .analytics-nav{grid-area:nav;margin:0}
   .page[data-page="analytics"] .analytics-hero{grid-area:hero}
+  .page[data-page="analytics"] .analytics-piggy-card{grid-area:piggy}
   .page[data-page="analytics"] .analytics-cats-card{grid-area:cats}
   /* Days and months never show together: the year tab has months only. */
   .page[data-page="analytics"] #analyticsDaysCard,.page[data-page="analytics"] .analytics-months-card{grid-area:chart}

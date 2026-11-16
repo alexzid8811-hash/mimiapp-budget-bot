@@ -69,13 +69,24 @@ test('analytics page renders totals, categories and bills', async () => {
   await sandbox.window.budgetAnalytics.load();
   assert.equal(requests[0], '/api/analytics?mode=month');
   assert.equal(get('analyticsLabel').textContent, 'Сентябрь 2026');
-  assert.match(get('analyticsTotal').textContent, /5[\s ]000/);
-  assert.match(get('analyticsDelta').textContent, /▲ 25% к этому дню прошлого месяца/);
+  // The total is what was spent: everyday spending and bills, 1 000 + 3 000.
+  // Money put into the piggy bank is not in it, nor in the comparison
+  // (3 800 a month ago).
+  assert.match(get('analyticsTotal').textContent, /^4[\s ]000/);
+  assert.match(get('analyticsDelta').textContent, /▲ 5% к этому дню прошлого месяца/);
   assert.equal(get('analyticsNext').disabled, true);
   const kinds = get('analyticsKinds').innerHTML;
-  assert.match(kinds, /Отложено в копилку<\/span><span class="num">1[\s\u00a0]000[\s\u00a0]₽<\/span><span class="pct num">20%/);
-  // Taken from the piggy bank: its own row after the split, without a share.
-  assert.match(kinds, /analytics-kind-taken"><i><\/i><span>Взято из копилки<\/span><span class="num">1[\s\u00a0]500[\s\u00a0]₽<\/span><span class="pct"><\/span>/);
+  assert.match(kinds, /Повседневные траты<\/span><span class="num">1[\s ]000[\s ]₽<\/span><span class="pct num">25%/);
+  assert.match(kinds, /Обязательные платежи<\/span><span class="num">3[\s ]000[\s ]₽<\/span><span class="pct num">75%/);
+  assert.doesNotMatch(kinds, /копилк/i);
+  assert.equal(get('analyticsStack').innerHTML.match(/<span /g).length, 2);
+  assert.doesNotMatch(get('analyticsStack').innerHTML, /kind-piggy/);
+  // The piggy bank has its own card: put in, taken out, and what changed.
+  const piggy = get('analyticsPiggy').innerHTML;
+  assert.match(piggy, /analytics-kind-put"><i><\/i><span>Отложено в копилку<\/span><span class="num">1[\s ]000[\s ]₽<\/span><\/div>/);
+  assert.match(piggy, /analytics-kind-taken"><i><\/i><span>Взято из копилки<\/span><span class="num">1[\s ]500[\s ]₽<\/span><\/div>/);
+  assert.match(piggy, /Копилка уменьшилась<\/span><span class="num">−500[\s ]₽/);
+  assert.doesNotMatch(piggy, /%/);
 
   const cats = get('analyticsCategories').innerHTML;
   assert.match(cats, /Кафе[\s\S]*Продукты/);
@@ -230,4 +241,21 @@ test('a category with one operation has no order to choose', async () => {
   get('analyticsCategories').listeners.click({target: {closest: sel => sel === '[data-cat]' ? {dataset: {cat: '2'}} : null}});
   assert.match(get('analyticsCategories').innerHTML, /ужин/);
   assert.doesNotMatch(get('analyticsCategories').innerHTML, /data-sort/);
+});
+
+test('the piggy bank card says whether it grew, and stays quiet without movements', async () => {
+  const grew = {...sample, totals: {...sample.totals, piggy: 56195}, piggy_taken: 37973};
+  let {sandbox, get} = setup(grew);
+  await sandbox.window.budgetAnalytics.load();
+  assert.match(get('analyticsPiggy').innerHTML, /Копилка выросла<\/span><span class="num">\+18[\s ]222[\s ]₽/);
+  // The spending total doesn't move with the piggy bank.
+  assert.match(get('analyticsTotal').textContent, /^4[\s ]000/);
+
+  const still = {...sample, totals: {...sample.totals, piggy: 0, total: 4000}, piggy_taken: 0};
+  ({sandbox, get} = setup(still));
+  await sandbox.window.budgetAnalytics.load();
+  const piggy = get('analyticsPiggy').innerHTML;
+  assert.match(piggy, /Отложено в копилку<\/span><span class="num">0[\s ]₽/);
+  assert.match(piggy, /Взято из копилки<\/span><span class="num">0[\s ]₽/);
+  assert.doesNotMatch(piggy, /analytics-piggy-net/);
 });
