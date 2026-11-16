@@ -4,11 +4,13 @@
   const rub = v => new Intl.NumberFormat("ru-RU", {style:"currency",currency:"RUB",maximumFractionDigits:0}).format(Math.round(Number(v)||0));
   const day = s => new Intl.DateTimeFormat("ru-RU", {day:"numeric",month:"short"}).format(new Date(s+"T12:00:00"));
   const SLOTS = 8;
+  // What was spent. The piggy bank has its own card: money put aside is
+  // not spending, so it is neither in the total nor in its split.
   const KINDS = [
     {key:"daily", title:"Повседневные траты", color:"var(--kind-daily)"},
     {key:"bills", title:"Обязательные платежи", color:"var(--kind-bills)"},
-    {key:"piggy", title:"Отложено в копилку", color:"var(--kind-piggy)"},
   ];
+  const spent = t => KINDS.reduce((s, k) => s + (Number(t?.[k.key]) || 0), 0);
   const COMPARE = {month:"к прошлому месяцу", period:"к прошлому периоду", year:"к прошлому году"};
   const COMPARE_SAME_DAY = {month:"к этому дню прошлого месяца", period:"к этому дню прошлого периода", year:"к этому дню прошлого года"};
   let view = {mode:"month", anchor:null};
@@ -77,25 +79,36 @@
     document.querySelectorAll("[data-amode]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.amode === data.mode)));
     $("analyticsLabel").textContent = data.label;
     $("analyticsNext").disabled = !data.next_anchor;
-    renderHero(); renderCategories(); renderDays(); renderMonths(); renderBills();
+    renderHero(); renderPiggy(); renderCategories(); renderDays(); renderMonths(); renderBills();
   }
 
   function renderHero() {
-    const t = data.totals;
+    const t = data.totals, total = spent(t);
     $("analyticsTotalCaption").textContent = data.mode === "year" ? "Всего ушло за год" : data.mode === "period" ? "Всего ушло за период" : "Всего ушло за месяц";
-    $("analyticsTotal").textContent = rub(t.total);
-    const d = delta(t.total, data.previous_totals.total), badge = $("analyticsDelta");
+    $("analyticsTotal").textContent = rub(total);
+    const d = delta(total, spent(data.previous_totals)), badge = $("analyticsDelta");
     badge.classList.toggle("hidden", d === null);
     if (d !== null) {
       badge.className = `analytics-delta ${d > 0 ? "up" : "down"}`;
       badge.textContent = `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}% ${(data.previous_partial ? COMPARE_SAME_DAY : COMPARE)[data.mode]}`;
     }
-    $("analyticsStack").innerHTML = t.total > 0
+    $("analyticsStack").innerHTML = total > 0
       ? KINDS.filter(k => t[k.key] > 0).map(k => `<span style="flex:${t[k.key]};background:${k.color}"></span>`).join("")
       : "";
-    $("analyticsKinds").innerHTML = KINDS.map(k => `<div class="analytics-kind"><i style="background:${k.color}"></i><span>${k.title}</span><span class="num">${rub(t[k.key])}</span><span class="pct num">${t.total > 0 ? Math.round(t[k.key] / t.total * 100) : 0}%</span></div>`).join("")
-      // Not a share of the total: it says where money came from, not where it went.
-      + `<div class="analytics-kind analytics-kind-taken"><i></i><span>Взято из копилки</span><span class="num">${rub(data.piggy_taken)}</span><span class="pct"></span></div>`;
+    $("analyticsKinds").innerHTML = KINDS.map(k => `<div class="analytics-kind"><i style="background:${k.color}"></i><span>${k.title}</span><span class="num">${rub(t[k.key])}</span><span class="pct num">${total > 0 ? Math.round(t[k.key] / total * 100) : 0}%</span></div>`).join("");
+  }
+
+  // Money in and out of the piggy bank over the same range, and what that
+  // changed. No shares: neither row is a part of a total.
+  function renderPiggy() {
+    const put = Number(data.totals.piggy) || 0, taken = Number(data.piggy_taken) || 0;
+    const net = Math.round(put) - Math.round(taken);
+    const row = (cls, title, value) => `<div class="analytics-kind ${cls}"><i></i><span>${title}</span><span class="num">${value}</span></div>`;
+    $("analyticsPiggy").innerHTML = row("analytics-kind-put", "Отложено в копилку", rub(put))
+      + row("analytics-kind-taken", "Взято из копилки", rub(taken))
+      + (put > 0 || taken > 0
+        ? `<div class="analytics-kind analytics-piggy-net"><i></i><span>${net > 0 ? "Копилка выросла" : net < 0 ? "Копилка уменьшилась" : "Копилка не изменилась"}</span><span class="num">${net > 0 ? "+" : net < 0 ? "−" : ""}${rub(Math.abs(net))}</span></div>`
+        : "");
   }
 
   function renderCategories() {

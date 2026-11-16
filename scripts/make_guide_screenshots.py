@@ -1384,10 +1384,11 @@ def ch11(app: App, sh: Shooter, texts: dict) -> None:
     sh.nav("analytics")
     sh.page.wait_for_timeout(500)
     sh.shot("11-analytics-total.png", [
-        M(1, ".page.active .analytics-modes", pad=3), M(2, ".analytics-nav", pad=3),
-        M(3, ".analytics-total-row", pad=3), M(4, "#analyticsKinds", pad=3),
+        # The operations page has a hidden .analytics-nav of its own.
+        M(1, ".page.active .analytics-modes", pad=3), M(2, ".page.active .analytics-nav", pad=3),
+        M(3, ".analytics-total-row", pad=3), M(4, "#analyticsKinds", pad=3), M(5, "#analyticsPiggyCard", pad=0),
     ], facts={"Подпись": "#analyticsTotalCaption", "Всего": "#analyticsTotal", "Сравнение": "#analyticsDelta",
-              "Виды": "#analyticsKinds", "Месяц": "#analyticsLabel"})
+              "Виды": "#analyticsKinds", "Копилка": "#analyticsPiggy", "Месяц": "#analyticsLabel"})
     sh.page.locator("#analyticsCategories .analytics-cat").first.click()
     sh.page.wait_for_timeout(200)
     # The list of operations is next to the category's button, not inside it.
