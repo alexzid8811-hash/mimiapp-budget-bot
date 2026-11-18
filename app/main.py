@@ -625,7 +625,7 @@ def edit_income(rule_id: int, payload: IncomeRuleIn, user: TelegramUser = Depend
         if cur.rowcount == 0:
             raise HTTPException(404, "Income rule not found")
     invalidate_current_auto_reserve(uid)
-    return one("SELECT * FROM income_rules WHERE id=?", (rid,)) or {}
+    return one("SELECT * FROM income_rules WHERE id=?", (rule_id,)) or {}
 
 
 @app.delete("/api/income-rules/{rule_id}")
@@ -663,7 +663,7 @@ def edit_bill(rule_id: int, payload: BillRuleIn, user: TelegramUser = Depends(cu
         if cur.rowcount == 0:
             raise HTTPException(404, "Bill rule not found")
     invalidate_current_auto_reserve(uid)
-    return one("SELECT * FROM bill_rules WHERE id=?", (rid,)) or {}
+    return one("SELECT * FROM bill_rules WHERE id=?", (rule_id,)) or {}
 
 
 @app.delete("/api/bill-rules/{rule_id}")
