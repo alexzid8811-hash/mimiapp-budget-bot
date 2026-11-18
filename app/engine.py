@@ -8,7 +8,7 @@ from . import clock, planning
 from .budget import add_months
 from .db import connect
 from .ledger import (
-    LedgerInput, Sinking, buffer_rows, cap_on, cap_rule, daterange, run_ledger, safe_rate_from,
+    LedgerInput, Sinking, buffer_rows, cap_rule, daterange, run_ledger, safe_rate_from,
     spare_buffer,
 )
 from .money import amount, cents
