@@ -161,6 +161,18 @@ DEV_MODE=true docker compose up --build web
 docker compose up --build
 ```
 
+### Обновление на сервере
+
+Из каталога проекта:
+
+```bash
+git pull --ff-only origin main
+cp -r data data-backup-$(date +%F)   # страховка данных перед обновлением
+docker compose up -d --build
+```
+
+`git pull` забирает свежий `main`, `up -d --build` пересобирает образы и перезапускает `web` и `bot`. Данные сохраняются: базы SQLite лежат в примонтированном каталоге `./data`, а не внутри контейнеров. После обновления проверьте `docker compose ps` (оба сервиса `Up`), логи — `docker compose logs -f`. Как откатить код и данные — в [docs/ROLLBACK.md](docs/ROLLBACK.md).
+
 ## Подключение к Telegram
 
 1. Создайте бота через `@BotFather` и получите `BOT_TOKEN`.
