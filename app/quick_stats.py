@@ -20,7 +20,9 @@ def is_irregular_user(user_id: int) -> bool:
     return _registered(user_id) and irregular_engine.is_irregular(user_id)
 
 
-def _today_expenses(user_id: int, day: str, irregular: bool) -> tuple[list[dict], list[dict], list[dict]]:
+def _today_expenses(user_id: int, day: str, irregular: bool) -> tuple[
+    list[dict], list[dict], list[dict], dict[str, list[dict]]
+]:
     """Today's expenses split the way the budget counts them: everyday
     spending (in «Потрачено» of the home screen), mandatory payments and, in
     the irregular-income mode, expenses paid from the emergency reserve."""
