@@ -29,9 +29,6 @@ from dataclasses import dataclass, field
 from datetime import date
 
 
-KINDS = ("debit", "savings", "credit", "cash")
-
-
 @dataclass(frozen=True)
 class Account:
     id: int

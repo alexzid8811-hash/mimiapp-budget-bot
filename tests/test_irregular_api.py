@@ -311,6 +311,24 @@ def test_reserve_days_need_spending_history(client):
     assert flow["avg_daily_spending"] == 500 and flow["reserve_days"] == 4
 
 
+def test_avg_daily_spending_ignores_money_outside_the_daily_budget(client):
+    """Expenses paid from the piggy bank or outside the budget are not
+    everyday spending: the average per day and «резерва хватит на N дней»
+    stay as they were."""
+    at(date(2026, 10, 3))
+    income(client, 20000, "2026-10-03")
+    spend(client, 500, "2026-10-03")
+    r = client.post("/api/piggy-bank/deposit", json={"amount": 3000, "movement_date": "2026-10-03"})
+    assert r.status_code == 200, r.text
+    for amount, funding in ((900, "piggy"), (700, "none")):
+        r = client.post("/api/transactions", json={
+            "type": "expense", "amount": amount, "tx_date": "2026-10-03",
+            "category_id": None, "funding_envelope": funding})
+        assert r.status_code == 200, r.text
+    flow = client.get("/api/irregular").json()
+    assert flow["avg_daily_spending"] == 500 and flow["reserve_days"] == 4
+
+
 def test_switching_mode_keeps_data_and_payroll_numbers(client):
     at(date(2026, 10, 3))
     with connect() as con:

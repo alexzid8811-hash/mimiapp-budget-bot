@@ -1,5 +1,4 @@
-from .db import connect
-from .money import cents, amount
+from .money import cents
 
 
 def validate_piggy_history(rows):

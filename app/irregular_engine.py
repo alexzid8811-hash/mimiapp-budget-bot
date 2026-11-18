@@ -236,20 +236,30 @@ def run(uid: int, today: date | None = None) -> tuple[IrregularInput, IrregularR
 
 def _avg_daily_spending(uid: int, today: date) -> int | None:
     """Average everyday spending per day over the last 30 days (with the days
-    before the very first expense left out).  None without any history."""
+    before the very first expense left out).  None without any history.
+
+    The same operations the budget counts as «потрачено» (see ``build_input``):
+    expenses of the daily money and credit card repayments from it — not
+    expenses paid from the piggy bank or the reserve and not credit card
+    purchases, which never touch the free money the reserve replaces.
+    """
+    everyday = (
+        "SELECT t.tx_date AS day,t.amount FROM transactions t WHERE t.user_id=? AND t.type='expense' "
+        "AND t.bill_rule_id IS NULL AND COALESCE(t.funding_envelope,'spending')='spending' AND NOT EXISTS ("
+        "SELECT 1 FROM emergency_reserve_movements m WHERE m.user_id=t.user_id "
+        "AND m.expense_transaction_id=t.id) UNION ALL "
+        "SELECT p.date AS day,p.amount FROM account_transfers p WHERE p.user_id=? "
+        "AND p.kind='credit_payment' AND p.funding_envelope='spending' AND p.transaction_id IS NULL"
+    )
     window_start = today - timedelta(days=SPENDING_WINDOW - 1)
     with connect() as con:
-        first = con.execute(
-            "SELECT MIN(tx_date) FROM transactions WHERE user_id=? AND type='expense' AND bill_rule_id IS NULL",
-            (uid,),
-        ).fetchone()[0]
+        first = con.execute(f"SELECT MIN(day) FROM ({everyday})", (uid, uid)).fetchone()[0]
         if first is None:
             return None
         window_start = max(window_start, date.fromisoformat(first))
         total = con.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=? AND type='expense' "
-            "AND bill_rule_id IS NULL AND tx_date BETWEEN ? AND ?",
-            (uid, window_start.isoformat(), today.isoformat()),
+            f"SELECT COALESCE(SUM(amount),0) FROM ({everyday}) WHERE day BETWEEN ? AND ?",
+            (uid, uid, window_start.isoformat(), today.isoformat()),
         ).fetchone()[0]
     days = (today - window_start).days + 1
     value = cents(total) // days if days > 0 else 0
