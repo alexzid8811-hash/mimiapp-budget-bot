@@ -74,7 +74,7 @@ def _goals(con: sqlite3.Connection, uid: int) -> list[dict]:
     return [dict(row) for row in con.execute(
         "SELECT g.id,g.title,g.target,COALESCE(SUM(m.amount),0) AS saved FROM piggy_goals g "
         "LEFT JOIN piggy_goal_moves m ON m.goal_id=g.id AND m.user_id=g.user_id "
-        "WHERE g.user_id=? GROUP BY g.id ORDER BY g.id",
+        "WHERE g.user_id=? GROUP BY g.id ORDER BY g.id DESC",
         (uid,),
     )]
 

@@ -7,7 +7,7 @@
   <title>Мой бюджет</title>
   <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
   <script src="/static/theme.js?v=20261020-daily-cap"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261116-piggy-card" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261119-piggy-free" />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
@@ -205,8 +205,13 @@
         </div>
         <div class="card piggy-goals-card">
           <div class="section-head"><h3>Цели</h3><button class="tiny" id="piggyGoalAddBtn" type="button">+ Новая цель</button></div>
+          <div id="piggyGoalsUnassigned" class="piggy-goals-free hidden">
+            <div class="piggy-free-head"><span class="piggy-free-title">Без цели</span><strong class="piggy-free-pct num" id="piggyGoalsUnassignedPct"></strong></div>
+            <strong class="piggy-free-amount num" id="piggyGoalsUnassignedText"></strong>
+            <span class="piggy-free-sub">из <b class="num" id="piggyGoalsUnassignedTotal"></b> в копилке · на цели <b class="num" id="piggyGoalsUnassignedOnGoals"></b></span>
+            <button class="tiny piggy-free-btn" id="piggyGoalsPutBtn" type="button">Отложить на цель</button>
+          </div>
           <div id="piggyGoals" class="piggy-goals"></div>
-          <div id="piggyGoalsUnassigned" class="piggy-goals-free hidden"><span id="piggyGoalsUnassignedText"></span><button class="tiny" id="piggyGoalsPutBtn" type="button">Отложить на цель</button></div>
           <div id="piggyGoalsShortfall" class="warning hidden"></div>
         </div>
         <div class="card"><h3>История</h3><div id="piggyMovements" class="list"></div></div>
@@ -738,7 +743,7 @@
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
   <script src="/static/app.js?v=20261105-bill-debts"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
-  <script src="/static/buffer-ui.js?v=20261106-piggy-goals"></script>
+  <script src="/static/buffer-ui.js?v=20261119-piggy-free"></script>
   <script src="/static/design-ui.js?v=20261027-weekends"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261116-piggy-card"></script>

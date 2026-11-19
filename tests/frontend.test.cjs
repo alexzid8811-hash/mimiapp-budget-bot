@@ -990,7 +990,10 @@ test('piggy goals show the saved percent, the amounts and the money without a go
  // A goal with nothing saved has nothing to take or move.
  assert.match(html,/withdrawFromPiggyGoal\(2\)" disabled/);
  assert.equal(get('piggyGoalsUnassigned').classList.contains('hidden'),false);
- assert.match(get('piggyGoalsUnassignedText').textContent,/Без цели: 2\s000\s₽/);
+ assert.match(get('piggyGoalsUnassignedText').textContent,/^2\s000\s₽$/);
+ assert.match(get('piggyGoalsUnassignedPct').textContent,/^14% копилки$/);
+ assert.match(get('piggyGoalsUnassignedTotal').textContent,/14\s500\s₽/);
+ assert.match(get('piggyGoalsUnassignedOnGoals').textContent,/12\s500\s₽/);
  assert.equal(get('piggyGoalsShortfall').classList.contains('hidden'),true);
  assert.match(get('piggyMovements').innerHTML,/на цель «Отпуск»/);
 });
