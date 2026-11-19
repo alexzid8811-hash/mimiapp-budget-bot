@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, timedelta
 
-from . import clock, planning
+from . import clock, planning, vacation_funds
 from .budget import add_months
 from .db import connect
 from .ledger import (
@@ -58,10 +58,12 @@ def payday_schedule(uid: int, start: date, end: date) -> dict:
     """Actual paydays with forecast amounts and titles in ``[start, end]``."""
     paydays: dict[date, dict] = {}
     other: list[dict] = []
-    for event in planning.income_events(uid, start, end):
+    events = planning.income_events(uid, start, end)
+    for event in events:
         if event["is_payday"]:
-            item = paydays.setdefault(event["date"], {"amount": 0, "titles": []})
+            item = paydays.setdefault(event["date"], {"amount": 0, "regular": 0, "titles": []})
             item["amount"] += cents(event["amount"])
+            item["regular"] += cents(event.get("regular_amount", event["amount"]))
             if event.get("title") and event["title"] not in item["titles"]:
                 item["titles"].append(event["title"])
         else:
@@ -98,17 +100,20 @@ def income_overrides(uid: int, paydays: set[date]) -> tuple[dict[date, int], set
 
 
 def unconfirmed_payday(paydays: list[date], confirmed: set[date], *,
-                       start: date, today: date, confirm_from: str | None) -> date | None:
+                       start: date, today: date, confirm_from: str | None,
+                       vacation_paydays: set[date] = frozenset()) -> date | None:
     """The latest payday that has come but whose money the user has not
     confirmed yet.  Until confirmation the budget treats it as not received.
     Only the latest one: once the next payday comes, the old one counts."""
-    if not confirm_from:
+    if not confirm_from and not vacation_paydays:
         return None
     came = [d for d in paydays if d <= today]
     if not came:
         return None
     latest = came[-1]
-    if latest < max(start, date.fromisoformat(confirm_from)) or latest in confirmed:
+    if latest < start or latest in confirmed:
+        return None
+    if latest not in vacation_paydays and (not confirm_from or latest < date.fromisoformat(confirm_from)):
         return None
     return latest
 
@@ -123,10 +128,22 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
     schedule = payday_schedule(uid, start - MARGIN, sinking_end + MARGIN)
     paydays = sorted(schedule["paydays"])
     overrides, confirmed = income_overrides(uid, set(paydays))
-    waiting = unconfirmed_payday(paydays, confirmed, start=start, today=today, confirm_from=confirm_from)
+    with connect() as con:
+        vacation_rows = vacation_funds.rows(con, uid, today)
+    vacation_paydays = {date.fromisoformat(row["payday"]) for row in vacation_rows if row["payday"]}
+    waiting = unconfirmed_payday(
+        paydays, confirmed, start=start, today=today, confirm_from=confirm_from, vacation_paydays=vacation_paydays,
+    )
 
     buffer_in: dict[date, int] = {}
     payday_amount: dict[date, int] = {}
+    deferred_vacation: dict[date, int] = {}
+    vacation_forecast: dict[date, int] = {}
+    for row in vacation_rows:
+        if not row["transfer_date"] and row["payday"] and row["period_end"]:
+            day = max(today, date.fromisoformat(row["payday"]))
+            if start <= day <= min(data_end, date.fromisoformat(row["period_end"])):
+                _add(vacation_forecast, day, cents(row["reserved"]))
     for day, item in schedule["paydays"].items():
         value = overrides.get(day, item["amount"])
         payday_amount[day] = value
@@ -135,6 +152,8 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         # stored until the user confirms the actual amount (see ``stored``).
         if start <= day <= data_end:
             _add(buffer_in, day, value)
+            if day not in overrides:
+                _add(deferred_vacation, day, item["regular"] - item["amount"])
     # Non-payday scheduled income (vacation pay, "other" income rules) is a
     # forecast like salary/advance: once its date is today or in the past, it
     # only counts once an actual transaction records the money as received.
@@ -169,6 +188,13 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
                 _add(buffer_in, day, value)
             elif row["destination"] in ("daily", "split"):
                 _add(card_in, day, value)
+        for row in con.execute(
+            "SELECT amount,movement_date FROM piggy_bank_movements WHERE user_id=? AND vacation_id IS NOT NULL "
+            "AND movement_date BETWEEN ? AND ?", window,
+        ):
+            day = date.fromisoformat(row["movement_date"])
+            _add(buffer_in, day, cents(row["amount"]))
+            _add(deferred_vacation, day, -cents(row["amount"]))
         for row in con.execute(
             "SELECT t.amount,t.tx_date,t.bill_due_date,t.bill_planned_amount,"
             "COALESCE(p.amount,0) AS to_piggy FROM transactions t "
@@ -279,12 +305,16 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         bills_out=bills_out, card_in=card_in, card_cover=card_cover, card_out=card_out,
         card_to_piggy=card_to_piggy, stored_allocations=stored, stored_cap_kept=stored_kept,
         buffer_out=buffer_out, caps=caps, cap_topups=topups, cap_moves=moves, sinking=sinking,
-        buffer_floor=cents(floor),
+        buffer_floor=cents(floor), deferred_vacation=deferred_vacation,
     )
     extras = {
         "titles": {day: ", ".join(item["titles"]) or "Выплата" for day, item in schedule["paydays"].items()},
         "planned_payday": {day: item["amount"] for day, item in schedule["paydays"].items()},
         "payday_amount": payday_amount,
+        "regular_payday": {day: item["regular"] for day, item in schedule["paydays"].items()},
+        "vacation_rows": vacation_rows,
+        "vacation_forecast": vacation_forecast,
+        "vacation_paydays": vacation_paydays,
         "overridden": set(overrides),
         "confirmed": confirmed,
         "waiting": waiting,
@@ -436,6 +466,7 @@ def freeze_allocations_before(uid: int, boundary: date) -> None:
 
 def _actual_run(inp: LedgerInput, extras: dict) -> tuple[LedgerInput, object]:
     """The ledger on the actual balances: an unconfirmed payday brings no money."""
+    inp = _forecast_input(inp, extras, include_today=False)
     waiting = extras["waiting"]
     if not waiting:
         return inp, run_ledger(inp)
@@ -443,6 +474,18 @@ def _actual_run(inp: LedgerInput, extras: dict) -> tuple[LedgerInput, object]:
     without[waiting] = without.get(waiting, 0) - extras["payday_amount"].get(waiting, 0)
     actual_inp = replace(inp, buffer_in=without, unconfirmed_payday=waiting)
     return actual_inp, run_ledger(actual_inp)
+
+
+def _forecast_input(inp: LedgerInput, extras: dict, *, include_today: bool = True) -> LedgerInput:
+    if not extras["vacation_forecast"]:
+        return inp
+    buffer_in = dict(inp.buffer_in)
+    deferred = dict(inp.deferred_vacation)
+    for day, value in extras["vacation_forecast"].items():
+        if include_today or day > inp.today:
+            _add(buffer_in, day, value)
+            _add(deferred, day, -value)
+    return replace(inp, buffer_in=buffer_in, deferred_vacation=deferred)
 
 
 def set_daily_cap(uid: int, value: float | None, to_piggy: bool = False) -> None:
@@ -556,17 +599,23 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     """Full budget snapshot.  With the start capital switched off, the budget
     is calculated from the latest payday with an empty account."""
     inp, extras, today, start, settings, enabled = _run(uid, force_enabled=force_enabled)
-    result = run_ledger(inp)
+    plan_inp = _forecast_input(inp, extras)
+    result = run_ledger(plan_inp)
     # The plan (rows, shortfall, next periods) counts an unconfirmed payday
     # with its calculated amount.  The actual balances (card, buffer, today's
     # limit) stay as they were until the user presses «Получил ✓».
-    actual_inp, actual = (inp, result) if not extras["waiting"] else _actual_run(inp, extras)
+    if extras["waiting"] or today in extras["vacation_forecast"]:
+        actual_inp, actual = _actual_run(inp, extras)
+    else:
+        actual_inp, actual = plan_inp, result
     if enabled:
         if extras["waiting"]:
             forget_funded_on(uid, extras["waiting"])
+        # A transfer can still change this payday's allocation today.
+        pending_funding = extras["vacation_paydays"] & {today}
         store_allocations(uid, {
             start_day: value for start_day, value in result.to_store.items()
-            if value[0] != extras["waiting"]
+            if value[0] != extras["waiting"] and value[0] not in pending_funding
         })
         sync_cap_piggy(uid, start, today, actual.cap_to_piggy)
 
@@ -649,6 +698,14 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "received": amount(row.received),
             "payday_amount": amount(extras["payday_amount"].get(payday, 0)) if payday else 0.0,
             "planned_payday_amount": amount(extras["planned_payday"].get(payday, 0)) if payday else 0.0,
+            "regular_payday_amount": amount(extras["regular_payday"].get(payday, 0)) if payday else 0.0,
+            "vacation_funds": [part for part in extras["vacation_rows"] if part["payday"] == row.start.isoformat()],
+            "vacation_included": amount(sum(
+                cents(part["amount"] if part["transfer_date"] else part["reserved"])
+                for part in extras["vacation_rows"] if part["payday"] == row.start.isoformat()
+                and (not part["transfer_date"] or row.start.isoformat() <= part["transfer_date"] <= row.end.isoformat())
+                and (not past or part["transfer_date"])
+            )),
             "income_overridden": bool(payday and payday in extras["overridden"]),
             # The actual salary can be entered for the current and future
             # card periods; closed periods stay as they were.
@@ -689,7 +746,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         }
 
     rows = [row_dict(row, current=index == 0, past=False)
-            for index, row in enumerate(buffer_rows(inp, result))]
+             for index, row in enumerate(buffer_rows(plan_inp, result))]
     past_rows = [row_dict(row, current=False, past=True)
                  for row in buffer_rows(inp, result, past=True)]
 

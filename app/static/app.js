@@ -869,6 +869,8 @@ function openVacation(vacation = null) {
   $("vacationEnd").value = vacation?.end_date || start;
   $("vacationAmount").value = vacation?.amount ?? "";
   $("vacationPaymentDate").value = vacation?.payment_date || shiftISODate(start, -3);
+  $("vacationPiggyField").classList.toggle("hidden", isIrregular() && !vacation?.reserve_in_piggy);
+  $("vacationPiggy").checked = Boolean(vacation?.reserve_in_piggy);
   $("vacationNote").value = vacation?.note || "";
   $("vacationDialog").showModal();
 }
@@ -892,6 +894,7 @@ $("vacationForm").addEventListener("submit", async (e) => {
     end_date: $("vacationEnd").value,
     amount: moneyValue("vacationAmount"),
     payment_date: $("vacationPaymentDate").value,
+    reserve_in_piggy: $("vacationPiggy").checked,
     note: $("vacationNote").value,
   };
   try {

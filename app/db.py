@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS vacations (
     amount REAL NOT NULL CHECK(amount >= 0),
     payment_date TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
+    reserve_in_piggy INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK(end_date >= start_date)
 );
@@ -625,6 +626,17 @@ def _prepare(con: sqlite3.Connection) -> None:
     _ensure_payment_columns(con)
     _ensure_irregular_schema(con)
     _ensure_accounts_schema(con)
+    for table, column, definition in (
+        ("vacations", "reserve_in_piggy", "INTEGER NOT NULL DEFAULT 0"),
+        ("piggy_bank_movements", "vacation_id", "INTEGER REFERENCES vacations(id)"),
+        ("piggy_bank_movements", "vacation_part", "TEXT"),
+    ):
+        if column not in {row[1] for row in con.execute(f"PRAGMA table_info({table})")}:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_vacation_piggy_part "
+        "ON piggy_bank_movements(user_id,vacation_id,vacation_part) WHERE vacation_id IS NOT NULL"
+    )
     allocation_columns = {row[1] for row in con.execute("PRAGMA table_info(card_allocations)")}
     if "cap_kept" not in allocation_columns:
         con.execute("ALTER TABLE card_allocations ADD COLUMN cap_kept REAL NOT NULL DEFAULT 0")

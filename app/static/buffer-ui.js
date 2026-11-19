@@ -66,8 +66,9 @@
   // "Изменить" is offered for the current period only; later paydays are
   // corrected once their period comes.
   function receivedMarkup(period, compact = false, current = false) {
-    const value = `<span>${formatMoney(period.received)}</span>`;
-    if (!period.received_editable) return compact ? value : `<b>${value}</b>`;
+    const hasVacation = period.vacation_funds?.length > 0;
+    const value = formatMoney(hasVacation ? period.payday_amount : period.received);
+    if (!period.received_editable) return compact ? `<span>${value}</span>` : `<b><span>${value}</span></b>`;
     const status = period.income_confirmed ? '<small class="income-status done">получено ✓</small>'
       : period.income_pending ? '<small class="income-status pending">ждём подтверждения</small>'
         : period.income_overridden ? '<small class="income-status">изменено</small>' : '';
@@ -77,8 +78,45 @@
     const confirm = period.income_pending
       ? `<button class="income-btn accent" type="button" onclick="confirmCashflowIncome('${period.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`
       : '';
-    return `<span class="income-cell"><span class="income-amount">${formatMoney(period.received)}</span>${status}<span class="income-actions">${edit}${confirm}</span></span>`;
+    return `<span class="income-cell"><span class="income-amount">${value}</span>${status}<span class="income-actions">${edit}${confirm}</span></span>`;
   }
+
+  function vacationIncomeMarkup(period) {
+    if (!period.vacation_funds?.length) return "";
+    return `<div class="row-sub">Отпускные из копилки · ${formatMoney(period.vacation_included)}</div>
+      <div class="row-sub">Всего к распределению · ${formatMoney(period.received)}</div>
+      <button class="tiny" type="button" onclick="openVacationCalculation('${period.start}')">Как посчитано</button>`;
+  }
+
+  function vacationStatus(part) {
+    if (part.transfer_date) return `Переведено ${formatDate(part.transfer_date)}`;
+    if (Number(part.reserved) < Number(part.amount)) {
+      return `В резерве ${formatMoney(part.reserved)} · не хватает ${formatMoney(part.amount - part.reserved)}`;
+    }
+    return "В копилке · не трогать";
+  }
+
+  window.openVacationCalculation = start => {
+    const data = bufferState.buffer;
+    const period = [...(data.periods || []), ...(data.past_periods || [])].find(item => item.start === start);
+    if (!period?.vacation_funds?.length) return;
+    const line = (label, value) => `<div class="preview-line"><span>${label}</span><strong>${formatMoney(value)}</strong></div>`;
+    const loss = Number(period.regular_payday_amount) - Number(period.planned_payday_amount);
+    const vacations = period.vacation_funds.map(part =>
+      `<div class="list-row"><div><div>Отпуск ${formatDate(part.start_date)} — ${formatDate(part.end_date)}</div>
+      <div class="row-sub">Рабочих дней для этой выплаты: ${part.workdays} · ${vacationStatus(part)}</div></div>
+      <strong class="num">${formatMoney(part.amount)}</strong></div>`);
+    document.getElementById("vacationCalculationBody").innerHTML =
+      `<p class="muted">${formatDate(period.start)} — ${formatDate(period.end)}</p>`
+      + line("Выплата без отпуска", period.regular_payday_amount)
+      + line("Уменьшение за рабочие дни отпуска", -loss)
+      + line("Расчётная выплата", period.planned_payday_amount)
+      + (period.income_overridden || period.income_confirmed ? line("Введённая сумма выплаты", period.payday_amount) : "")
+      + vacations.join("")
+      + line("Отпускные в расчёте периода", period.vacation_included)
+      + line("Всего к распределению", period.received);
+    document.getElementById("vacationCalculationDialog").showModal();
+  };
 
   function renderBuffer() {
     const data = bufferState.buffer;
@@ -217,7 +255,7 @@
       const [c,m,label]=movement(p);
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : current ? '<span class="pc-chip">сейчас</span>' : "";
       const payLabel = `${p.past || current ? "Пришло" : "Придёт"}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
-      const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.received))}${payoutActions(p,current)}</div>`;
+      const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.vacation_funds?.length ? p.payday_amount : p.received))}${vacationIncomeMarkup(p)}${payoutActions(p,current)}</div>`;
       const flow = `<div class="pc-flow">${row("− Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("− На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("− В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
       const footLabel = p.past ? "Осталось в буфере" : "Останется в буфере";
       return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${pay}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${lowBuffer(p)?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyNote(p,current)}</article>`;
@@ -231,7 +269,7 @@
       const period = `<strong>${formatDate(p.start)} — ${formatDate(p.end)}</strong><small>${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</small>`;
       const cells = [
         `<td>${period}</td>`,
-        `<td class="num">${receivedMarkup(p,true,current)}</td>`,
+        `<td class="num">${receivedMarkup(p,true,current)}${vacationIncomeMarkup(p)}</td>`,
         `<td class="num">${formatMoney(p.mandatory)}${shortNote(p)}</td>`,
         `<td class="num">${formatMoney(p.to_card)}${dailyNote(p)}</td>`,
         ...(piggyColumn ? [`<td class="num">${toPiggy(p) > 0.004 ? formatMoney(toPiggy(p)) : '<span class="zero">—</span>'}</td>`] : []),
@@ -304,6 +342,7 @@
     const piggy = bufferState.piggy || { balance: 0, movements: [] };
     setText("piggyBalance", formatMoney(piggy.balance));
     renderGoals(piggy);
+    renderVacationReserves(piggy);
     const withdraw = document.getElementById("piggyWithdrawBtn");
     if (withdraw) withdraw.disabled = Number(piggy.balance || 0) <= 0;
     const list = document.getElementById("piggyMovements");
@@ -317,12 +356,51 @@
       const title = deposit && item.source === "daily_budget" ? "Из остатка дня"
         : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера"
           : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : deposit ? "Пополнение"
+        : item.purpose === "vacation_buffer" ? "Отпускные в буфер"
         : toCard ? (item.purpose === "transfer" ? "На карту · по дням периода" : "На карту · на сегодня") : "Снятие";
       const sub = [formatDate(item.movement_date), item.goal_title && `${deposit ? "на цель" : "с цели"} «${safe(item.goal_title)}»`,
         item.note && safe(item.note)].filter(Boolean).join(" · ");
       return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${sub}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
     }).join("");
   }
+
+  function renderVacationReserves(piggy) {
+    const card = document.getElementById("piggyVacationCard");
+    if (!card) return;
+    const rows = piggy.vacation_reserves || [];
+    card.classList.toggle("hidden", rows.length === 0);
+    const list = document.getElementById("piggyVacationReserves");
+    list.innerHTML = rows.map(part => {
+      const period = part.payday && part.period_end
+        ? `${formatDate(part.payday)} — ${formatDate(part.period_end)}` : "Выплата не определена";
+      return `<div class="list-row"><div class="row-text">
+        <div class="row-title">Отпускные · ${period}</div><div class="row-sub">${vacationStatus(part)}</div>
+        </div><div><strong class="num">${formatMoney(part.reserved)}</strong>
+        ${part.can_transfer ? `<div class="actions"><button class="tiny" type="button" data-vacation-id="${part.vacation_id}" data-vacation-part="${safe(part.part)}">Перевести в буфер</button></div>` : ""}
+        </div></div>`;
+    }).join("");
+  }
+
+  document.getElementById("piggyVacationReserves")?.addEventListener("click", async event => {
+    const button = event.target.closest("[data-vacation-part]");
+    if (!button) return;
+    const { vacationId, vacationPart } = button.dataset;
+    const part = (bufferState.piggy?.vacation_reserves || [])
+      .find(row => row.vacation_id === Number(vacationId) && row.part === vacationPart);
+    if (!part || !confirm(`Перевести ${formatMoney(part.amount)} из копилки в буфер?`)) return;
+    button.disabled = true;
+    try {
+      await request(`/api/piggy-bank/vacations/${vacationId}/transfer`, {
+        method: "POST", body: JSON.stringify({ part: vacationPart }),
+      });
+      await loadAll();
+      if (typeof toast === "function") toast("Отпускные переведены в буфер");
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   // ---------- Цели копилки ----------
   // A goal is a label over the piggy bank: «Отпуск» 50 000 ₽, of them saved
@@ -370,7 +448,7 @@
     const goalCents = Math.round(Number(
       piggy.goals_saved ?? goals.reduce((sum, goal) => sum + Number(goal.saved || 0), 0)
     ) * 100);
-    const freeCents = Math.max(0, balanceCents - goalCents);
+    const freeCents = Math.max(0, Math.round(Number(piggy.unassigned ?? (balanceCents - goalCents) / 100) * 100));
     const freeBox = document.getElementById("piggyUnassignedCard");
     if (freeBox) {
       freeBox.classList.remove("hidden");

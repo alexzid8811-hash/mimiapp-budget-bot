@@ -216,6 +216,10 @@
             <div id="piggyGoalsShortfall" class="warning hidden"></div>
           </div>
         </div>
+        <div class="card hidden" id="piggyVacationCard">
+          <h3>Зарезервировано на отпуск</h3>
+          <div id="piggyVacationReserves" class="list"></div>
+        </div>
         <div class="card"><h3>История</h3><div id="piggyMovements" class="list"></div></div>
       </section>
 
@@ -519,6 +523,7 @@
       </div>
       <label>Отпускные к получению<input id="vacationAmount" data-money type="text" inputmode="decimal" autocomplete="off" required placeholder="0,00" /></label>
       <label>Дата выплаты отпускных<input id="vacationPaymentDate" type="date" required /></label>
+      <label class="checkbox" id="vacationPiggyField"><input id="vacationPiggy" type="checkbox" /> Отпускные уже лежат в копилке</label>
       <label>Комментарий<input id="vacationNote" maxlength="120" placeholder="Необязательно" /></label>
       <p class="muted">Для нового отпуска дата выплаты по умолчанию ставится за 3 календарных дня до начала. Её можно изменить на фактическую.</p>
       <button class="primary big" value="default">Сохранить отпуск</button>
@@ -711,6 +716,13 @@
     </form>
   </dialog>
 
+  <dialog id="vacationCalculationDialog" aria-labelledby="vacationCalculationTitle">
+    <div class="dialog-card">
+      <div class="section-head"><h2 id="vacationCalculationTitle">Как посчитано</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
+      <div id="vacationCalculationBody"></div>
+    </div>
+  </dialog>
+
   <dialog id="cashflowIncomeDialog">
     <form method="dialog" id="cashflowIncomeForm" class="dialog-card">
       <div class="section-head"><h2 id="cashflowIncomeTitle">Фактическая сумма выплаты</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
@@ -743,9 +755,9 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20261020-daily-cap"></script>
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
-  <script src="/static/app.js?v=20261105-bill-debts"></script>
+  <script src="/static/app.js?v=20261119-vacation"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
-  <script src="/static/buffer-ui.js?v=20261119-piggy-free-panel"></script>
+  <script src="/static/buffer-ui.js?v=20261119-vacation"></script>
   <script src="/static/design-ui.js?v=20261027-weekends"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261116-piggy-card"></script>

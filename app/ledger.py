@@ -222,6 +222,8 @@ class LedgerInput:
     sinking: list[Sinking] = field(default_factory=list)
     # «Минимум буфера»: money the card periods never get.
     buffer_floor: int = 0
+    # Reverse a vacation's net effect only for decisions before its payday.
+    deferred_vacation: dict[date, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -310,6 +312,13 @@ def sinking_decisions(inp: LedgerInput, flows: dict[date, int], funding_days: se
     return decision_flows, sinking_in, kept_before
 
 
+def _funding_flows(inp: LedgerInput, flows: dict[date, int], day: date) -> dict[date, int]:
+    if not inp.deferred_vacation:
+        return flows
+    return flows | {payday: flows.get(payday, 0) + value
+                    for payday, value in inp.deferred_vacation.items() if payday > day}
+
+
 def run_ledger(inp: LedgerInput) -> LedgerResult:
     if not inp.start <= inp.today <= inp.horizon <= inp.data_end:
         raise ValueError("Неверный диапазон расчёта")
@@ -348,7 +357,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
             look_ahead = min(add_months(day, inp.months), inp.data_end)
             decision = safe_daily_rate(
                 opening=buffer - kept_before(day) - inp.buffer_floor, start=day, end=look_ahead,
-                flows=decision_flows,
+                flows=_funding_flows(inp, decision_flows, day),
                 funded_days={d: n for d, n in funded_days.items() if day <= d <= look_ahead},
             )
             for period in by_funding[day]:
@@ -494,7 +503,8 @@ def safe_rate_from(inp: LedgerInput, result: LedgerResult, day: date, held: int 
     opening = held - kept_before(day) - inp.buffer_floor + (
         inp.start_capital if day == inp.start else result.buffer_end[day - ONE_DAY])
     return safe_daily_rate(
-        opening=opening, start=day, end=look_ahead, flows=decision_flows, funded_days=funded_days,
+        opening=opening, start=day, end=look_ahead,
+        flows=_funding_flows(inp, decision_flows, day), funded_days=funded_days,
     ).daily
 
 

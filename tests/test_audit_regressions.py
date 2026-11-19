@@ -431,7 +431,7 @@ def test_backup_restores_cashflow_income_overrides(client):
         '/api/cashflow/income-overrides/2026-09-23', json={'amount': 41000}
     ).status_code == 200
     backup = export_user_data(1)
-    assert backup["backup_version"] == 13
+    assert backup["backup_version"] == 14
     assert backup['data']['cashflow_income_overrides'][0]['amount'] == 41000
     ensure_user(2)
     restore_user_data(2, backup)
@@ -658,6 +658,7 @@ def test_payment_columns_are_added_before_linked_piggy_index(tmp_path, monkeypat
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
         ''')
+    con.close()
 
     init_db()
     init_db()

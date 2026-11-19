@@ -16,7 +16,7 @@ from .auth import TelegramUser, current_user
 from .db import connect, ensure_user
 from .irregular import Split
 from .money import cents
-from .savings import check_piggy_history
+from .savings import check_piggy_history, protected_cents
 from .validation import APIModel
 
 
@@ -207,6 +207,7 @@ def _write_income(uid: int, payload: IncomeIn, tx_id: int | None = None) -> int:
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            protected = protected_cents(con, uid)
             current = None if tx_id is None else con.execute(
                 "SELECT account_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
             ).fetchone()
@@ -241,7 +242,7 @@ def _write_income(uid: int, payload: IncomeIn, tx_id: int | None = None) -> int:
                     (uid, payload.amount, payload.tx_date.isoformat(),
                      payload.income_source or payload.note, tx_id),
                 )
-            check_piggy_history(con, uid)
+            check_piggy_history(con, uid, protected)
             engine.check_reserve(con, uid)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

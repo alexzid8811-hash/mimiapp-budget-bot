@@ -127,6 +127,7 @@ def payroll_events_between(
     while cursor <= last:
         month_config = config(cursor.year, cursor.month) if callable(config) else config
         calc = payroll_for_accrual_month(cursor.year, cursor.month, month_config, vacations)
+        regular = payroll_for_accrual_month(cursor.year, cursor.month, month_config) if calc["vacation_workdays"] else calc
         for kind, amount_key, date_key, nominal_key, title in [
             ("advance", "advance", "advance_date", "advance_nominal_date", "Аванс"),
             ("salary", "final_salary", "salary_date", "salary_nominal_date", "Зарплата + премия"),
@@ -137,6 +138,7 @@ def payroll_events_between(
                     "kind": kind,
                     "title": title,
                     "amount": float(calc[amount_key]),
+                    "regular_amount": float(regular[amount_key]),
                     "date": payment_date,
                     "nominal_date": date.fromisoformat(calc[nominal_key]),
                     "accrual_year": cursor.year,

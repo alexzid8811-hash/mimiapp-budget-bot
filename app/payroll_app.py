@@ -44,6 +44,7 @@ class VacationIn(APIModel):
     amount: float = Field(gt=0)
     payment_date: date | None = None
     note: str = Field(default="", max_length=120)
+    reserve_in_piggy: bool = False
 
     @model_validator(mode="after")
     def validate_dates(self) -> "VacationIn":
@@ -88,7 +89,7 @@ def payroll_config(user_id: int) -> PayrollConfig:
 
 def vacation_rows(user_id: int) -> list[dict]:
     return legacy.rows(
-        "SELECT id,start_date,end_date,amount,payment_date,note,created_at "
+        "SELECT id,start_date,end_date,amount,payment_date,note,reserve_in_piggy,created_at "
         "FROM vacations WHERE user_id=? ORDER BY start_date DESC,id DESC",
         (user_id,),
     )
@@ -210,7 +211,8 @@ def create_vacation(payload: VacationIn, user: TelegramUser = Depends(current_us
     payment_date = payload.payment_date or (payload.start_date - timedelta(days=3))
     with legacy.connect() as con:
         cur = con.execute(
-            "INSERT INTO vacations(user_id,start_date,end_date,amount,payment_date,note) VALUES(?,?,?,?,?,?)",
+            "INSERT INTO vacations(user_id,start_date,end_date,amount,payment_date,note,reserve_in_piggy) "
+            "VALUES(?,?,?,?,?,?,?)",
             (
                 uid,
                 payload.start_date.isoformat(),
@@ -218,6 +220,7 @@ def create_vacation(payload: VacationIn, user: TelegramUser = Depends(current_us
                 payload.amount,
                 payment_date.isoformat(),
                 payload.note,
+                int(payload.reserve_in_piggy),
             ),
         )
         vacation_id = cur.lastrowid
@@ -230,14 +233,23 @@ def update_vacation(vacation_id: int, payload: VacationIn, user: TelegramUser = 
     uid = legacy.user_ready(user)
     payment_date = payload.payment_date or (payload.start_date - timedelta(days=3))
     with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        current = con.execute("SELECT * FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid)).fetchone()
+        if current is None:
+            raise HTTPException(404, "Отпуск не найден")
+        reserve_in_piggy = payload.reserve_in_piggy if "reserve_in_piggy" in payload.model_fields_set else current["reserve_in_piggy"]
+        dates_and_amount = (payload.start_date.isoformat(), payload.end_date.isoformat(), payload.amount)
+        if (dates_and_amount != (current["start_date"], current["end_date"], current["amount"])
+                or bool(reserve_in_piggy) != bool(current["reserve_in_piggy"])):
+            _check_vacation_transfers(con, uid, vacation_id)
         cur = con.execute(
-            "UPDATE vacations SET start_date=?,end_date=?,amount=?,payment_date=?,note=? WHERE id=? AND user_id=?",
+            "UPDATE vacations SET start_date=?,end_date=?,amount=?,payment_date=?,note=?,reserve_in_piggy=? "
+            "WHERE id=? AND user_id=?",
             (
-                payload.start_date.isoformat(),
-                payload.end_date.isoformat(),
-                payload.amount,
+                *dates_and_amount,
                 payment_date.isoformat(),
                 payload.note,
+                int(reserve_in_piggy),
                 vacation_id,
                 uid,
             ),
@@ -252,8 +264,17 @@ def update_vacation(vacation_id: int, payload: VacationIn, user: TelegramUser = 
 def delete_vacation(vacation_id: int, user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
     with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        _check_vacation_transfers(con, uid, vacation_id)
         cur = con.execute("DELETE FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid))
         if cur.rowcount == 0:
             raise HTTPException(404, "Отпуск не найден")
     legacy.invalidate_current_auto_reserve(uid)
     return {"ok": True}
+
+
+def _check_vacation_transfers(con, uid, vacation_id):
+    if con.execute(
+        "SELECT 1 FROM piggy_bank_movements WHERE user_id=? AND vacation_id=?", (uid, vacation_id),
+    ).fetchone():
+        raise HTTPException(422, "Сначала отмените перевод отпускных в истории копилки")

@@ -144,6 +144,7 @@ def income_events(uid, start, end, payroll_changes_through: date | None = None):
             if date.fromisoformat(change['effective_month']) <= payroll_changes_through
         ]
     events = []
+    piggy_vacations = {row['id'] for row in vacations if row['reserve_in_piggy']}
     for left, right, conditions in condition_segments(uid, start, end):
         cfg = conditions['settings']
         enabled = bool(cfg['payroll_enabled'])
@@ -153,9 +154,13 @@ def income_events(uid, start, end, payroll_changes_through: date | None = None):
                 base, payroll_changes, year, month
             )
             for event in payroll_events_between(left, right, config_for_month, vacations):
+                if event['kind'] == 'vacation_pay' and event['vacation_id'] in piggy_vacations:
+                    continue
                 events.append({**event, 'is_payday': event['kind'] in {'salary', 'advance'}})
         else:
             for vacation in vacations:
+                if vacation['reserve_in_piggy']:
+                    continue
                 day = date.fromisoformat(vacation['payment_date'])
                 if left <= day <= right:
                     events.append({'date': day, 'amount': vacation['amount'], 'title': 'Отпускные', 'is_payday': False})
