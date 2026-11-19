@@ -239,13 +239,14 @@ def test_goals_survive_a_backup(client):
     after = ok(client.get("/api/piggy-goals"))
     assert [(g["title"], g["target"], g["saved"]) for g in after["goals"]] == \
         [(g["title"], g["target"], g["saved"]) for g in before["goals"]] == \
-        [("Отпуск", 50000, 5600), ("Телефон", 30000, 0)]
+        [("Телефон", 30000, 0), ("Отпуск", 50000, 5600)]
     assert after["unassigned"] == 400
     # The deposit for the goal still takes its goal money when deleted.
     piggy = ok(client.get("/api/piggy-bank"))
     linked = next(m for m in piggy["movements"] if m["goal_title"] == "Отпуск")
     piggy = ok(client.delete(f"/api/piggy-bank/movements/{linked['id']}"))
-    assert by_id(piggy, after["goals"][0]["id"])["saved"] == 600
+    vacation_restored = next(g for g in after["goals"] if g["title"] == "Отпуск")
+    assert by_id(piggy, vacation_restored["id"])["saved"] == 600
 
 
 def test_backup_before_goals_restores_without_them(client):
