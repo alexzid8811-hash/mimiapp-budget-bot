@@ -1137,7 +1137,7 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .goal-actions .tiny{min-height:32px;padding:6px 8px;font-size:13px;background:var(--bg)}
 .goal-actions .tiny:disabled{opacity:.45;cursor:default}
 /* One column on phones; two equally flexible cards on desktop. */
-.piggy-goals-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-items:stretch}
+.piggy-goals-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:stretch;margin:0 0 12px}
 .piggy-goals-layout>.card{min-width:0;margin:0}
 @media(min-width:900px){
   .piggy-goals-layout{grid-template-columns:repeat(2,minmax(0,1fr))}
