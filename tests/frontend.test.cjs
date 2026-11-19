@@ -1039,11 +1039,11 @@ test('piggy unassigned and goals cards use equal responsive desktop columns and 
  const wrapper=html.slice(start,history);
  assert.ok(wrapper.includes('id="piggyGoalsPutBtn"'));
  assert.ok(wrapper.includes('id="piggyGoalsShortfall"'));
- assert.ok(css.includes('.piggy-goals-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-items:stretch}'));
+ assert.ok(css.includes('.piggy-goals-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:stretch;margin:0 0 12px}'));
  assert.ok(css.includes('.piggy-goals-layout{grid-template-columns:repeat(2,minmax(0,1fr))}'));
  assert.ok(css.includes('.piggy-goals-layout>.card{min-width:0;margin:0}'));
  assert.ok(css.includes('background:var(--surface-2);border:1px solid var(--line)'));
- assert.ok(html.includes('styles.css?v=20261119-piggy-desktop-grid'));
+ assert.ok(html.includes('styles.css?v=20261119-piggy-card-spacing'));
 });
 
 test('piggy without goals invites to add one and sends no goal', async () => {
