@@ -365,7 +365,7 @@
     box.innerHTML = goals.length ? goals.map(goalCard).join("")
       : '<div class="empty">Добавьте цель, например «Отпуск» на 50 000 ₽, и здесь будет видно, сколько процентов уже накоплено.</div>';
     const free = Number(piggy.unassigned || 0);
-    const freeBox = document.getElementById("piggyGoalsUnassigned");
+    const freeBox = document.getElementById("piggyUnassignedCard");
     const showFree = goals.length > 0 && free > 0;
     freeBox?.classList.toggle("hidden", !showFree);
     if (freeBox && showFree) {
