@@ -1012,16 +1012,19 @@ test('money without a goal has its own card and is recalculated in kopecks', asy
    movements:[],
  };
  await get('refreshBtn').listeners.click();
- assert.match(get('piggyGoalsUnassignedText').textContent,/22\\s968,29\\s₽/);
- assert.match(get('piggyGoalsUnassignedOnGoals').textContent,/11\\s530,58\\s₽/);
+ assert.match(get('piggyGoalsUnassignedText').textContent,/22\s968,29\s₽/);
+ assert.match(get('piggyGoalsUnassignedOnGoals').textContent,/11\s530,58\s₽/);
  assert.equal(get('piggyUnassignedCard').classList.contains('hidden'),false);
+ assert.equal(get('piggyGoalsPutBtn').disabled,false);
  responses['/api/piggy-bank']={...responses['/api/piggy-bank'],goals_saved:34498.87,unassigned:0};
  await get('refreshBtn').listeners.click();
- assert.match(get('piggyGoalsUnassignedText').textContent,/^0\\s₽$/);
+ assert.match(get('piggyGoalsUnassignedText').textContent,/^0\s₽$/);
+ assert.equal(get('piggyGoalsPutBtn').disabled,true);
  assert.equal(get('piggyUnassignedCard').classList.contains('hidden'),false);
  responses['/api/piggy-bank']={balance:300,movements:[],goals:[],goals_saved:0,unassigned:300,goals_shortfall:0};
  await get('refreshBtn').listeners.click();
- assert.match(get('piggyGoalsUnassignedText').textContent,/^300\\s₽$/);
+ assert.match(get('piggyGoalsUnassignedText').textContent,/^300\s₽$/);
+ assert.equal(get('piggyGoalsPutBtn').disabled,true);
  assert.equal(requests.filter(r=>r.method==='POST' || r.method==='PUT' || r.method==='DELETE').length,0);
 });
 

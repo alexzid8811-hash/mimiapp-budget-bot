@@ -379,6 +379,8 @@
       setText("piggyGoalsUnassignedText", goalMoney(freeCents / 100));
       setText("piggyGoalsUnassignedTotal", goalMoney(balanceCents / 100));
       setText("piggyGoalsUnassignedOnGoals", goalMoney(goalCents / 100));
+      const putAside = document.getElementById("piggyGoalsPutBtn");
+      if (putAside) putAside.disabled = goals.length === 0 || freeCents === 0;
     }
     const gap = Number(piggy.goals_shortfall || 0);
     const warning = document.getElementById("piggyGoalsShortfall");
