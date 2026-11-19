@@ -234,7 +234,7 @@ def test_goals_survive_a_backup(client):
     ok(client.post("/api/piggy-goals/transfer", json={"amount": 600, "to_goal_id": vacation["id"]}))
     before = ok(client.get("/api/piggy-goals"))
     backup = export_user_data(1)
-    assert backup["backup_version"] == 14
+    assert backup["backup_version"] == 15
     restore_user_data(1, backup)
     after = ok(client.get("/api/piggy-goals"))
     assert [(g["title"], g["target"], g["saved"]) for g in after["goals"]] == \

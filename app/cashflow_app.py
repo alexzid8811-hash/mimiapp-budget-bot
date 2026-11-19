@@ -443,6 +443,8 @@ def delete_piggy_bank_movement(
         ).fetchone()
         if movement is None:
             raise HTTPException(404, "Операция копилки не найдена")
+        if movement["purpose"] in ("vacation_deposit", "vacation_existing_deposit"):
+            raise HTTPException(422, "Это отпускные. Пополнение меняется через запись отпуска в настройках")
         # A linked movement is one half of an operation; deleting it alone
         # would leave the income or the bill remainder pointing nowhere.
         if movement["income_transaction_id"] is not None:

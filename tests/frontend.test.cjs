@@ -446,6 +446,28 @@ test('vacation reserve is explained separately from the salary being confirmed',
  assert.equal(get('cashflowIncomeAmount').value,45000);
 });
 
+test('saving received vacation pay from settings sends the piggy deposit with the actual date', async () => {
+ const {sandbox,get,requests}=setup();
+ sandbox.window.budgetDate.today = () => '2026-09-18';
+ get('addVacationBtn').listeners.click();
+ assert.equal(get('vacationPiggy').checked,true);
+ assert.equal(get('vacationPaymentDate').value,'');
+ get('vacationStart').value='2026-09-21';
+ get('vacationEnd').value='2026-09-25';
+ get('vacationAmount').value='32 000,00';
+ get('vacationPaymentDate').value='2026-09-18';
+ get('vacationPaymentDate').listeners.change();
+ await get('vacationForm').listeners.submit({preventDefault(){}});
+ const saved=requests.find(row=>row.method==='POST' && row.url==='/api/vacations');
+ assert.equal(JSON.parse(saved.body).reserve_in_piggy,true);
+ assert.equal(JSON.parse(saved.body).amount,32000);
+ assert.equal(JSON.parse(saved.body).payment_date,'2026-09-18');
+ get('vacationPaymentDate').value='2026-09-20';
+ get('vacationPaymentDate').listeners.change();
+ assert.equal(get('vacationPiggy').disabled,true);
+ assert.equal(get('vacationPiggy').checked,false);
+});
+
 test('overspend panel appears with a positive overspend and the spread button hides it', async () => {
  const {get,responses}=setup();
  Object.assign(responses['/api/cashflow'],{overspend:1000,available_today:-1000,today_target:100});

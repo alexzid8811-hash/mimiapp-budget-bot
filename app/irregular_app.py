@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 
-from . import clock, irregular_engine as engine
+from . import clock, irregular_engine as engine, vacation_funds
 from .auth import TelegramUser, current_user
 from .db import connect, ensure_user
 from .irregular import Split
@@ -208,6 +208,8 @@ def _write_income(uid: int, payload: IncomeIn, tx_id: int | None = None) -> int:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
             protected = protected_cents(con, uid)
+            if tx_id is not None and vacation_funds.linked_income(con, uid, tx_id):
+                raise HTTPException(422, vacation_funds.LINKED_INCOME_MESSAGE)
             current = None if tx_id is None else con.execute(
                 "SELECT account_id FROM transactions WHERE id=? AND user_id=?", (tx_id, uid)
             ).fetchone()

@@ -143,22 +143,26 @@ class Piggy(Record):
     movement_date: date
     note: str = Field(default='', max_length=160)
     source: Literal['external', 'daily_budget'] = 'external'
-    purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer', 'cap_excess', 'vacation_buffer'] | None = None
+    purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer', 'cap_excess',
+                     'vacation_buffer', 'vacation_deposit', 'vacation_existing_deposit'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
     expense_transaction_id: int | None = Field(default=None, gt=0)
     vacation_id: int | None = Field(default=None, gt=0)
-    vacation_part: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2]):(advance|salary)$')
+    vacation_part: str | None = Field(default=None, pattern=r'^(deposit|\d{4}-(0[1-9]|1[0-2]):(advance|salary))$')
 
     @model_validator(mode='after')
     def not_future(self):
         if self.movement_date > clock.today():
             raise ValueError('Дата операции копилки в будущем')
-        linked = self.purpose == 'vacation_buffer'
+        deposit = self.purpose in ('vacation_deposit', 'vacation_existing_deposit')
+        linked = self.purpose == 'vacation_buffer' or deposit
         if linked != (self.vacation_id is not None) or linked != (self.vacation_part is not None):
             raise ValueError('Неверная связь отпуска с операцией копилки')
-        if linked and (self.direction != 'withdraw' or self.source != 'external'
-                       or any((self.bill_payment_id, self.income_transaction_id, self.expense_transaction_id))):
+        if linked and (deposit != (self.vacation_part == 'deposit')
+                       or self.direction != ('deposit' if deposit else 'withdraw') or self.source != 'external'
+                       or self.bill_payment_id or self.expense_transaction_id
+                       or (self.income_transaction_id and self.purpose != 'vacation_existing_deposit')):
             raise ValueError('Неверное движение отпускных из копилки')
         return self
 
@@ -325,7 +329,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 15):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 16):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -381,6 +385,11 @@ def validate_backup(payload):
         if vid not in vacations or key in vacation_parts:
             raise ValueError('Ссылка на отсутствующий отпуск или повторный перевод отпускных')
         vacation_parts.add(key)
+        if row['direction'] == 'deposit':
+            if (cents(row['amount']) != cents(vacations[vid]['amount'])
+                    or row['movement_date'] != vacations[vid]['payment_date']):
+                raise ValueError('Пополнение копилки не соответствует отпускным')
+            continue
         vacation_totals[vid] = vacation_totals.get(vid, 0) + cents(row['amount'])
         if vacation_totals[vid] > cents(vacations[vid]['amount']):
             raise ValueError('Переведено больше суммы отпускных')

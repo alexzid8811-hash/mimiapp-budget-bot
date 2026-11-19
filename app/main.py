@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 
-from . import clock, planning
+from . import clock, planning, vacation_funds
 from .validation import APIModel, DatedConditionsIn
 from .savings import check_piggy_history, protected_cents
 from .money import amount as money_amount, cents
@@ -201,6 +201,8 @@ def sync_expense_links(con, uid: int, tx_id: int, payload: TransactionIn, fundin
 
 
 def linked_reason(con, uid: int, tx_id: int) -> str | None:
+    if vacation_funds.linked_income(con, uid, tx_id):
+        return vacation_funds.LINKED_INCOME_MESSAGE
     from . import accounts_engine  # local import: optional feature
 
     return accounts_engine.locked_transaction(con, uid, tx_id)
