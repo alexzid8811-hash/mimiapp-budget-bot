@@ -868,18 +868,29 @@ function openVacation(vacation = null) {
   $("vacationStart").value = start;
   $("vacationEnd").value = vacation?.end_date || start;
   $("vacationAmount").value = vacation?.amount ?? "";
-  $("vacationPaymentDate").value = vacation?.payment_date || shiftISODate(start, -3);
+  $("vacationPaymentDate").value = vacation?.payment_date || "";
   $("vacationPiggyField").classList.toggle("hidden", isIrregular() && !vacation?.reserve_in_piggy);
-  $("vacationPiggy").checked = Boolean(vacation?.reserve_in_piggy);
+  $("vacationPiggy").checked = Boolean(vacation?.reserve_in_piggy ?? !isIrregular());
+  syncVacationReceiptDate();
   $("vacationNote").value = vacation?.note || "";
   $("vacationDialog").showModal();
 }
 
+function syncVacationReceiptDate() {
+  const future = $("vacationPaymentDate").value > todayISO();
+  $("vacationPiggy").disabled = future;
+  if (future) $("vacationPiggy").checked = false;
+}
+
 $("addVacationBtn").addEventListener("click", () => openVacation());
 $("vacationStart").addEventListener("change", () => {
-  if (!$("vacationId").value) $("vacationPaymentDate").value = shiftISODate($("vacationStart").value, -3);
+  if (!$("vacationId").value && !$("vacationPiggy").checked && !$("vacationPaymentDate").value) {
+    $("vacationPaymentDate").value = shiftISODate($("vacationStart").value, -3);
+    syncVacationReceiptDate();
+  }
   if (!$("vacationEnd").value || $("vacationEnd").value < $("vacationStart").value) $("vacationEnd").value = $("vacationStart").value;
 });
+$("vacationPaymentDate").addEventListener("change", syncVacationReceiptDate);
 window.editVacation = id => openVacation(state.vacations.find(x => x.id === id));
 window.deleteVacation = async id => {
   if (!confirm("Удалить отпуск?")) return;
@@ -888,6 +899,8 @@ window.deleteVacation = async id => {
 
 $("vacationForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const save = $("saveVacationBtn");
+  if (save.disabled) return;
   const id = $("vacationId").value;
   const body = {
     start_date: $("vacationStart").value,
@@ -897,12 +910,14 @@ $("vacationForm").addEventListener("submit", async (e) => {
     reserve_in_piggy: $("vacationPiggy").checked,
     note: $("vacationNote").value,
   };
+  save.disabled = true;
   try {
     await api(id ? `/api/vacations/${id}` : "/api/vacations", {method:id?"PUT":"POST", body:JSON.stringify(body)});
     $("vacationDialog").close();
     toast("Отпуск сохранён");
     await loadAll();
   } catch(err) { toast(err.message); }
+  finally { save.disabled = false; }
 });
 
 function openRule(mode, rule = null) {

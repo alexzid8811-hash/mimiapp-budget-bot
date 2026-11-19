@@ -352,15 +352,16 @@
     }
     list.innerHTML = piggy.movements.map(item => {
       const deposit = item.direction === "deposit";
+      const vacationDeposit = item.purpose === "vacation_deposit" || item.purpose === "vacation_existing_deposit";
       const toCard = !deposit && item.source === "daily_budget";
       const title = deposit && item.source === "daily_budget" ? "Из остатка дня"
         : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера"
-          : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : deposit ? "Пополнение"
+          : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : vacationDeposit ? "Отпускные" : deposit ? "Пополнение"
         : item.purpose === "vacation_buffer" ? "Отпускные в буфер"
         : toCard ? (item.purpose === "transfer" ? "На карту · по дням периода" : "На карту · на сегодня") : "Снятие";
       const sub = [formatDate(item.movement_date), item.goal_title && `${deposit ? "на цель" : "с цели"} «${safe(item.goal_title)}»`,
-        item.note && safe(item.note)].filter(Boolean).join(" · ");
-      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${sub}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
+        item.note && item.note !== title && safe(item.note)].filter(Boolean).join(" · ");
+      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${sub}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" || vacationDeposit ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
     }).join("");
   }
 

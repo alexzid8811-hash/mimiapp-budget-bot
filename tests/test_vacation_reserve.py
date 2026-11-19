@@ -128,7 +128,7 @@ def buffer_period(client, payday):
 def test_piggy_vacation_preserves_advance_and_transfers_once(client, monkeypatch):
     advance = buffer_period(client, "2026-09-22")
     baseline_salary = buffer_period(client, "2026-10-07")
-    assert client.post("/api/piggy-bank/deposit", json={"amount": 12000}).status_code == 200
+    assert client.post("/api/piggy-bank/deposit", json={"amount": 1000}).status_code == 200
     payload = {**vacation_payload("2026-09-21", "2026-09-22", payment_date="2026-09-16"), "reserve_in_piggy": True}
     saved = client.post("/api/vacations", json=payload)
     assert saved.status_code == 200
@@ -184,10 +184,66 @@ def test_piggy_vacation_splits_to_advance_and_salary_with_exact_kopecks(client):
 def test_vacation_reserve_covers_only_money_actually_in_piggy(client):
     deposit = client.post("/api/piggy-bank/deposit", json={"amount": 4000}).json()["movement"]
     payload = {**vacation_payload("2026-09-21", "2026-09-22"), "reserve_in_piggy": True}
-    assert client.post("/api/vacations", json=payload).status_code == 200
+    legacy = client.post("/api/vacations", json={**payload, "reserve_in_piggy": False}).json()
+    # Version 14 could reserve funds without booking the actual receipt.
+    with connect() as con:
+        con.execute("UPDATE vacations SET reserve_in_piggy=1 WHERE id=?", (legacy["id"],))
     piggy = client.get("/api/piggy-bank").json()
     assert piggy["unassigned"] == 0
     assert piggy["vacation_reserves"][0]["amount"] == 11000
     assert piggy["vacation_reserves"][0]["reserved"] == 4000
     assert buffer_period(client, "2026-10-07")["vacation_included"] == 4000
     assert client.delete(f"/api/piggy-bank/movements/{deposit['id']}").status_code == 422
+    assert client.put(f"/api/vacations/{legacy['id']}", json=payload).status_code == 200
+    piggy = client.get("/api/piggy-bank").json()
+    assert piggy["balance"] == 15000
+    assert piggy["unassigned"] == 4000
+    assert piggy["vacation_reserves"][0]["reserved"] == 11000
+    assert buffer_period(client, "2026-10-07")["vacation_included"] == 11000
+
+
+def test_vacation_receipt_is_saved_once_and_follows_edits(client):
+    payload = {**vacation_payload("2026-09-21", "2026-09-22", payment_date="2026-09-16"), "reserve_in_piggy": True}
+    first = client.post("/api/vacations", json=payload)
+    assert first.status_code == 200
+    vid = first.json()["id"]
+    assert client.post("/api/vacations", json=payload).json()["id"] == vid
+    assert client.put(f"/api/vacations/{vid}", json=payload).status_code == 200
+    piggy = client.get("/api/piggy-bank").json()
+    deposit = piggy["movements"][0]
+    assert deposit["purpose"] == "vacation_deposit"
+    assert piggy["balance"] == 11000
+    assert client.delete(f"/api/piggy-bank/movements/{deposit['id']}").status_code == 422
+
+    assert client.put(f"/api/vacations/{vid}", json={
+        **payload, "amount": 9000, "payment_date": "2026-09-15",
+    }).status_code == 200
+    piggy = client.get("/api/piggy-bank").json()
+    assert piggy["balance"] == 9000
+    assert [(row["id"], row["movement_date"], row["amount"]) for row in piggy["movements"]] == [
+        (deposit["id"], "2026-09-15", 9000),
+    ]
+    assert client.delete(f"/api/vacations/{vid}").status_code == 200
+    assert client.get("/api/piggy-bank").json()["balance"] == 0
+
+
+def test_already_booked_deposit_is_reused_and_survives_vacation_deletion(client):
+    assert client.post("/api/piggy-bank/deposit", json={"amount": 11000}).status_code == 200
+    payload = {**vacation_payload("2026-09-21", "2026-09-22", payment_date="2026-09-16"), "reserve_in_piggy": True}
+    saved = client.post("/api/vacations", json=payload)
+    assert saved.status_code == 200
+    piggy = client.get("/api/piggy-bank").json()
+    assert piggy["balance"] == 11000
+    assert len(piggy["movements"]) == 1
+    assert piggy["movements"][0]["purpose"] == "vacation_existing_deposit"
+    assert client.delete(f"/api/vacations/{saved.json()['id']}").status_code == 200
+    piggy = client.get("/api/piggy-bank").json()
+    assert piggy["balance"] == piggy["unassigned"] == 11000
+    assert piggy["movements"][0]["purpose"] is None
+
+
+def test_future_vacation_receipt_cannot_increase_actual_piggy(client):
+    payload = {**vacation_payload("2026-09-21", "2026-09-22", payment_date="2026-09-20"), "reserve_in_piggy": True}
+    assert client.post("/api/vacations", json=payload).status_code == 422
+    assert client.get("/api/vacations").json() == []
+    assert client.get("/api/piggy-bank").json()["balance"] == 0

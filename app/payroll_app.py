@@ -6,10 +6,11 @@ from fastapi import Depends, HTTPException
 from pydantic import Field, model_validator
 
 from . import main as legacy
-from . import clock, planning
+from . import clock, planning, vacation_funds
 from .validation import APIModel
 from .auth import TelegramUser, current_user
 from .payroll import PayrollConfig, payroll_for_accrual_month
+from .savings import check_piggy_history
 
 
 app = legacy.app
@@ -50,6 +51,8 @@ class VacationIn(APIModel):
     def validate_dates(self) -> "VacationIn":
         if self.end_date < self.start_date:
             raise ValueError("Дата окончания отпуска должна быть не раньше даты начала")
+        if self.reserve_in_piggy and self.payment_date is None:
+            raise ValueError("Укажите фактическую дату получения отпускных")
         return self
 
 
@@ -210,20 +213,20 @@ def create_vacation(payload: VacationIn, user: TelegramUser = Depends(current_us
     uid = legacy.user_ready(user)
     payment_date = payload.payment_date or (payload.start_date - timedelta(days=3))
     with legacy.connect() as con:
-        cur = con.execute(
+        con.execute("BEGIN IMMEDIATE")
+        fields = (uid, payload.start_date.isoformat(), payload.end_date.isoformat(),
+                  payload.amount, payment_date.isoformat())
+        existing = con.execute(
+            "SELECT id FROM vacations WHERE user_id=? AND start_date=? AND end_date=? AND amount=? "
+            "AND payment_date=? AND reserve_in_piggy=1",
+            fields,
+        ).fetchone() if payload.reserve_in_piggy else None
+        vacation_id = existing["id"] if existing else con.execute(
             "INSERT INTO vacations(user_id,start_date,end_date,amount,payment_date,note,reserve_in_piggy) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (
-                uid,
-                payload.start_date.isoformat(),
-                payload.end_date.isoformat(),
-                payload.amount,
-                payment_date.isoformat(),
-                payload.note,
-                int(payload.reserve_in_piggy),
-            ),
-        )
-        vacation_id = cur.lastrowid
+            "VALUES(?,?,?,?,?,?,?)", (*fields, payload.note, int(payload.reserve_in_piggy)),
+        ).lastrowid
+        if payload.reserve_in_piggy:
+            _sync_deposit(con, uid, vacation_id, payload.amount, payment_date)
     legacy.invalidate_current_auto_reserve(uid)
     return legacy.one("SELECT * FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid)) or {}
 
@@ -231,13 +234,15 @@ def create_vacation(payload: VacationIn, user: TelegramUser = Depends(current_us
 @app.put("/api/vacations/{vacation_id}")
 def update_vacation(vacation_id: int, payload: VacationIn, user: TelegramUser = Depends(current_user)) -> dict:
     uid = legacy.user_ready(user)
-    payment_date = payload.payment_date or (payload.start_date - timedelta(days=3))
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         current = con.execute("SELECT * FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid)).fetchone()
         if current is None:
             raise HTTPException(404, "Отпуск не найден")
         reserve_in_piggy = payload.reserve_in_piggy if "reserve_in_piggy" in payload.model_fields_set else current["reserve_in_piggy"]
+        payment_date = payload.payment_date or (
+            date.fromisoformat(current["payment_date"]) if reserve_in_piggy else payload.start_date - timedelta(days=3)
+        )
         dates_and_amount = (payload.start_date.isoformat(), payload.end_date.isoformat(), payload.amount)
         if (dates_and_amount != (current["start_date"], current["end_date"], current["amount"])
                 or bool(reserve_in_piggy) != bool(current["reserve_in_piggy"])):
@@ -256,6 +261,8 @@ def update_vacation(vacation_id: int, payload: VacationIn, user: TelegramUser = 
         )
         if cur.rowcount == 0:
             raise HTTPException(404, "Отпуск не найден")
+        if reserve_in_piggy or current["reserve_in_piggy"]:
+            _sync_deposit(con, uid, vacation_id, payload.amount if reserve_in_piggy else None, payment_date)
     legacy.invalidate_current_auto_reserve(uid)
     return legacy.one("SELECT * FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid)) or {}
 
@@ -266,6 +273,7 @@ def delete_vacation(vacation_id: int, user: TelegramUser = Depends(current_user)
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         _check_vacation_transfers(con, uid, vacation_id)
+        _sync_deposit(con, uid, vacation_id)
         cur = con.execute("DELETE FROM vacations WHERE id=? AND user_id=?", (vacation_id, uid))
         if cur.rowcount == 0:
             raise HTTPException(404, "Отпуск не найден")
@@ -275,6 +283,18 @@ def delete_vacation(vacation_id: int, user: TelegramUser = Depends(current_user)
 
 def _check_vacation_transfers(con, uid, vacation_id):
     if con.execute(
-        "SELECT 1 FROM piggy_bank_movements WHERE user_id=? AND vacation_id=?", (uid, vacation_id),
+        "SELECT 1 FROM piggy_bank_movements WHERE user_id=? AND vacation_id=? AND purpose='vacation_buffer'",
+        (uid, vacation_id),
     ).fetchone():
         raise HTTPException(422, "Сначала отмените перевод отпускных в истории копилки")
+
+
+def _sync_deposit(con, uid, vacation_id, value=None, received=None):
+    try:
+        if value is None:
+            vacation_funds.remove_deposit(con, uid, vacation_id)
+        else:
+            vacation_funds.save_deposit(con, uid, vacation_id, value, received, clock.today())
+        check_piggy_history(con, uid)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc

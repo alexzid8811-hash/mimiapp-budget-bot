@@ -9,6 +9,9 @@ from .money import amount, cents
 from .payroll import vacation_workdays_in_month
 
 
+LINKED_INCOME_MESSAGE = "Это доход, связанный с отпускными. Сначала снимите отметку в записи отпуска"
+
+
 def _saved(con, uid):
     vacations = [dict(row) for row in con.execute(
         "SELECT * FROM vacations WHERE user_id=? AND reserve_in_piggy=1 ORDER BY start_date,id",
@@ -17,7 +20,7 @@ def _saved(con, uid):
     transfers = defaultdict(dict)
     for row in con.execute(
         "SELECT vacation_id,vacation_part,amount,movement_date FROM piggy_bank_movements "
-        "WHERE user_id=? AND vacation_id IS NOT NULL",
+        "WHERE user_id=? AND purpose='vacation_buffer'",
         (uid,),
     ):
         transfers[row["vacation_id"]][row["vacation_part"]] = (cents(row["amount"]), row["movement_date"])
@@ -46,6 +49,73 @@ def free_before_reserves(con, uid):
 def protected_cents(con, uid):
     outstanding = outstanding_cents(con, uid)
     return min(outstanding, max(0, free_before_reserves(con, uid))) if outstanding else 0
+
+
+def save_deposit(con, uid, vacation_id, value, received, today):
+    """Book one receipt, or link a matching receipt entered before this feature."""
+    from . import accounts_engine
+
+    if received > today or cents(value) <= 0:
+        raise ValueError("Укажите полученную сумму и фактическую дату получения отпускных")
+    day = received.isoformat()
+    existing = con.execute(
+        "SELECT id,amount,movement_date,purpose FROM piggy_bank_movements "
+        "WHERE user_id=? AND vacation_id=? AND vacation_part='deposit'", (uid, vacation_id),
+    ).fetchone()
+    if existing:
+        if cents(value) == cents(existing["amount"]) and day == existing["movement_date"]:
+            return
+        if existing["purpose"] == "vacation_existing_deposit":
+            raise ValueError("Эти отпускные уже связаны с отдельным пополнением. Сначала снимите отметку в отпуске")
+        con.execute("UPDATE piggy_bank_movements SET amount=?,movement_date=? WHERE id=?",
+                    (value, day, existing["id"]))
+        con.execute("UPDATE account_incomes SET amount=?,date=? WHERE user_id=? AND piggy_movement_id=?",
+                    (value, day, uid, existing["id"]))
+        return
+    if con.execute(
+        "SELECT 1 FROM piggy_bank_movements WHERE user_id=? AND vacation_id=? AND purpose='vacation_buffer'",
+        (uid, vacation_id),
+    ).fetchone():
+        return  # A legacy reserve has already been released using the funds on record.
+    matches = [row for row in con.execute(
+        "SELECT m.id,m.amount,EXISTS(SELECT 1 FROM piggy_goal_moves g WHERE g.piggy_movement_id=m.id) AS on_goal "
+        "FROM piggy_bank_movements m WHERE m.user_id=? AND m.direction='deposit' AND m.source='external' "
+        "AND m.movement_date=? AND m.purpose IS NULL AND m.vacation_id IS NULL", (uid, day),
+    ) if cents(row["amount"]) == cents(value)]
+    if len(matches) > 1:
+        raise ValueError("В копилке несколько пополнений с этой датой и суммой. Проверьте историю копилки")
+    if matches:
+        if matches[0]["on_goal"]:
+            raise ValueError("Эта сумма уже отложена на цель. Перенесите её в «Без цели», чтобы зарезервировать отпускные")
+        con.execute(
+            "UPDATE piggy_bank_movements SET vacation_id=?,vacation_part='deposit',purpose='vacation_existing_deposit' "
+            "WHERE id=?", (vacation_id, matches[0]["id"]),
+        )
+        return
+    movement_id = con.execute(
+        "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose,"
+        "vacation_id,vacation_part) VALUES(?,'deposit',?,?,'Отпускные','external','vacation_deposit',?,'deposit')",
+        (uid, value, day, vacation_id),
+    ).lastrowid
+    accounts_engine.link_piggy(con, uid, movement_id, direction="deposit", source="external", value=value, day=day)
+
+
+def remove_deposit(con, uid, vacation_id):
+    con.execute(
+        "UPDATE piggy_bank_movements SET vacation_id=NULL,vacation_part=NULL,purpose=NULL "
+        "WHERE user_id=? AND vacation_id=? AND purpose='vacation_existing_deposit'", (uid, vacation_id),
+    )
+    con.execute(
+        "DELETE FROM piggy_bank_movements WHERE user_id=? AND vacation_id=? AND purpose='vacation_deposit'",
+        (uid, vacation_id),
+    )
+
+
+def linked_income(con, uid, tx_id):
+    return con.execute(
+        "SELECT 1 FROM piggy_bank_movements WHERE user_id=? AND income_transaction_id=? AND vacation_part='deposit'",
+        (uid, tx_id),
+    ).fetchone() is not None
 
 
 def _payout_parts(vacations, events):

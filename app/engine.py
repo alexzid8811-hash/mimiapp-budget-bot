@@ -189,7 +189,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
             elif row["destination"] in ("daily", "split"):
                 _add(card_in, day, value)
         for row in con.execute(
-            "SELECT amount,movement_date FROM piggy_bank_movements WHERE user_id=? AND vacation_id IS NOT NULL "
+            "SELECT amount,movement_date FROM piggy_bank_movements WHERE user_id=? AND purpose='vacation_buffer' "
             "AND movement_date BETWEEN ? AND ?", window,
         ):
             day = date.fromisoformat(row["movement_date"])
