@@ -364,18 +364,21 @@
     const goals = goalsOf(piggy);
     box.innerHTML = goals.length ? goals.map(goalCard).join("")
       : '<div class="empty">Добавьте цель, например «Отпуск» на 50 000 ₽, и здесь будет видно, сколько процентов уже накоплено.</div>';
-    const free = Number(piggy.unassigned || 0);
+    // «Без цели» is only a view: total piggy balance minus money assigned
+    // to all goals.  Calculate in kopecks to avoid floating-point drift.
+    const balanceCents = Math.round(Number(piggy.balance || 0) * 100);
+    const goalCents = Math.round(Number(
+      piggy.goals_saved ?? goals.reduce((sum, goal) => sum + Number(goal.saved || 0), 0)
+    ) * 100);
+    const freeCents = Math.max(0, balanceCents - goalCents);
     const freeBox = document.getElementById("piggyUnassignedCard");
-    const showFree = goals.length > 0 && free > 0;
-    freeBox?.classList.toggle("hidden", !showFree);
-    if (freeBox && showFree) {
-      const balance = Number(piggy.balance || 0);
-      const onGoals = Math.max(0, balance - free);
-      const pct = balance > 0 ? Math.min(100, Math.round(free / balance * 100)) : 0;
+    if (freeBox) {
+      freeBox.classList.remove("hidden");
+      const pct = balanceCents > 0 ? Math.round(freeCents / balanceCents * 100) : 0;
       setText("piggyGoalsUnassignedPct", `${pct}% копилки`);
-      setText("piggyGoalsUnassignedText", goalMoney(free));
-      setText("piggyGoalsUnassignedTotal", goalMoney(balance));
-      setText("piggyGoalsUnassignedOnGoals", goalMoney(onGoals));
+      setText("piggyGoalsUnassignedText", goalMoney(freeCents / 100));
+      setText("piggyGoalsUnassignedTotal", goalMoney(balanceCents / 100));
+      setText("piggyGoalsUnassignedOnGoals", goalMoney(goalCents / 100));
     }
     const gap = Number(piggy.goals_shortfall || 0);
     const warning = document.getElementById("piggyGoalsShortfall");

@@ -989,13 +989,40 @@ test('piggy goals show the saved percent, the amounts and the money without a go
  assert.match(html,/осталось 37\s500\s₽/);
  // A goal with nothing saved has nothing to take or move.
  assert.match(html,/withdrawFromPiggyGoal\(2\)" disabled/);
- assert.equal(get('piggyGoalsUnassigned').classList.contains('hidden'),false);
+ assert.equal(get('piggyUnassignedCard').classList.contains('hidden'),false);
  assert.match(get('piggyGoalsUnassignedText').textContent,/^2\s000\s₽$/);
  assert.match(get('piggyGoalsUnassignedPct').textContent,/^14% копилки$/);
  assert.match(get('piggyGoalsUnassignedTotal').textContent,/14\s500\s₽/);
  assert.match(get('piggyGoalsUnassignedOnGoals').textContent,/12\s500\s₽/);
  assert.equal(get('piggyGoalsShortfall').classList.contains('hidden'),true);
  assert.match(get('piggyMovements').innerHTML,/на цель «Отпуск»/);
+});
+
+test('money without a goal has its own card and is recalculated in kopecks', async () => {
+ const html=fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
+ const total=html.indexOf('id="piggyBalance"');
+ const free=html.indexOf('id="piggyUnassignedCard"');
+ const goals=html.indexOf('class="card piggy-goals-card"');
+ assert.ok(total>=0 && total<free && free<goals, 'Без цели must be between total and goals');
+ assert.equal(html.split('id="piggyUnassignedCard"').length - 1, 1);
+ const {get,responses,requests}=setup();
+ responses['/api/piggy-bank']={
+   balance:34498.87,goals_saved:11530.58,unassigned:22968.29,goals_shortfall:0,
+   goals:[{id:1,title:'Отпуск',target:50000,saved:11530.58,left:38469.42,percent:23,reached:false}],
+   movements:[],
+ };
+ await get('refreshBtn').listeners.click();
+ assert.match(get('piggyGoalsUnassignedText').textContent,/22\\s968,29\\s₽/);
+ assert.match(get('piggyGoalsUnassignedOnGoals').textContent,/11\\s530,58\\s₽/);
+ assert.equal(get('piggyUnassignedCard').classList.contains('hidden'),false);
+ responses['/api/piggy-bank']={...responses['/api/piggy-bank'],goals_saved:34498.87,unassigned:0};
+ await get('refreshBtn').listeners.click();
+ assert.match(get('piggyGoalsUnassignedText').textContent,/^0\\s₽$/);
+ assert.equal(get('piggyUnassignedCard').classList.contains('hidden'),false);
+ responses['/api/piggy-bank']={balance:300,movements:[],goals:[],goals_saved:0,unassigned:300,goals_shortfall:0};
+ await get('refreshBtn').listeners.click();
+ assert.match(get('piggyGoalsUnassignedText').textContent,/^300\\s₽$/);
+ assert.equal(requests.filter(r=>r.method==='POST' || r.method==='PUT' || r.method==='DELETE').length,0);
 });
 
 test('piggy without goals invites to add one and sends no goal', async () => {
