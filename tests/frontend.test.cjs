@@ -205,7 +205,7 @@ test('category order uses a touch-friendly drag handle', async () => {
   assert.match(script,/touchstart/);
   assert.match(script,/touchmove/);
   assert.match(script,/passive:false/);
-  assert.match(script,//api/categories/order/);
+  assert.match(script,/\/api\/categories\/order/);
 });
 
 test('category can be renamed and deleted from settings', async () => {
@@ -599,7 +599,7 @@ test('«Сегодня» narrows everyday operations to today and combines with 
 test('«Период» shows the card period from the header and excludes «Сегодня»', async () => {
   const {sandbox,get,responses,requests} = setup();
   responses['/api/transactions'] = [
-    {id:1,type:'expense',amount:100,tx_date:'2026-09-15',note:'Кофе'},
+    {id:1,type:'expense',amount:100,tx_date:'2026-09-15',note:'Кофе',category_title:'Кафе'},
     {id:2,type:'income',amount:500,tx_date:'2026-09-10',note:'Возврат'},
     {id:3,type:'expense',amount:250,tx_date:'2026-09-07',note:'Обед'},
     {id:4,type:'expense',amount:700,tx_date:'2026-09-06',note:'Такси'},
@@ -787,12 +787,12 @@ test('irregular mode shows its own home numbers and warnings', async () => {
   const {get} = irregularSetup();
   await get('refreshBtn').listeners.click();
   assert.match(get('dailyAvailable').textContent,/785,71/);
-  assert.match(get('irrFree').textContent,/11[\s 000,00/);
+  assert.match(get('irrFree').textContent,/11[\s ]000,00/);
   assert.equal(get('irrStretch').textContent,'Растягиваем до 16.10 (осталось 14 дн.)');
-  assert.match(get('irrReserve').textContent,/2[\s 000,00/);
+  assert.match(get('irrReserve').textContent,/2[\s ]000,00/);
   assert.match(get('irrReserveDays').textContent,/4 дня/);
   assert.match(get('irrNextBill').textContent,/Интернет/);
-  assert.match(get('irrBillsWarning').textContent,/^На обязательные не хватает 2[\s 500,00[\s ]₽ к 25\.10$/);
+  assert.match(get('irrBillsWarning').textContent,/^На обязательные не хватает 2[\s ]500,00[\s ]₽ к 25\.10$/);
   assert.equal(get('irrBillsWarning').classList.contains('hidden'),false);
   assert.equal(get('irrNoIncomeWarning').classList.contains('hidden'),true);
   assert.match(get('irrReserveMovements').innerHTML,/Процент от дохода/);
