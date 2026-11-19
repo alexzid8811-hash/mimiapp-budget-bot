@@ -12,7 +12,7 @@ from pydantic import Field
 
 from . import clock, planning
 from .validation import APIModel, DatedConditionsIn
-from .savings import check_piggy_history
+from .savings import check_piggy_history, protected_cents
 from .money import amount as money_amount, cents
 from .auth import TelegramUser, current_user
 from .db import connect, ensure_user, init_db
@@ -323,6 +323,8 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
     if payload.tx_date > clock.today():
         raise HTTPException(422, "Дата операции не может быть в будущем")
     with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        protected = protected_cents(con, uid)
         require_category(con, uid, payload.category_id)
         destination, percent = income_fields(uid, payload, con)
         account_id = transaction_account(con, uid, payload)
@@ -337,7 +339,7 @@ def create_transaction(payload: TransactionIn, user: TelegramUser = Depends(curr
         if funding in ("piggy", "reserve"):
             sync_expense_links(con, uid, tx_id, payload, funding)
             try:
-                check_piggy_history(con, uid)
+                check_piggy_history(con, uid, protected)
                 check_reserve(con, uid)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
@@ -362,6 +364,8 @@ def update_transaction(
         raise HTTPException(422, "Дата операции не может быть в будущем")
     try:
         with connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            protected = protected_cents(con, uid)
             require_category(con, uid, payload.category_id)
             current = con.execute(
                 "SELECT bill_rule_id,account_id,funding_envelope FROM transactions WHERE id=? AND user_id=?",
@@ -401,7 +405,7 @@ def update_transaction(
                     "VALUES(?, 'deposit', ?, ?, ?, 'external', ?)",
                     (uid, payload.amount, payload.tx_date.isoformat(), payload.note, tx_id),
                 )
-            check_piggy_history(con, uid)
+            check_piggy_history(con, uid, protected)
             check_reserve(con, uid)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -415,6 +419,7 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            protected = protected_cents(con, uid)
             locked = linked_reason(con, uid, tx_id)
             if locked:
                 raise HTTPException(422, locked)
@@ -422,7 +427,7 @@ def delete_transaction(tx_id: int, user: TelegramUser = Depends(current_user)) -
             cur = con.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (tx_id, uid))
             if cur.rowcount == 0:
                 raise HTTPException(404, "Operation not found")
-            check_piggy_history(con, uid)
+            check_piggy_history(con, uid, protected)
             check_reserve(con, uid)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -535,6 +540,7 @@ def edit_bill_payment(
     try:
         with connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            protected = protected_cents(con, uid)
             payment = con.execute(
                 "SELECT * FROM transactions WHERE id=? AND user_id=? AND type='expense' "
                 "AND bill_rule_id IS NOT NULL AND bill_due_date IS NOT NULL",
@@ -588,7 +594,7 @@ def edit_bill_payment(
 
             accounts_engine.sync_bill_remainder(con, uid, payment_id)
 
-            check_piggy_history(con, uid)
+            check_piggy_history(con, uid, protected)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 

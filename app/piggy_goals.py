@@ -25,7 +25,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field, field_validator
 
-from . import clock
+from . import clock, vacation_funds
 from . import main as legacy
 from .auth import TelegramUser, current_user
 from .money import amount, cents
@@ -61,15 +61,6 @@ def _money(value: int) -> str:
     return f"{'-' if value < 0 else ''}{text} ₽"
 
 
-def balance_cents(con: sqlite3.Connection, uid: int) -> int:
-    row = con.execute(
-        "SELECT COALESCE(SUM(CASE WHEN direction='deposit' THEN amount ELSE -amount END),0) "
-        "FROM piggy_bank_movements WHERE user_id=?",
-        (uid,),
-    ).fetchone()
-    return cents(round(float(row[0]), 2))
-
-
 def _goals(con: sqlite3.Connection, uid: int) -> list[dict]:
     return [dict(row) for row in con.execute(
         "SELECT g.id,g.title,g.target,COALESCE(SUM(m.amount),0) AS saved FROM piggy_goals g "
@@ -91,7 +82,7 @@ def saved_cents(con: sqlite3.Connection, uid: int, goal_id: int | None = None) -
 
 def unassigned_cents(con: sqlite3.Connection, uid: int) -> int:
     """Piggy-bank money set aside for no goal (negative: goals above the balance)."""
-    return balance_cents(con, uid) - saved_cents(con, uid)
+    return vacation_funds.free_before_reserves(con, uid) - vacation_funds.outstanding_cents(con, uid)
 
 
 def summary(con: sqlite3.Connection, uid: int) -> dict:
@@ -114,7 +105,7 @@ def summary(con: sqlite3.Connection, uid: int) -> dict:
         "goals": goals,
         "goals_saved": amount(sum(cents(g["saved"]) for g in goals)),
         "unassigned": amount(max(0, free)),
-        "goals_shortfall": amount(max(0, -free)),
+        "goals_shortfall": amount(max(0, -vacation_funds.free_before_reserves(con, uid))),
     }
 
 
@@ -134,10 +125,12 @@ def check_withdrawal(con: sqlite3.Connection, uid: int, value: float, goal_id: i
         if cents(value) > saved:
             raise HTTPException(422, f"На цель «{title}» отложено {_money(saved)}")
         return
-    if saved_cents(con, uid) <= 0:
+    if saved_cents(con, uid) <= 0 and not vacation_funds.outstanding_cents(con, uid):
         return  # no money set aside: the piggy-bank history check is enough
     free = max(0, unassigned_cents(con, uid))
     if cents(value) > free:
+        if vacation_funds.outstanding_cents(con, uid):
+            raise HTTPException(422, f"Свободно в копилке {_money(free)}, часть денег зарезервирована на отпуск")
         raise HTTPException(
             422,
             f"Без цели в копилке {_money(free)}, остальное отложено на цели. "
@@ -160,7 +153,7 @@ def link_movement(con: sqlite3.Connection, uid: int, movement_id: int, goal_id: 
 
 def check_fits(con: sqlite3.Connection, uid: int) -> None:
     """After an explicit piggy-bank change: the goals stay within the balance."""
-    if unassigned_cents(con, uid) < 0 and saved_cents(con, uid) > 0:
+    if vacation_funds.free_before_reserves(con, uid) < 0 and saved_cents(con, uid) > 0:
         raise HTTPException(
             422, "Тогда на цели будет отложено больше, чем лежит в копилке. Сначала уберите деньги с цели",
         )

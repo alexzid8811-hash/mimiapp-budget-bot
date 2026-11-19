@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException
 from pydantic import Field
 
 from . import payroll_app as base
-from . import clock, engine, irregular_engine, piggy_goals
+from . import clock, engine, irregular_engine, piggy_goals, vacation_funds
 from .validation import APIModel
 from .savings import check_piggy_history
 from .auth import TelegramUser, current_user
@@ -62,6 +62,10 @@ class DailyCapIn(APIModel):
     amount: float | None = Field(default=None, gt=0)
     # Where the money above the maximum goes.
     excess_to: Literal["buffer", "piggy"] = "buffer"
+
+
+class VacationTransferIn(APIModel):
+    part: str = Field(pattern=r"^\d{4}-\d{2}:(advance|salary)$")
 
 
 class BufferFloorIn(APIModel):
@@ -135,7 +139,9 @@ def piggy_bank_snapshot(user_id: int, limit: int = 80, since: date | None = None
     )
     with legacy.connect() as con:
         goals = piggy_goals.summary(con, user_id)
-    return {"balance": piggy_bank_balance(user_id), "movements": movements, **goals}
+        vacation_reserves = [row for row in vacation_funds.rows(con, user_id, clock.today()) if not row["transfer_date"]]
+    return {"balance": piggy_bank_balance(user_id), "movements": movements,
+            "vacation_reserves": vacation_reserves, **goals}
 
 
 @app.get("/api/cashflow-settings")
@@ -430,7 +436,8 @@ def delete_piggy_bank_movement(
     with legacy.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         movement = con.execute(
-            "SELECT income_transaction_id,bill_payment_id,expense_transaction_id,purpose FROM piggy_bank_movements "
+            "SELECT income_transaction_id,bill_payment_id,expense_transaction_id,purpose,movement_date "
+            "FROM piggy_bank_movements "
             "WHERE id=? AND user_id=?",
             (movement_id, uid),
         ).fetchone()
@@ -451,15 +458,64 @@ def delete_piggy_bank_movement(
             (uid, movement_id),
         ).fetchone():
             raise HTTPException(422, "Это погашение кредитки: удалите его в истории кредитки")
+        protected = vacation_funds.protected_cents(con, uid)
+        if movement["purpose"] == "vacation_buffer":
+            if movement["movement_date"] != clock.today().isoformat():
+                raise HTTPException(422, "Перевод отпускных можно отменить в день перевода")
+            con.execute("DELETE FROM card_allocations WHERE user_id=? AND funded_on=?",
+                        (uid, movement["movement_date"]))
         con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
         try:
-            check_piggy_history(con, uid)
+            check_piggy_history(con, uid, protected)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         # A deposit for a goal takes its goal money with it; a deposit for no
         # goal may not leave the goals above the balance.
         piggy_goals.check_fits(con, uid)
     return {"ok": True, **piggy_bank_snapshot(uid)}
+
+
+@app.post("/api/piggy-bank/vacations/{vacation_id}/transfer")
+def transfer_vacation_reserve(
+    vacation_id: int, payload: VacationTransferIn, user: TelegramUser = Depends(current_user),
+) -> dict:
+    """Release this payout's share into the buffer exactly once."""
+    from . import accounts_engine
+
+    uid = legacy.user_ready(user)
+    today = clock.today()
+    with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        already_transferred = con.execute(
+            "SELECT 1 FROM piggy_bank_movements WHERE user_id=? AND vacation_id=? AND vacation_part=?",
+            (uid, vacation_id, payload.part),
+        ).fetchone()
+        if not already_transferred:
+            settings = con.execute("SELECT budget_mode,cashflow_enabled FROM settings WHERE user_id=?", (uid,)).fetchone()
+            if settings["budget_mode"] != "payroll" or not settings["cashflow_enabled"]:
+                raise HTTPException(422, "Перевод доступен в режиме «Зарплата и аванс» с включённым буфером")
+            row = next((item for item in vacation_funds.rows(con, uid, today)
+                        if item["vacation_id"] == vacation_id and item["part"] == payload.part), None)
+            if row is None:
+                raise HTTPException(404, "Резерв отпускных не найден")
+            if not row["can_transfer"]:
+                raise HTTPException(422, "Перевод доступен с даты выплаты, когда вся сумма есть в копилке")
+            movement_id = con.execute(
+                "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose,"
+                "vacation_id,vacation_part) VALUES(?,'withdraw',?,?,'Отпускные','external','vacation_buffer',?,?)",
+                (uid, row["amount"], today.isoformat(), vacation_id, payload.part),
+            ).lastrowid
+            try:
+                check_piggy_history(con, uid)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if accounts_engine.settings_for(con, uid)["enabled"]:
+                places, _ = accounts_engine.placement(con, uid)
+                accounts_engine._linked(con, uid, places.get("piggy"), places.get("buffer"),
+                                        row["amount"], today.isoformat(), piggy=movement_id)
+            # The transfer funds today's new period even if its salary was confirmed first.
+            con.execute("DELETE FROM card_allocations WHERE user_id=? AND funded_on=?", (uid, today.isoformat()))
+    return get_buffer(user)
 
 
 from .backup import router as backup_router

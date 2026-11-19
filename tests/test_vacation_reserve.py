@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import clock
+from app.backup import export_user_data, restore_user_data
 from app.cashflow_app import app, cashflow_snapshot
 from app.db import connect, ensure_user, init_db
 from app.payroll import PayrollConfig, payroll_for_accrual_month
@@ -118,3 +119,75 @@ def test_vacation_in_second_half_does_not_touch_already_paid_advance():
     )
     assert with_vacation["advance"] == without["advance"]
     assert with_vacation["salary_net_for_worked_days"] < without["salary_net_for_worked_days"]
+
+
+def buffer_period(client, payday):
+    return next(row for row in client.get("/api/buffer").json()["periods"] if row["payday"] == payday)
+
+
+def test_piggy_vacation_preserves_advance_and_transfers_once(client, monkeypatch):
+    advance = buffer_period(client, "2026-09-22")
+    baseline_salary = buffer_period(client, "2026-10-07")
+    assert client.post("/api/piggy-bank/deposit", json={"amount": 12000}).status_code == 200
+    payload = {**vacation_payload("2026-09-21", "2026-09-22", payment_date="2026-09-16"), "reserve_in_piggy": True}
+    saved = client.post("/api/vacations", json=payload)
+    assert saved.status_code == 200
+    vid = saved.json()["id"]
+    transfer = f"/api/piggy-bank/vacations/{vid}/transfer"
+    part = {"part": "2026-09:salary"}
+
+    before = client.get("/api/piggy-bank").json()
+    assert before["balance"] == 12000
+    assert before["unassigned"] == 1000
+    assert before["vacation_reserves"][0]["reserved"] == 11000
+    assert client.post("/api/piggy-bank/to-card", json={"amount": 1000.01}).status_code == 422
+    assert client.post(transfer, json=part).status_code == 422
+    assert buffer_period(client, "2026-09-22")["to_card"] == advance["to_card"]
+    salary = buffer_period(client, "2026-10-07")
+    assert salary["payday_amount"] < baseline_salary["payday_amount"]
+    assert salary["vacation_included"] == 11000
+    assert salary["received"] == round(salary["payday_amount"] + 11000, 2)
+    assert salary["vacation_funds"][0]["workdays"] == 2
+    assert cashflow_snapshot(1)["current_cash"] == 28000
+
+    monkeypatch.setattr(clock, "today", lambda: date(2026, 10, 7))
+    assert buffer_period(client, "2026-10-07")["income_pending"]
+    confirmation = {"amount": 42000, "confirmed": True}
+    assert client.put("/api/cashflow/income-overrides/2026-10-08", json=confirmation).status_code == 200
+    assert client.post(transfer, json=part).status_code == 200
+    assert client.post(transfer, json=part).status_code == 200
+    row = buffer_period(client, "2026-10-07")
+    assert row["income_confirmed"]
+    assert row["payday_amount"] == 42000
+    assert row["received"] == 53000
+    assert row["vacation_funds"][0]["transfer_date"] == "2026-10-07"
+    assert client.get("/api/piggy-bank").json()["balance"] == 1000
+
+    backup = export_user_data(1)
+    restore_user_data(1, backup)
+    row = buffer_period(client, "2026-10-07")
+    assert row["received"] == 53000
+    assert client.get("/api/piggy-bank").json()["vacation_reserves"] == []
+
+
+def test_piggy_vacation_splits_to_advance_and_salary_with_exact_kopecks(client):
+    assert client.post("/api/piggy-bank/deposit", json={"amount": 11000.01}).status_code == 200
+    payload = {**vacation_payload("2026-09-13", "2026-09-17", 11000.01), "reserve_in_piggy": True}
+    assert client.post("/api/vacations", json=payload).status_code == 200
+    rows = client.get("/api/piggy-bank").json()["vacation_reserves"]
+    assert [(row["payday"], row["workdays"], row["reserved"]) for row in rows] == [
+        ("2026-09-22", 2, 5500.01),
+        ("2026-10-07", 2, 5500.00),
+    ]
+
+
+def test_vacation_reserve_covers_only_money_actually_in_piggy(client):
+    deposit = client.post("/api/piggy-bank/deposit", json={"amount": 4000}).json()["movement"]
+    payload = {**vacation_payload("2026-09-21", "2026-09-22"), "reserve_in_piggy": True}
+    assert client.post("/api/vacations", json=payload).status_code == 200
+    piggy = client.get("/api/piggy-bank").json()
+    assert piggy["unassigned"] == 0
+    assert piggy["vacation_reserves"][0]["amount"] == 11000
+    assert piggy["vacation_reserves"][0]["reserved"] == 4000
+    assert buffer_period(client, "2026-10-07")["vacation_included"] == 4000
+    assert client.delete(f"/api/piggy-bank/movements/{deposit['id']}").status_code == 422

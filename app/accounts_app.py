@@ -609,7 +609,10 @@ def repay_credit(account_id: int, payload: RepayIn, user: TelegramUser = Depends
     if payload.interest > payload.amount:
         raise HTTPException(422, "Проценты не могут быть больше суммы погашения")
     with connect() as con:
+        from .savings import check_piggy_history, protected_cents
+
         con.execute("BEGIN IMMEDIATE")
+        protected = protected_cents(con, uid)
         credit = _credit(con, uid, account_id)
         if credit["archived"]:
             raise HTTPException(422, "Кредитка в архиве")
@@ -620,9 +623,7 @@ def repay_credit(account_id: int, payload: RepayIn, user: TelegramUser = Depends
                      interest=payload.interest, funding=payload.funding, day=payload.date.isoformat(),
                      note=payload.note.strip(), title=credit["title"])
         try:
-            from .savings import check_piggy_history
-
-            check_piggy_history(con, uid)
+            check_piggy_history(con, uid, protected)
             legacy.check_reserve(con, uid)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc

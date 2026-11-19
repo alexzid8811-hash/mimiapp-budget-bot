@@ -423,6 +423,29 @@ test('payout due today can be confirmed with the received amount', async () => {
  assert.deepEqual(JSON.parse(request.body),{amount:58000,confirmed:true});
 });
 
+test('vacation reserve is explained separately from the salary being confirmed', async () => {
+ const {sandbox,get,responses}=setup();
+ const reserve={vacation_id:1,part:'2026-09:salary',payday:'2026-10-07',period_end:'2026-10-21',
+  start_date:'2026-09-21',end_date:'2026-09-25',workdays:5,amount:32000,reserved:32000,can_transfer:false};
+ responses['/api/cashflow'].periods=[{
+  start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',received:77000,
+  received_editable:true,income_pending:true,override_key:'2026-10-08',payday_amount:45000,
+  planned_payday_amount:45000,regular_payday_amount:70000,vacation_included:32000,
+  vacation_funds:[reserve],mandatory:12000,to_card:22500,daily:1500,buffer:42500,
+ }];
+ Object.assign(responses['/api/piggy-bank'],{balance:52000,unassigned:20000,vacation_reserves:[reserve]});
+ await get('refreshBtn').listeners.click();
+ assert.match(get('planCards').innerHTML,/Отпускные из копилки · 32.000,00/);
+ assert.match(get('bufferPeriods').innerHTML,/Всего к распределению · 77.000,00/);
+ assert.match(get('piggyVacationReserves').innerHTML,/не трогать/);
+ assert.match(get('piggyGoalsUnassignedText').textContent,/20.000/);
+ sandbox.window.openVacationCalculation('2026-10-07');
+ assert.match(get('vacationCalculationBody').innerHTML,/25.000,00/);
+ assert.match(get('vacationCalculationBody').innerHTML,/Рабочих дней для этой выплаты: 5/);
+ sandbox.window.confirmCashflowIncome('2026-10-08');
+ assert.equal(get('cashflowIncomeAmount').value,45000);
+});
+
 test('overspend panel appears with a positive overspend and the spread button hides it', async () => {
  const {get,responses}=setup();
  Object.assign(responses['/api/cashflow'],{overspend:1000,available_today:-1000,today_target:100});

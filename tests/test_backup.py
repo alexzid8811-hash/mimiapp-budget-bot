@@ -17,6 +17,7 @@ def test_category_order_migration_preserves_existing_sequence(tmp_path, monkeypa
         )
         con.execute("INSERT INTO categories(user_id,title,emoji) VALUES(1,'Первая','1️⃣')")
         con.execute("INSERT INTO categories(user_id,title,emoji) VALUES(1,'Вторая','2️⃣')")
+    con.close()
 
     init_db()
     with connect() as con:

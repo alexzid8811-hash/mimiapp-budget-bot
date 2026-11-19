@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 13
+BACKUP_VERSION = 14
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -62,11 +62,11 @@ TABLE_COLUMNS = {
         "bill_rule_id", "bill_due_date", "bill_planned_amount", "income_destination",
         "reserve_percent", "income_source", "account_id", "funding_envelope", "created_at",
     ),
-    "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "created_at"),
+    "vacations": ("id", "start_date", "end_date", "amount", "payment_date", "note", "reserve_in_piggy", "created_at"),
     "reserve_movements": ("id", "period_start", "amount", "reason", "source", "created_at"),
     "piggy_bank_movements": (
         "id", "direction", "amount", "movement_date", "note", "source", "purpose",
-        "bill_payment_id", "income_transaction_id", "expense_transaction_id", "created_at",
+        "bill_payment_id", "income_transaction_id", "expense_transaction_id", "vacation_id", "vacation_part", "created_at",
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "confirmed", "updated_at"),
     "plan_history": ("id", "effective_date", "snapshot"),
@@ -261,14 +261,17 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
                 transaction_ids[row.get("id")] = int(cur.lastrowid)
 
+            vacation_ids: dict[Any, int] = {}
             for row in data["vacations"]:
-                con.execute(
-                    "INSERT INTO vacations(user_id,start_date,end_date,amount,payment_date,note,created_at) VALUES(?,?,?,?,?,?,?)",
+                cur = con.execute(
+                    "INSERT INTO vacations(user_id,start_date,end_date,amount,payment_date,note,reserve_in_piggy,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
                     (
                         user_id, str(row["start_date"]), str(row["end_date"]), float(row["amount"]),
-                        str(row["payment_date"]), str(row.get("note") or ""), _created_at(row),
+                        str(row["payment_date"]), str(row.get("note") or ""), int(row["reserve_in_piggy"]), _created_at(row),
                     ),
                 )
+                vacation_ids[row["id"]] = int(cur.lastrowid)
 
             for row in data["reserve_movements"]:
                 con.execute(
@@ -289,12 +292,13 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 cur = con.execute(
                     "INSERT INTO piggy_bank_movements"
                     "(user_id,direction,amount,movement_date,note,source,purpose,bill_payment_id,income_transaction_id,"
-                    "expense_transaction_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "expense_transaction_id,vacation_id,vacation_part,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         user_id, row['direction'], row['amount'], row['movement_date'], row['note'], row.get('source', 'external'),
                         row.get('purpose'),
                         transaction_ids.get(row.get('bill_payment_id')), transaction_ids.get(row.get('income_transaction_id')),
-                        transaction_ids.get(row.get('expense_transaction_id')), _created_at(row),
+                        transaction_ids.get(row.get('expense_transaction_id')), vacation_ids.get(row["vacation_id"]),
+                        row["vacation_part"], _created_at(row),
                     ),
                 )
                 piggy_ids[row['id']] = int(cur.lastrowid)
