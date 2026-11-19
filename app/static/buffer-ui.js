@@ -365,8 +365,18 @@
     box.innerHTML = goals.length ? goals.map(goalCard).join("")
       : '<div class="empty">Добавьте цель, например «Отпуск» на 50 000 ₽, и здесь будет видно, сколько процентов уже накоплено.</div>';
     const free = Number(piggy.unassigned || 0);
-    document.getElementById("piggyGoalsUnassigned")?.classList.toggle("hidden", !goals.length || free <= 0);
-    setText("piggyGoalsUnassignedText", `Без цели: ${goalMoney(free)}`);
+    const freeBox = document.getElementById("piggyGoalsUnassigned");
+    const showFree = goals.length > 0 && free > 0;
+    freeBox?.classList.toggle("hidden", !showFree);
+    if (freeBox && showFree) {
+      const balance = Number(piggy.balance || 0);
+      const onGoals = Math.max(0, balance - free);
+      const pct = balance > 0 ? Math.min(100, Math.round(free / balance * 100)) : 0;
+      setText("piggyGoalsUnassignedPct", `${pct}% копилки`);
+      setText("piggyGoalsUnassignedText", goalMoney(free));
+      setText("piggyGoalsUnassignedTotal", goalMoney(balance));
+      setText("piggyGoalsUnassignedOnGoals", goalMoney(onGoals));
+    }
     const gap = Number(piggy.goals_shortfall || 0);
     const warning = document.getElementById("piggyGoalsShortfall");
     if (warning) {
