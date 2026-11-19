@@ -239,7 +239,7 @@ test('category can be renamed and deleted from settings', async () => {
 
 test('"В буфере сейчас" lives on the buffer tab, not on home', () => {
   const html = fs.readFileSync(path.join(__dirname,'../app/static/index.html'),'utf8');
-  const page = name => html.match(new RegExp(`<section class="page[^"]*" data-page="${name}">[\\s\\S]*?<\/section>`))[0];
+  const page = name => html.match(new RegExp(`<section class="page[^"]*" data-page="${name}">[\\s\\S]*?</section>`))[0];
   for (const id of ['reserveBalance','bufferMeter','reserveReason']) {
     assert.match(page('buffer'),new RegExp(`id="${id}"`));
     assert.doesNotMatch(page('home'),new RegExp(`id="${id}"`));
