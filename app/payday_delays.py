@@ -43,6 +43,15 @@ def covered_days(delay):
     return [day for day in bridge_days(delay) if end is None or day < end]
 
 
+def spending_start(start, next_start, delay):
+    """Shift the card boundary up to the next scheduled period."""
+    if delay is None:
+        return start
+    covered = covered_days(delay)
+    resumes = funding_day(delay) or (covered[-1] + timedelta(days=1) if covered else start)
+    return min(max(start, resumes), next_start)
+
+
 def first_regular_day(delay, received):
     covered = cents(delay["daily"]) > 0 and received in bridge_days(delay)
     return received + timedelta(days=int(covered))

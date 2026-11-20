@@ -544,9 +544,7 @@ def _spending_periods(periods, delays):
     for period in periods:
         delay = delays.get(period.funded_on) if shifted and shifted[-1].end < period.start else None
         if delay:
-            covered = payday_delays.covered_days(delay)
-            begins = payday_delays.funding_day(delay) or (covered[-1] + day_after if covered else period.start)
-            begins = min(max(period.start, begins), period.end + day_after)
+            begins = payday_delays.spending_start(period.start, period.end + day_after, delay)
             shifted[-1] = replace(shifted[-1], end=begins - day_after)
             if begins > period.end:
                 continue
@@ -672,6 +670,8 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     # with its calculated amount.  The actual balances (card, buffer, today's
     # limit) stay as they were until the user presses «Получил ✓».
     pending_delays = [day for day, row in extras["delays"].items() if row["received_on"] is None]
+    delayed_payday = min(pending_delays, default=None)
+    covered_until = max(payday_delays.covered_days(extras["delays"][delayed_payday]), default=None) if delayed_payday else None
     if extras["waiting"] or today in extras["vacation_forecast"] or pending_delays:
         actual_inp, actual = _actual_run(inp, extras)
     else:
@@ -692,6 +692,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     spending_by_payday = {period.funded_on: period for period in spending_periods[1:]}
     original_start = inp.start if current.start == inp.start else current.funded_on + timedelta(days=1)
     original_period = next(period for period in actual.periods if period.start == original_start)
+    period_receipt = extras["delays"].get(original_period.end, {}).get("received_on")
     days_left = (current.end - today).days + 1
     next_period = next((period for period in spending_periods if period.start > today), None)
     next_allocation = result.allocations.get(next_period.funded_on + timedelta(days=1), 0) if next_period else 0
@@ -746,7 +747,11 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         ).fetchone()[0]
     # Obligations of the current card period that are still to be paid,
     # with the debts of earlier periods.
-    mandatory_period = sum(v for d, v in extras["unpaid"].items() if d <= actual.current.end)
+    mandatory_period = sum(v for d, v in extras["unpaid"].items() if d <= current.end)
+    # Delay funding is earmarked by date, so the regular daily average only
+    # uses the opening balance and the days of the underlying card allocation.
+    regular_days = (min(current.end, original_period.end) - current.start).days + 1
+    regular_budget = actual.period_opening[original_start]
 
     period_kept = kept_by_cap(current.start, current.end, funded=False)
 
@@ -922,14 +927,19 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "today": today.isoformat(),
         "start_date": start.isoformat(),
         "horizon_end": inp.horizon.isoformat(),
-        "payday_waiting": (min(pending_delays).isoformat() if pending_delays else
+        "payday_waiting": (delayed_payday.isoformat() if delayed_payday else
                           extras["waiting"].isoformat() if extras["waiting"] else None),
+        "payday_delay": {
+            "payday": delayed_payday.isoformat(),
+            "covered_until": covered_until.isoformat() if covered_until else None,
+        } if delayed_payday else None,
         "period": {
             **_period_dict(current),
             "days_left": days_left,
             "is_last_day": days_left == 1,
             "payday": original_period.end.isoformat(),
             "payday_kind": extras["titles"].get(original_period.end, "Выплата"),
+            "payday_received_on": period_receipt.isoformat() if period_receipt else None,
         },
         "next_period": {
             **_period_dict(next_period),
@@ -966,9 +976,10 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "available_cash": amount(card_now + buffer_now + pending),
         "piggy_bank_balance": piggy_balance(uid),
         "period_budget": amount(
-            actual.period_opening[original_start]
+            regular_budget
             + sum(value for day, value in inp.bridge_in.items() if current.start <= day <= current.end)
         ),
+        "period_daily_limit": amount(max(0, regular_budget) // regular_days),
         "remaining_period": amount(card_now),
         "spent_period": round(float(spent_period), 2),
         "mandatory_period": amount(mandatory_period),

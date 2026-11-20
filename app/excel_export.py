@@ -66,6 +66,11 @@ def _bill_period(row: dict) -> str:
 
 
 def _piggy_title(row: dict) -> str:
+    purpose = row.get("purpose") or ""
+    if purpose == "payday_delay":
+        return "На карту · дни задержки"
+    if purpose in ("payday_delay_return", "payday_delay_edit_return", "payday_delay_repayment"):
+        return "В копилку · возврат при задержке"
     if row["direction"] == "deposit":
         if row.get("bill_payment_id"):
             return "Остаток обязательного платежа"

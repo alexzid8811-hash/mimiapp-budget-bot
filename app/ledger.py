@@ -448,6 +448,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                     card += allocations[day]
             received_late = active.funded_on != day and _funding_day(inp, active) == day
             if received_late:
+                carry_in[day] = card
                 carried = max(0, card)
                 card += allocations[active.start]
             trim = 0

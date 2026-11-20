@@ -46,20 +46,29 @@
       if (overspend>0) $("overspendAmount").textContent=money(overspend);
     }
     const start=d.period.start, end=d.period.end, payday=flow?.period?.payday || end;
+    const received=flow?.period?.payday_received_on;
+    const paydayMark=received || payday;
     const today=flow?.today || window.budgetDate.today();
     const count=days(today,payday);
     const kind=flow?.period?.payday_kind || "выплата";
-    $("nextPayTitle").textContent=flow?.payday_waiting===payday && end!==payday ? `Ожидается: ${kind.toLowerCase()}`
+    $("nextPayTitle").textContent=received ? `Получено: ${kind.toLowerCase()}`
+      : flow?.payday_waiting===payday && end!==payday ? `Ожидается: ${kind.toLowerCase()}`
       : kind==="Аванс" ? `До аванса ${count} ${plural(count)}` : `До выплаты ${count} ${plural(count)}`;
-    $("nextPayDate").textContent=date(payday);
+    $("nextPayDate").textContent=date(paydayMark);
     $("periodStartLabel").textContent=date(start);
-    $("periodEndLabel").textContent=date(end)+(end===payday ? " · "+kind.toLowerCase() : "");
+    $("periodEndLabel").textContent=date(end)+(end===paydayMark ? " · "+kind.toLowerCase() : "");
+    const delay=flow?.payday_delay, delayNote=$("homePaydayDelay");
+    if(delayNote){
+      delayNote.classList.toggle("hidden",!delay);
+      delayNote.textContent=delay ? `Выплата за ${date(delay.payday)} задерживается.`+
+        (delay.covered_until ? ` Из копилки по ${date(delay.covered_until)} включительно.` : "") : "";
+    }
     const strip=$("periodStrip");strip.replaceChildren();
     const bills=new Set((state.plan||[]).map(p=>p.due_date));
     for(let i=0;i<=Math.min(62,days(start,end));i++){
       const s=shift(start,i), el=document.createElement("div");
       const weekend=[0,6].includes(new Date(s+"T12:00:00Z").getUTCDay());
-      el.className="day "+(s===payday?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"")+(weekend?" weekend":"");
+      el.className="day "+(s===paydayMark?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"")+(weekend?" weekend":"");
       el.textContent=String(Number(s.slice(8)));
       el.title=date(s)+(weekend?" · выходной":"")+(bills.has(s)?" · обязательный платёж":"");
       strip.appendChild(el);

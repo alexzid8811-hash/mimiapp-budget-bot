@@ -149,7 +149,7 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
     # The same calculation as the home screen: with the start capital
     # switched off it still runs from the latest payday.
     flow = engine.compute(user_id)
-    period = planning.user_period(user_id, today)
+    period = flow["period"]
     nearest_date, nearest = _nearest_unpaid_bills(user_id, today)
     # Unpaid after their date: the debts stay in the report until paid.
     overdue = [
@@ -161,7 +161,7 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
     # The first morning of a card period: yesterday's sum was the rest of the
     # previous period, so the change says nothing.  The report tells what
     # happened to the money left from that period instead.
-    new_period = flow["period"]["start"] == today.isoformat()
+    new_period = period["start"] == today.isoformat()
     return {
         "user_id": user_id,
         "report_date": today,
@@ -169,10 +169,11 @@ def _pending_report(user_id: int, now: datetime) -> dict | None:
         # The payday has come, but the money is not confirmed yet: the
         # numbers use the calculated amount and are not locked in.
         "payday_waiting": flow.get("payday_waiting"),
+        "payday_delay": flow.get("payday_delay"),
         "yesterday": yesterday,
         "expenses": expenses,
         "spent_total": round(sum(float(item["amount"]) for item in expenses), 2),
-        "period_days_left": (period.end - today).days + 1,
+        "period_days_left": period["days_left"],
         "period_remaining": float(flow.get("remaining_period", 0)),
         "card_balance": float(flow.get("current_cash", 0)),
         "daily_amount": daily_amount,
