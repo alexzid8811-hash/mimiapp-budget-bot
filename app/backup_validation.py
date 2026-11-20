@@ -1,6 +1,6 @@
 """Validate the entire backup before deleting any current user data."""
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -144,7 +144,8 @@ class Piggy(Record):
     note: str = Field(default='', max_length=160)
     source: Literal['external', 'daily_budget'] = 'external'
     purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer', 'cap_excess',
-                     'vacation_buffer', 'vacation_deposit', 'vacation_existing_deposit'] | None = None
+                     'vacation_buffer', 'vacation_deposit', 'vacation_existing_deposit',
+                     'payday_delay', 'payday_delay_return'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
     expense_transaction_id: int | None = Field(default=None, gt=0)
@@ -164,6 +165,12 @@ class Piggy(Record):
                        or self.bill_payment_id or self.expense_transaction_id
                        or (self.income_transaction_id and self.purpose != 'vacation_existing_deposit')):
             raise ValueError('Неверное движение отпускных из копилки')
+        if self.purpose in ('payday_delay', 'payday_delay_return'):
+            direction = 'withdraw' if self.purpose == 'payday_delay' else 'deposit'
+            if self.source != 'daily_budget' or self.direction != direction or any((
+                self.bill_payment_id, self.income_transaction_id, self.expense_transaction_id,
+            )):
+                raise ValueError('Неверная операция копилки при задержке выплаты')
         return self
 
 
@@ -319,9 +326,33 @@ class History(APIModel):
     snapshot: str | dict
 
 
+class PaydayDelay(Record):
+    payday: date
+    daily: float = Field(ge=0)
+    extensions: dict[str, list[date]]
+    received_on: date | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def decode_extensions(cls, data):
+        if isinstance(data, dict) and isinstance(data.get('extensions'), str):
+            return {**data, 'extensions': json.loads(data['extensions'])}
+        return data
+
+    @model_validator(mode='after')
+    def valid_dates(self):
+        days = [day for dates in self.extensions.values() for day in dates]
+        if (not self.extensions or len(days) != len(set(days)) or any(day <= self.payday for day in days)
+                or self.payday > clock.today()
+                or self.received_on and not self.payday <= self.received_on <= clock.today()):
+            raise ValueError('Неверные даты задержки выплаты')
+        return self
+
+
 MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
           'transactions': Transaction, 'vacations': Vacation, 'reserve_movements': Reserve,
           'piggy_bank_movements': Piggy, 'cashflow_income_overrides': CashflowIncomeOverride,
+          'payday_delays': PaydayDelay,
           'plan_history': History, 'card_allocations': CardAllocation,
           'payroll_changes': PayrollChange, 'emergency_reserve_movements': EmergencyReserve,
           'daily_caps': DailyCap,
@@ -329,7 +360,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 16):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 17):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -342,6 +373,8 @@ def validate_backup(payload):
         data['settings'].update(accounts_enabled=False, main_account_id=None, accounts_disabled_at=None)
     for table, model in MODELS.items():
         optional_legacy_tables = {'cashflow_income_overrides', 'card_allocations', 'payroll_changes'}
+        if payload['backup_version'] < 16:
+            optional_legacy_tables.add('payday_delays')
         if payload['backup_version'] < 13:
             optional_legacy_tables.update(GOAL_TABLES)
         if payload['backup_version'] < 12:
@@ -438,6 +471,24 @@ def validate_backup(payload):
     months = [r['effective_month'] for r in data['payroll_changes']]
     if len(set(months)) != len(months):
         raise ValueError('Повторяющийся месяц изменения зарплаты')
+    delays = data['payday_delays']
+    if len({row['payday'] for row in delays}) != len(delays):
+        raise ValueError('Повторяющаяся задержка выплаты')
+    bridge_days = [day for row in delays for dates in row['extensions'].values() for day in dates
+                   if row['received_on'] is None or day < row['received_on']]
+    if len(bridge_days) != len(set(bridge_days)):
+        raise ValueError('Повторяющийся день задержки выплаты')
+    confirmed_paydays = {row['period_start'] for row in data['cashflow_income_overrides'] if row['confirmed']}
+    for row in delays:
+        if row['received_on'] and (date.fromisoformat(row['payday']) + timedelta(days=1)).isoformat() not in confirmed_paydays:
+            raise ValueError('В резервной копии нет подтверждения задержанной выплаты')
+    withdrawn = sum(cents(row['daily']) * sum(map(len, row['extensions'].values())) for row in delays)
+    returned = sum(cents(row['daily']) * sum(day >= row['received_on'] for days in row['extensions'].values() for day in days)
+                   for row in delays if row['received_on'])
+    for purpose, expected in (('payday_delay', withdrawn), ('payday_delay_return', returned)):
+        actual = sum(cents(row['amount']) for row in data['piggy_bank_movements'] if row['purpose'] == purpose)
+        if actual != expected:
+            raise ValueError('Операции копилки не соответствуют дням задержки')
     validate_piggy_history(data['piggy_bank_movements'])
     _validate_goals(data)
     _validate_accounts(payload['backup_version'], source, data)

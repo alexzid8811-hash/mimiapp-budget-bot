@@ -176,19 +176,10 @@ def operations_without_account(con, uid: int, since: str) -> int:
 def _payroll_actual(uid: int):
     """The ledger of today's actual balances, as engine.compute builds it
     (without an unconfirmed payday)."""
-    from dataclasses import replace
-
     from . import engine
-    from .ledger import run_ledger
 
     inp, extras, _today, _start, _settings, _enabled = engine._run(uid)
-    actual = run_ledger(inp)
-    waiting = extras["waiting"]
-    if waiting:
-        without = dict(inp.buffer_in)
-        without[waiting] = without.get(waiting, 0) - extras["payday_amount"].get(waiting, 0)
-        actual = run_ledger(replace(inp, buffer_in=without, unconfirmed_payday=waiting))
-    return inp, actual
+    return engine._actual_run(inp, extras)
 
 
 def _expense_envelope(row) -> str | None:
@@ -309,8 +300,9 @@ def budget_ops(uid: int, mode: str) -> list[BudgetOp]:
             inp, actual = _payroll_actual(uid)
             for period in actual.periods:
                 value = actual.allocations.get(period.start, 0)
-                if period.funded_on <= today and value:
-                    ops.append(BudgetOp(period.funded_on, {"buffer": -value, "spending": value}, {}))
+                funding = inp.delayed_funding.get(period.funded_on, period.funded_on)
+                if funding is not None and funding <= today and value:
+                    ops.append(BudgetOp(funding, {"buffer": -value, "spending": value}, {}))
             # «Максимум в день»: card money above the maximum returns to the
             # buffer; a raised maximum tops the card up from the buffer.
             for day, value in actual.cap_trims.items():
@@ -624,6 +616,7 @@ def payroll_income_hints(uid: int) -> list[dict]:
         recorded = {r[0] for r in con.execute(
             "SELECT payroll_period_start FROM account_incomes WHERE user_id=? AND payroll_period_start IS NOT NULL",
             (uid,))}
+        delayed = {r[0] for r in con.execute("SELECT payday FROM payday_delays WHERE user_id=?", (uid,))}
         main_id = settings["main_account_id"]
     budget = engine.settings_for(uid)
     if not settings["enabled"] or settings["mode"] != "payroll" or since is None or not budget["cashflow_enabled"]:
@@ -639,7 +632,7 @@ def payroll_income_hints(uid: int) -> list[dict]:
     hints = []
     for day in paydays:
         key = (day + timedelta(days=1)).isoformat()
-        if day < since or day > today or day == waiting or key in recorded:
+        if day < since or day > today or day == waiting or key in recorded or day.isoformat() in delayed:
             continue
         value = overrides.get(day, schedule["paydays"][day]["amount"])
         if value <= 0:

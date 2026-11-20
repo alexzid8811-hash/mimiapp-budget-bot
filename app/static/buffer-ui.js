@@ -67,7 +67,7 @@
   // corrected once their period comes.
   function receivedMarkup(period, compact = false, current = false) {
     const hasVacation = period.vacation_funds?.length > 0;
-    const value = formatMoney(hasVacation ? period.payday_amount : period.received);
+    const value = formatMoney(hasVacation || period.delay_pending ? period.payday_amount : period.received);
     if (!period.received_editable) return compact ? `<span>${value}</span>` : `<b><span>${value}</span></b>`;
     const status = period.income_confirmed ? '<small class="income-status done">получено ✓</small>'
       : period.income_pending ? '<small class="income-status pending">ждём подтверждения</small>'
@@ -78,7 +78,21 @@
     const confirm = period.income_pending
       ? `<button class="income-btn accent" type="button" onclick="confirmCashflowIncome('${period.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`
       : '';
-    return `<span class="income-cell"><span class="income-amount">${value}</span>${status}<span class="income-actions">${edit}${confirm}</span></span>`;
+    return `<span class="income-cell"><span class="income-amount">${value}</span>${status}<span class="income-actions">${edit}${confirm}${delayButton(period)}</span></span>${delayDetails(period)}`;
+  }
+
+  function delayButton(period) {
+    if (!period.income_pending || period.delay_daily == null) return "";
+    return `<button class="income-btn" type="button" onclick="openPaydayDelay('${period.override_key}')">${period.delay_pending ? "Продлить задержку" : "Задержка выплаты"}</button>`;
+  }
+
+  function delayDetails(period) {
+    const rows = [];
+    if (period.delay_until) rows.push(`Из копилки до ${formatDate(period.delay_until)} включительно · ${formatMoney(period.delay_daily)} в день`);
+    if (period.delay_shortfall > 0) rows.push(`На обязательные платежи не хватает ${formatMoney(period.delay_shortfall)}`);
+    if (period.received_on) rows.push(`Получено ${formatDate(period.received_on)}`);
+    if (period.days_funded_after_delay != null) rows.push(`Дней в новом расчёте: ${period.days_funded_after_delay}`);
+    return rows.map(label => `<div class="row-sub">${label}</div>`).join("");
   }
 
   function vacationIncomeMarkup(period) {
@@ -211,7 +225,7 @@
     // The columns read as a sum: what came minus where it went is what the
     // buffer gets or gives; the hint says so once.
     const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
-    const shown = [...(showPast ? past : []), ...periods];
+    const shown = [...(showPast ? past : past.filter(period => period.income_pending)), ...periods];
     const piggyColumn = shown.some(p => toPiggy(p) > 0.004);
     setText("planHint", `Пришло − обязательные − на карту${piggyColumn ? " − в копилку" : ""} = сколько положить в буфер или взять из него.`);
     // Yearly payments are saved up in equal parts on every payday; the sum
@@ -239,7 +253,8 @@
       const confirm = p.income_pending
         ? `<button class="income-btn accent" type="button" onclick="confirmCashflowIncome('${p.override_key}')" aria-label="Подтвердить получение выплаты">Получил ✓</button>`
         : "";
-      return edit || confirm ? `<div class="pc-pay-actions">${confirm}${edit}</div>` : "";
+      const delay = delayButton(p);
+      return edit || confirm || delay ? `<div class="pc-pay-actions">${confirm}${edit}${delay}</div>` : "";
     };
     // Cards: period and buffer movement on top, then a plain list of
     // label — amount rows, then what stays in the buffer.
@@ -255,7 +270,7 @@
       const [c,m,label]=movement(p);
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : current ? '<span class="pc-chip">сейчас</span>' : "";
       const payLabel = `${p.past || current ? "Пришло" : "Придёт"}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
-      const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.vacation_funds?.length ? p.payday_amount : p.received))}${vacationIncomeMarkup(p)}${payoutActions(p,current)}</div>`;
+      const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.vacation_funds?.length || p.delay_pending ? p.payday_amount : p.received))}${vacationIncomeMarkup(p)}${delayDetails(p)}${payoutActions(p,current)}</div>`;
       const flow = `<div class="pc-flow">${row("− Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("− На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("− В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
       const footLabel = p.past ? "Осталось в буфере" : "Останется в буфере";
       return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${pay}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${lowBuffer(p)?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyNote(p,current)}</article>`;
@@ -285,8 +300,56 @@
     renderBuffer();
   });
 
+  function findPayday(overrideKey) {
+    const { periods = [], past_periods = [] } = bufferState.buffer || {};
+    return [...periods, ...past_periods].find(item => item.override_key === overrideKey);
+  }
+
+  let delayDraft = null;
+  function renderDelayPreview() {
+    if (!delayDraft) return;
+    const days = Number(document.getElementById("paydayDelayDays").value);
+    const start = delayDraft.period.delay_start ? ` с ${formatDate(delayDraft.period.delay_start)}` : "";
+    setText("paydayDelayPreview", `${formatMoney(delayDraft.period.delay_daily)} в день${start} · из копилки ${formatMoney(delayDraft.period.delay_daily * days)}`);
+  }
+  window.openPaydayDelay = overrideKey => {
+    const period = findPayday(overrideKey);
+    if (!period?.income_pending || period.delay_daily == null) return;
+    delayDraft = {
+      period,
+      requestId: globalThis.crypto?.randomUUID?.() || `delay-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    };
+    document.getElementById("paydayDelayDays").value = "1";
+    renderDelayPreview();
+    document.getElementById("paydayDelayDialog").showModal();
+  };
+  document.getElementById("paydayDelayDays")?.addEventListener("input", renderDelayPreview);
+  async function savePaydayDelay(days) {
+    const button = document.getElementById("savePaydayDelayBtn");
+    if (!delayDraft || button.disabled) return;
+    const { period, requestId } = delayDraft;
+    button.disabled = true;
+    try {
+      await request(`/api/cashflow/payday-delays/${period.override_key}`, {
+        method: "POST", body: JSON.stringify({ days, request_id: requestId }),
+      });
+      document.getElementById("paydayDelayDialog").close();
+      delayDraft = null;
+      await loadAll();
+    } catch (error) {
+      if (typeof toast === "function") toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+  document.getElementById("paydayDelayForm")?.addEventListener("submit", event => {
+    event.preventDefault();
+    return savePaydayDelay(Number(document.getElementById("paydayDelayDays").value));
+  });
+  document.getElementById("markPaydayDelayOnly")?.addEventListener("click", () => savePaydayDelay(0));
+
   function openIncomeDialog(overrideKey, confirm) {
-    const period = bufferState.buffer?.periods?.find(item => item.override_key === overrideKey);
+    const period = findPayday(overrideKey);
     if (!period?.received_editable) return;
     document.getElementById("cashflowIncomeForm").dataset.mode = confirm ? "confirm" : "edit";
     setText("cashflowIncomeTitle", confirm ? "Подтвердить получение" : "Фактическая сумма выплаты");
@@ -296,7 +359,7 @@
     document.getElementById("cashflowIncomeAmount").value = period.payday_amount;
     document.getElementById("cashflowIncomeCaption").textContent =
       `${period.kind} ${formatDate(period.payday)} · по расчёту ${formatMoney(period.planned_payday_amount)}`;
-    document.getElementById("resetCashflowIncomeBtn").hidden = confirm || !period.income_overridden;
+    document.getElementById("resetCashflowIncomeBtn").hidden = confirm || !period.income_overridden || Boolean(period.received_on);
     // Cards and accounts: the confirmed money arrives on the main card or the chosen one.
     window.accountsUi?.prepareField?.("cashflowIncome", { fallback: window.accountsUi?.mainAccountId?.(), visible: confirm });
     document.getElementById("cashflowIncomeDialog").showModal();
@@ -354,14 +417,15 @@
       const deposit = item.direction === "deposit";
       const vacationDeposit = item.purpose === "vacation_deposit" || item.purpose === "vacation_existing_deposit";
       const toCard = !deposit && item.source === "daily_budget";
-      const title = deposit && item.source === "daily_budget" ? "Из остатка дня"
+      const delayMove = item.purpose === "payday_delay" || item.purpose === "payday_delay_return";
+      const title = delayMove ? item.note : deposit && item.source === "daily_budget" ? "Из остатка дня"
         : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера"
           : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : vacationDeposit ? "Отпускные" : deposit ? "Пополнение"
         : item.purpose === "vacation_buffer" ? "Отпускные в буфер"
         : toCard ? (item.purpose === "transfer" ? "На карту · по дням периода" : "На карту · на сегодня") : "Снятие";
       const sub = [formatDate(item.movement_date), item.goal_title && `${deposit ? "на цель" : "с цели"} «${safe(item.goal_title)}»`,
         item.note && item.note !== title && safe(item.note)].filter(Boolean).join(" · ");
-      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${sub}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" || vacationDeposit ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
+      return `<div class="list-row"><div class="row-main"><div class="movement-icon ${item.direction}">${deposit ? "+" : "−"}</div><div class="row-text"><div class="row-title">${safe(title)}</div><div class="row-sub">${sub}</div></div></div><div><div class="amount ${deposit ? "income" : "expense"}">${deposit ? "+" : "−"}${formatMoney(item.amount)}</div>${item.purpose === "cap_excess" || vacationDeposit || delayMove ? "" : `<div class="actions"><button class="tiny danger" type="button" onclick="deletePiggyMovement(${item.id})">Удалить</button></div>`}</div></div>`;
     }).join("");
   }
 

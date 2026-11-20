@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 15
+BACKUP_VERSION = 16
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -69,6 +69,7 @@ TABLE_COLUMNS = {
         "bill_payment_id", "income_transaction_id", "expense_transaction_id", "vacation_id", "vacation_part", "created_at",
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "confirmed", "updated_at"),
+    "payday_delays": ("id", "payday", "daily", "extensions", "received_on"),
     "plan_history": ("id", "effective_date", "snapshot"),
     "card_allocations": ("id", "period_start", "funded_on", "amount", "cap_kept"),
     "payroll_changes": ("id", "effective_month", "salary_gross", "bonus_gross", "created_at"),
@@ -142,7 +143,7 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
         with user_scope(user_id), connect() as con:
             con.execute("BEGIN IMMEDIATE")
             for table in ("piggy_goal_moves", "piggy_goals", "account_transfers", "account_adjustments", "account_incomes", "envelope_accounts",
-                          "emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "plan_history", "reserve_movements", "card_allocations", "daily_caps", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories", "accounts"):
+                          "emergency_reserve_movements", "transactions", "piggy_bank_movements", "cashflow_income_overrides", "payday_delays", "plan_history", "reserve_movements", "card_allocations", "daily_caps", "payroll_changes", "vacations", "bill_rules", "income_rules", "categories", "accounts"):
                 con.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
             # Versions before v5 stored the cash-flow start balance in
@@ -325,6 +326,11 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                         user_id, row["period_start"], row["amount"], int(bool(row.get("confirmed"))),
                         row.get("updated_at") or datetime.now(timezone.utc).isoformat(),
                     ),
+                )
+            for row in data["payday_delays"]:
+                con.execute(
+                    "INSERT INTO payday_delays(user_id,payday,daily,extensions,received_on) VALUES(?,?,?,?,?)",
+                    (user_id, row["payday"], row["daily"], json.dumps(row["extensions"]), row["received_on"]),
                 )
             for row in data["card_allocations"]:
                 con.execute(
