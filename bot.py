@@ -89,6 +89,13 @@ def _ddmm(iso: str) -> str:
 PAYDAY_WAITING = "⏳ Выплата ещё не подтверждена. Когда деньги придут, нажмите «Получил ✓» в приложении."
 
 
+def delayed_payday_text(delay: dict) -> str:
+    text = f"⏳ Выплата за {_ddmm(delay['payday'])} задерживается."
+    if delay["covered_until"]:
+        text += f" Деньги из копилки выделены по {_ddmm(delay['covered_until'])} включительно."
+    return text + " Когда деньги придут, нажмите «Получил ✓» в приложении."
+
+
 def today_text(numbers: dict) -> str:
     lines = [
         f"📅 Сегодня, {_ddmm(numbers['today'])}", "",
@@ -100,7 +107,8 @@ def today_text(numbers: dict) -> str:
         lines.extend(["", f"⚠️ Перерасход {money(numbers['overspend'])} ₽. "
                           "Как его покрыть, можно выбрать в приложении."])
     if numbers.get("payday_waiting"):
-        lines.extend(["", PAYDAY_WAITING])
+        delay = numbers.get("payday_delay")
+        lines.extend(["", delayed_payday_text(delay) if delay else PAYDAY_WAITING])
     if numbers.get("no_income_warning"):
         lines.extend(["", f"⚠️ Дохода не было {numbers['days_without_income']} дн. "
                           "При необходимости возьмите деньги из резерва."])
@@ -154,7 +162,8 @@ def card_text(numbers: dict) -> str:
         f"На траты до {_ddmm(numbers['period_end'])} включительно (осталось {numbers['period_days_left']} дн.)",
     ]
     if numbers.get("payday_waiting"):
-        lines.extend(["", PAYDAY_WAITING])
+        delay = numbers.get("payday_delay")
+        lines.extend(["", delayed_payday_text(delay) if delay else PAYDAY_WAITING])
     return "\n".join(lines)
 
 
@@ -298,7 +307,9 @@ def morning_report_text(report: dict) -> str:
     else:
         title = f"☀️ Доброе утро! Итоги за {report['yesterday'].strftime('%d.%m.%Y')}"
     lines = [title]
-    if report.get("payday_waiting"):
+    if report.get("payday_delay"):
+        lines.extend(["", delayed_payday_text(report["payday_delay"])])
+    elif report.get("payday_waiting"):
         lines.extend(["", "⏳ Выплата ещё не подтверждена — суммы посчитаны по расчётной сумме. "
                           "Когда деньги придут, нажмите «Получил ✓» в приложении."])
     lines += [

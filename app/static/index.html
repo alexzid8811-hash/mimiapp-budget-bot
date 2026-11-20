@@ -68,6 +68,7 @@
           <div class="section-head"><h2 id="nextPayTitle">До следующей выплаты</h2><span class="muted" id="nextPayDate">—</span></div>
           <div class="strip" id="periodStrip" aria-label="Дни периода"></div>
           <div class="strip-legend"><span id="periodStartLabel">—</span><span class="pay" id="periodEndLabel">—</span></div>
+          <p class="muted row-sub hidden" id="homePaydayDelay"></p>
           <span id="dayProgress" hidden></span>
         </div>
         <div class="card home-bills">
@@ -127,6 +128,10 @@
         <div class="card analytics-piggy-card" id="analyticsPiggyCard">
           <div class="section-head"><h3>Копилка</h3></div>
           <div class="analytics-kinds analytics-piggy" id="analyticsPiggy"></div>
+        </div>
+        <div class="card analytics-bills-card hidden" id="analyticsDelayCard">
+          <div class="section-head"><h3>Задержки выплат</h3></div>
+          <div class="analytics-bills" id="analyticsDelays"></div>
         </div>
         <div class="card irregular-only irr-analytics" id="irrAnalytics">
           <div class="section-head"><h3>Доходы</h3><div class="irr-analytics-nav"><button class="icon-btn" id="irrAnalyticsPrev" type="button" aria-label="Предыдущий месяц">‹</button><span class="muted" id="irrAnalyticsLabel">—</span><button class="icon-btn" id="irrAnalyticsNext" type="button" aria-label="Следующий месяц">›</button></div></div>
@@ -767,12 +772,12 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/budget-date.js?v=20261020-daily-cap"></script>
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
-  <script src="/static/app.js?v=20261119-vacation-deposit"></script>
+  <script src="/static/app.js?v=20261120-delay-periods"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
-  <script src="/static/buffer-ui.js?v=20261120-delay-budget"></script>
-  <script src="/static/design-ui.js?v=20261120-delay-budget"></script>
+  <script src="/static/buffer-ui.js?v=20261120-delay-periods"></script>
+  <script src="/static/design-ui.js?v=20261120-delay-periods"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
-  <script src="/static/analytics-ui.js?v=20261116-piggy-card"></script>
+  <script src="/static/analytics-ui.js?v=20261120-delay-periods"></script>
   <script src="/static/irregular-ui.js?v=20261015-accounts-3"></script>
   <script src="/static/accounts-ui.js?v=20261015-accounts-4"></script>
   <script src="/static/home-layout.js?v=20261012-masonry"></script>

@@ -231,7 +231,7 @@
     };
     // Every period shows its daily amount under «На карту».
     const dailyNote = p => {
-      if (p.delay_pending && p.card_period && p.delay_return_in_plan > 0) {
+      if (p.delay_pending && p.card_period && p.delay_until) {
         return `<small class="delay-note">${formatMoney(dailyOf(p))} в день<br>С ${formatDate(p.card_period.start)} · ${p.card_period.days} ${plural(p.card_period.days)}</small>`;
       }
       return Number(p.to_card) > 0 || p.daily_set != null ? `<small>${formatMoney(dailyOf(p))} в день</small>` : "";

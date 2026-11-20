@@ -286,6 +286,18 @@ test('redesign uses today target without subtracting expenses twice and preserve
  assert.match(get('leftToday').textContent,/2.975,00/);
 });
 
+test('home period shows the actual receipt date when a delayed payout arrives', async () => {
+ const {get,responses}=setup();
+ responses['/api/dashboard'].period.end='2026-09-24';
+ Object.assign(responses['/api/cashflow'],{
+   today:'2026-09-24',
+   period:{payday:'2026-09-22',payday_kind:'Аванс',payday_received_on:'2026-09-24'},
+ });
+ await get('refreshBtn').listeners.click();
+ assert.equal(get('nextPayTitle').textContent,'Получено: аванс');
+ assert.match(get('nextPayDate').textContent,/24/);
+});
+
 test('buffer renders responsive cards and table, escaping user-provided labels', async () => {
  const {get,responses}=setup();
  responses['/api/cashflow'].periods=[

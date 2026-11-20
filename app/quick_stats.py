@@ -91,6 +91,7 @@ def quick_numbers(user_id: int) -> dict | None:
             "period_end": flow["period"]["end"],
             "period_days_left": int(flow["period"]["days_left"]),
             "payday_waiting": flow.get("payday_waiting"),
+            "payday_delay": flow.get("payday_delay"),
         }
     everyday, bills, from_reserve, other = _today_expenses(user_id, numbers["today"], numbers["mode"] == "irregular")
     numbers.update({
@@ -113,5 +114,6 @@ def quick_numbers(user_id: int) -> dict | None:
             "today_target": round(numbers["available_today"] + numbers["spent_today"], 2),
             "overspend": 0.0,
             "payday_waiting": None,
+            "payday_delay": None,
         })
     return numbers

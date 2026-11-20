@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import json
 from copy import deepcopy
 
-from . import clock
+from . import clock, payday_delays
 from .budget import Period, add_months, occurrences
 from .db import connect
 from .money import amount, cents
@@ -345,18 +345,52 @@ def bill_planned_amount(uid, bill_id, due_date):
     return None
 
 
-def payday_boundaries(uid, start, end):
-    """Budget-period starts, one day after each actual payday."""
+def payday_boundaries(uid, start, end, *, delays=None):
+    """Card-period starts after scheduled paydays and recorded delays."""
+    if delays is None:
+        with connect() as con:
+            delays = payday_delays.load(con, uid)
+    left = add_months(start, -3) if delays else start
+    right = add_months(end, 3) if delays else end
     dates = {
         event['budget_date']: event['title']
-        for event in budget_income_events(uid, start, end)
+        for event in budget_income_events(uid, left, right)
         if event['is_payday']
     }
-    return [{'date': day, 'kind': title} for day, title in sorted(dates.items())]
+    if not delays:
+        return [{'date': day, 'kind': title} for day, title in sorted(dates.items())]
+    ordered = sorted(dates)
+    boundaries = []
+    for scheduled, next_start in zip(ordered, ordered[1:] + [date.max]):
+        day = payday_delays.spending_start(scheduled, next_start, delays.get(scheduled - timedelta(days=1)))
+        if start <= day <= end and day < next_start:
+            boundaries.append({'date': day, 'kind': dates[scheduled], 'scheduled': scheduled})
+    return boundaries
 
 
-def user_period(uid, as_of):
-    dates = [e['date'] for e in payday_boundaries(uid, add_months(as_of, -3), add_months(as_of, 3))]
+def user_period(uid, as_of, *, delays=None):
+    left, right = add_months(as_of, -3), add_months(as_of, 3)
+    if delays is None:
+        with connect() as con:
+            delays = payday_delays.load(con, uid)
+    boundaries = payday_boundaries(uid, left, right, delays=delays)
+    dates = {e['date'] for e in boundaries}
+    if delays:
+        with connect() as con:
+            settings = con.execute(
+                "SELECT cashflow_start_date FROM settings "
+                "WHERE user_id=? AND cashflow_enabled=1 AND budget_mode='payroll'", (uid,)
+            ).fetchone()
+        if settings and settings['cashflow_start_date']:
+            first_day = min(date.fromisoformat(settings['cashflow_start_date']), clock.today())
+            # A shifted boundary from before this budget opened has no
+            # allocation in the ledger after the start-capital date.
+            dates = {e['date'] for e in boundaries if not e['scheduled'] <= first_day < e['date']}
+            next_start = min((day for day in dates if day > first_day), default=date.max)
+            if left <= first_day <= right and any(first_day <= payday < next_start for payday in delays):
+                # Use the same opening day as the budget when the delay
+                # extends the first period and adds its piggy-bank funding.
+                dates.add(first_day)
     return Period(max(d for d in dates if d <= as_of), min(d for d in dates if d > as_of) - timedelta(days=1))
 
 

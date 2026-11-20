@@ -2,6 +2,7 @@
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
   const rub = v => new Intl.NumberFormat("ru-RU", {style:"currency",currency:"RUB",maximumFractionDigits:0}).format(Math.round(Number(v)||0));
+  const delayMoney = new Intl.NumberFormat("ru-RU", {style:"currency",currency:"RUB",minimumFractionDigits:0,maximumFractionDigits:2});
   const day = s => new Intl.DateTimeFormat("ru-RU", {day:"numeric",month:"short"}).format(new Date(s+"T12:00:00"));
   const SLOTS = 8;
   // What was spent. The piggy bank has its own card: money put aside is
@@ -79,7 +80,7 @@
     document.querySelectorAll("[data-amode]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.amode === data.mode)));
     $("analyticsLabel").textContent = data.label;
     $("analyticsNext").disabled = !data.next_anchor;
-    renderHero(); renderPiggy(); renderCategories(); renderDays(); renderMonths(); renderBills();
+    renderHero(); renderPiggy(); renderDelays(); renderCategories(); renderDays(); renderMonths(); renderBills();
   }
 
   function renderHero() {
@@ -109,6 +110,23 @@
       + (put > 0 || taken > 0
         ? `<div class="analytics-kind analytics-piggy-net"><i></i><span>${net > 0 ? "Копилка выросла" : net < 0 ? "Копилка уменьшилась" : "Копилка не изменилась"}</span><span class="num">${net > 0 ? "+" : net < 0 ? "−" : ""}${rub(Math.abs(net))}</span></div>`
         : "");
+  }
+
+  function renderDelays() {
+    const delays = data.payday_delays || [];
+    $("analyticsDelayCard").classList.toggle("hidden", !delays.length);
+    $("analyticsDelays").innerHTML = delays.map(delay => {
+      const details = [delay.received_on ? `Получено ${day(delay.received_on)}` : "Выплата ещё не получена"];
+      if (delay.covered_days > 0) {
+        const covered = delay.covered_from === delay.covered_until ? day(delay.covered_from)
+          : `${day(delay.covered_from)} — ${day(delay.covered_until)}`;
+        details.push(`Из копилки ${covered} · ${delay.covered_days} дн. · ${delayMoney.format(delay.daily_limit)} в день · всего ${delayMoney.format(delay.funded_from_piggy)}`);
+      }
+      if (delay.funding_on) details.push(`Выплата в бюджете с ${day(delay.funding_on)}`);
+      if (delay.repaid_to_piggy > 0) details.push(`Возвращено в копилку ${delayMoney.format(delay.repaid_to_piggy)}`);
+      if (delay.repayment_remaining > 0) details.push(`Осталось вернуть в копилку ${delayMoney.format(delay.repayment_remaining)}`);
+      return `<div class="analytics-bill"><span>Выплата за ${day(delay.payday)}${details.map(label => `<small>${label}</small>`).join("")}</span></div>`;
+    }).join("");
   }
 
   function renderCategories() {
@@ -192,6 +210,9 @@
     card.classList.toggle("hidden", data.mode === "year");
     if (data.mode === "year") return;
     const days = data.days, values = days.map(d => d.amount), limit = data.daily_limit;
+    const limitFor = i => days[i].delay_limit ?? limit;
+    const isOver = (v, i) => limitFor(i) != null && v > limitFor(i);
+    const hasDelayLimits = days.some(d => d.delay_limit != null);
     const passed = days.filter(d => d.date <= data.today);
     const average = passed.length ? passed.reduce((s, d) => s + d.amount, 0) / passed.length : 0;
     const every = days.length > 20 ? 7 : days.length > 10 ? 3 : 1;
@@ -204,10 +225,12 @@
       aria: "Траты по дням",
       line: average,
       lineColor: "var(--muted)",
-      color: v => limit && v > limit ? "var(--expense)" : "var(--kind-daily)",
-      tip: (v, i) => `<b>${day(days[i].date)}</b> · ${rub(v)}${limit && v > limit ? ` · +${rub(v - limit)}` : ""}`,
+      color: (v, i) => isOver(v, i) ? "var(--expense)" : "var(--kind-daily)",
+      tip: (v, i) => `<b>${day(days[i].date)}</b> · ${rub(v)}${days[i].delay_limit != null ? ` · из копилки ${delayMoney.format(limitFor(i))}` : ""}${isOver(v, i) ? ` · +${rub(v - limitFor(i))}` : ""}`,
     });
-    $("analyticsDaysLegend").innerHTML = (limit
+    $("analyticsDaysLegend").innerHTML = (hasDelayLimits
+      ? `<span><i style="background:var(--kind-daily)"></i>Траты за день</span><span><i style="background:var(--expense)"></i>Сверх лимита дня</span>${limit ? `<span>Лимит периода ${rub(limit)}/день</span>` : ""}`
+      : limit
       ? `<span><i style="background:var(--kind-daily)"></i>В пределах лимита</span><span><i style="background:var(--expense)"></i>Перерасход (лимит ${rub(limit)}/день)</span>`
       : `<span><i style="background:var(--kind-daily)"></i>Траты за день</span>`)
       + `<span>В среднем ${rub(average)}/день</span>`;
@@ -286,9 +309,6 @@
     renderCategories();
   });
   document.querySelector('[data-nav="analytics"]')?.addEventListener("click", () => load());
-  $("refreshBtn")?.addEventListener("click", () => {
-    if (document.querySelector('[data-page="analytics"]')?.classList.contains("active")) load();
-  });
   let resizeTimer = null, lastWidth = 0;
   window.addEventListener?.("resize", () => {
     clearTimeout(resizeTimer);

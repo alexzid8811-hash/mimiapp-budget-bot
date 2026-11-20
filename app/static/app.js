@@ -73,16 +73,21 @@ let transactionsSince = null;
 async function loadAll() {
   const version = ++loadVersion;
   const since = transactionsFrom();
+  const selectedPeriod = transactionPeriod;
   try {
-    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts] = await Promise.all([
+    const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts, updatedPeriod] = await Promise.all([
       api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api(since ? `/api/transactions?since=${since}` : "/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
       api(since ? `/api/piggy-bank?since=${since}` : "/api/piggy-bank").catch(() => ({ movements: [] })),
       api("/api/irregular").catch(() => null),
-      api("/api/accounts").catch(() => null)
+      api("/api/accounts").catch(() => null),
+      selectedPeriod ? api(`/api/card-period?day=${selectedPeriod.start}`).catch(() => selectedPeriod) : null
     ]);
     if (version !== loadVersion) return;
     window.budgetDate.configure(bootstrap.budget_timezone);
     state = { bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts };
+    if (updatedPeriod && transactionPeriod === selectedPeriod) {
+      transactionPeriod = updatedPeriod.start < dashboard.period.start ? updatedPeriod : null;
+    }
     transactionsSince = since;
     window.accountsUi?.render(state);
     render();
@@ -93,6 +98,9 @@ async function loadAll() {
     await window.refreshBuffer?.(cashflow);
     window.budgetDesign?.render(state);
     await window.irregularUi?.render(state);
+    if (document.querySelector('[data-page="analytics"]')?.classList.contains("active")) {
+      await window.budgetAnalytics?.load();
+    }
   } catch (e) { toast(e.message); }
 }
 
@@ -162,7 +170,10 @@ function renderDashboard() {
   const pct = d.period_budget > 0 ? Math.min(100, Math.max(0, d.spent / d.period_budget * 100)) : 0;
   $("dayProgress").style.width = `${pct}%`;
   $("forecastList").innerHTML = d.forecast.length ? d.forecast.map(p => `
-    <div class="list-row"><div class="row-text"><div class="row-title">${fmtDate(p.start)} — ${fmtDate(p.end)}</div><div class="row-sub"><span class="nowrap">Доход ${money(p.income)}</span> · <span class="nowrap">платежи ${money(p.mandatory)}</span></div></div><div class="amount ${p.net < 0 ? 'expense':'income'}">${p.net >= 0 ? '+' : ''}${money(p.net)}</div></div>`).join("") : `<div class="empty">Добавьте суммы зарплаты и аванса, чтобы увидеть прогноз.</div>`;
+    <div class="list-row"><div class="row-text"><div class="row-title">${fmtDate(p.start)} — ${fmtDate(p.end)}</div>
+    <div class="row-sub"><span class="nowrap">${p.delay_pending ? "Ожидается" : "Доход"} ${money(p.income)}</span> · <span class="nowrap">платежи ${money(p.mandatory)}</span></div>
+    ${p.card_period ? `<div class="row-sub">${p.delay_pending ? "По прогнозу бюджет карты с" : "Бюджет карты с"} ${fmtDate(p.card_period.start)}</div>` : ""}
+    </div><div class="amount ${p.net < 0 ? 'expense':'income'}">${p.net >= 0 ? '+' : ''}${money(p.net)}</div></div>`).join("") : `<div class="empty">Добавьте суммы зарплаты и аванса, чтобы увидеть прогноз.</div>`;
 }
 
 const COLLAPSED_TRANSACTION_WEEKS_KEY = "budget-collapsed-transaction-weeks";
@@ -211,16 +222,19 @@ function renderTransactionRow(t) {
 // bill payment are already shown through that operation.
 function cardPiggyTransfers() {
   return (state.piggy?.movements || [])
-    .filter(m => m.source === "daily_budget" && !m.bill_payment_id && !m.income_transaction_id)
+    .filter(m => (m.source === "daily_budget" || m.purpose === "payday_delay_repayment")
+      && !m.bill_payment_id && !m.income_transaction_id)
     .map(m => ({ ...m, type: "transfer", tx_date: m.movement_date, piggy: true }));
 }
 
 function renderPiggyTransferRow(m) {
   const toCard = m.direction === "withdraw";
-  const title = toCard ? "Копилка → карта" : "Карта → копилка";
-  const how = !toCard ? "" : m.purpose === "transfer" ? " · по дням периода" : " · на сегодня";
-  const note = m.note ? ` · ${escapeHtml(m.note)}` : "";
-  return `<div class="list-row"><div class="row-main"><div class="emoji">🐷</div><div class="row-text"><div class="row-title">${title}</div><div class="row-sub">${fmtDate(m.movement_date)}${how}${note}</div></div></div><div><div class="amount ${toCard ? "income" : "expense"}">${toCard ? "+" : "-"}${money(m.amount)}</div><div class="actions"><button class="tiny danger" onclick="deletePiggyMovement(${m.id})">Удалить</button></div></div></div>`;
+  const delay = m.purpose?.startsWith("payday_delay");
+  const title = delay ? (m.note || "Перевод при задержке выплаты") : toCard ? "Копилка → карта" : "Карта → копилка";
+  const how = delay || !toCard ? "" : m.purpose === "transfer" ? " · по дням периода" : " · на сегодня";
+  const note = !delay && m.note ? ` · ${escapeHtml(m.note)}` : "";
+  const actions = delay ? "" : `<div class="actions"><button class="tiny danger" onclick="deletePiggyMovement(${m.id})">Удалить</button></div>`;
+  return `<div class="list-row"><div class="row-main"><div class="emoji">🐷</div><div class="row-text"><div class="row-title">${escapeHtml(title)}</div><div class="row-sub">${fmtDate(m.movement_date)}${how}${note}</div></div></div><div><div class="amount ${toCard ? "income" : "expense"}">${toCard ? "+" : "-"}${money(m.amount)}</div>${actions}</div></div>`;
 }
 
 // Mandatory bill payments have their own tab, so the everyday list (and its

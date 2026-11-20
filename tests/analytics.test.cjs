@@ -135,6 +135,25 @@ test('every tab shows the average spend, the card period too', async () => {
   assert.equal(get('analyticsMonthsCard').classList.contains('hidden'), true);
 });
 
+test('analytics shows the delay and compares spending with the limit of each covered day', async () => {
+  const response = {
+    ...sample,
+    days: [{date: '2026-09-14', amount: 950, delay_limit: 1000},
+           {date: '2026-09-15', amount: 1100, delay_limit: 1000}],
+    payday_delays: [{
+      payday: '2026-09-13', received_on: null, funding_on: null,
+      covered_from: '2026-09-14', covered_until: '2026-09-15', covered_days: 2,
+      daily_limit: 1000, funded_from_piggy: 2000,
+    }],
+  };
+  const {sandbox, get} = setup(response);
+  await sandbox.window.budgetAnalytics.load();
+  assert.equal(get('analyticsDelayCard').classList.contains('hidden'), false);
+  assert.match(get('analyticsDelays').innerHTML, /Выплата ещё не получена/);
+  assert.match(get('analyticsDelays').innerHTML, /всего 2[\s\u00a0]000/);
+  assert.equal(get('analyticsDays').innerHTML.match(/fill="var\(--expense\)"/g).length, 1);
+});
+
 test('the year tab shows months with their average instead of days', async () => {
   const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
     .map((label, i) => ({month: `2026-${String(i + 1).padStart(2, '0')}`, label, daily: {8: 26990, 9: 12160}[i] || 0, bills: 0, piggy: 0}));

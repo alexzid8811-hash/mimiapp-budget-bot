@@ -252,6 +252,8 @@ def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
         {
             "start": row["start"], "end": row["end"], "income": row["forecast_received"],
             "mandatory": row["mandatory"], "net": row["free"],
+            "delay_pending": row["delay_pending"],
+            "card_period": row["card_period"] if row["delay_pending"] or row["received_on"] else None,
         }
         for row in flow["periods"][1:9]
     ]
