@@ -222,8 +222,8 @@ class LedgerInput:
     sinking: list[Sinking] = field(default_factory=list)
     # «Минимум буфера»: money the card periods never get.
     buffer_floor: int = 0
-    # Reverse a vacation's net effect only for decisions before its payday.
-    deferred_vacation: dict[date, int] = field(default_factory=dict)
+    # Restore the income expected when deciding allocations before a payday.
+    funding_adjustments: dict[date, int] = field(default_factory=dict)
     delayed_funding: dict[date, date | None] = field(default_factory=dict)
     bridge_in: dict[date, int] = field(default_factory=dict)
 
@@ -315,10 +315,10 @@ def sinking_decisions(inp: LedgerInput, flows: dict[date, int], funding_days: se
 
 
 def _funding_flows(inp: LedgerInput, flows: dict[date, int], day: date) -> dict[date, int]:
-    if not inp.deferred_vacation:
+    if not inp.funding_adjustments:
         return flows
     return flows | {payday: flows.get(payday, 0) + value
-                    for payday, value in inp.deferred_vacation.items() if payday > day}
+                    for payday, value in inp.funding_adjustments.items() if payday > day}
 
 
 def _funding_day(inp: LedgerInput, period: CardPeriod) -> date | None:

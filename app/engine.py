@@ -319,7 +319,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         bills_out=bills_out, card_in=card_in, card_cover=card_cover, card_out=card_out,
         card_to_piggy=card_to_piggy, stored_allocations=stored, stored_cap_kept=stored_kept,
         buffer_out=buffer_out, caps=caps, cap_topups=topups, cap_moves=moves, sinking=sinking,
-        buffer_floor=cents(floor), deferred_vacation=deferred_vacation, bridge_in=bridge_in,
+        buffer_floor=cents(floor), funding_adjustments=deferred_vacation, bridge_in=bridge_in,
         delayed_funding={day: payday_delays.funding_day(row) for day, row in delays.items()},
     )
     extras = {
@@ -488,8 +488,13 @@ def _actual_run(inp: LedgerInput, extras: dict) -> tuple[LedgerInput, object]:
     if not waiting:
         return inp, run_ledger(inp)
     without = dict(inp.buffer_in)
-    without[waiting] = without.get(waiting, 0) - extras["payday_amount"].get(waiting, 0)
-    actual_inp = replace(inp, buffer_in=without, unconfirmed_payday=waiting)
+    expected = extras["payday_amount"].get(waiting, 0)
+    without[waiting] = without.get(waiting, 0) - expected
+    # Earlier funding decisions used the expected income, including on the
+    # first read after restoring a budget with no saved allocations.
+    before_payday = dict(inp.funding_adjustments)
+    _add(before_payday, waiting, expected)
+    actual_inp = replace(inp, buffer_in=without, funding_adjustments=before_payday, unconfirmed_payday=waiting)
     return actual_inp, run_ledger(actual_inp)
 
 
@@ -497,12 +502,12 @@ def _forecast_input(inp: LedgerInput, extras: dict, *, include_today: bool = Tru
     if not extras["vacation_forecast"]:
         return inp
     buffer_in = dict(inp.buffer_in)
-    deferred = dict(inp.deferred_vacation)
+    deferred = dict(inp.funding_adjustments)
     for day, value in extras["vacation_forecast"].items():
         if include_today or day > inp.today:
             _add(buffer_in, day, value)
             _add(deferred, day, -value)
-    return replace(inp, buffer_in=buffer_in, deferred_vacation=deferred)
+    return replace(inp, buffer_in=buffer_in, funding_adjustments=deferred)
 
 
 def set_daily_cap(uid: int, value: float | None, to_piggy: bool = False) -> None:
@@ -704,11 +709,15 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         if delay_pending or (payday and payday == extras["waiting"]):
             first_unfunded = covered_days[-1] + timedelta(days=1) if covered_days else payday + timedelta(days=1)
             delay_start = max(today, first_unfunded)
-        delay_shortfall = max(
-            (max(0, -actual.buffer_end.get(day, 0))
-             for day in extras["unpaid"] if payday <= day <= max([today, *covered_days])),
-            default=0,
-        ) if delay_pending else 0
+        check_until = min(max(today, covered_days[-1]), inp.data_end) if covered_days else today
+        delay_due = 0
+        delay_shortfall = 0
+        if delay_pending:
+            for due, value in extras["unpaid"].items():
+                if due <= check_until:
+                    delay_due += value
+                    # Earlier unpaid bills are already reserved in today's balance.
+                    delay_shortfall = max(delay_shortfall, -actual.buffer_end[max(today, due)])
         card_start = funded.period.start if funded else None
         if funded and not past:
             daily = funded.daily
@@ -754,6 +763,8 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "delay_start": delay_start.isoformat() if delay_start else None,
             "delay_until": covered_days[-1].isoformat() if covered_days else None,
             "delay_pending": delay_pending,
+            "delay_check_until": check_until.isoformat() if delay_pending else None,
+            "delay_due": amount(delay_due),
             "delay_shortfall": amount(delay_shortfall),
             "received_on": delay["received_on"].isoformat() if delay and delay["received_on"] else None,
             "funding_on": funding_on.isoformat() if funding_on else None,
@@ -811,7 +822,12 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         low_day = min(daterange(today, inp.data_end), key=lambda d: result.buffer_end[d])
         if result.buffer_end[low_day] < inp.buffer_floor:
             floor_gap, floor_gap_date = inp.buffer_floor - result.buffer_end[low_day], low_day
-    if result.shortfall > 0:
+    if pending_delays and (result.shortfall or floor_gap):
+        deficit = result.shortfall or floor_gap
+        when = result.shortfall_date or floor_gap_date
+        purpose = "на обязательные платежи" if result.shortfall else "до минимума буфера"
+        reason = f"Если задержанная выплата не поступит, к {when:%d.%m.%Y} {purpose} не хватит {_rub(deficit)}."
+    elif result.shortfall > 0:
         reason = (
             f"Буфер не покрывает обязательные платежи: к {result.shortfall_date:%d.%m.%Y} "
             f"не хватает {_rub(result.shortfall)}. Дневной лимит новых периодов снижен до нуля."
