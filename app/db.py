@@ -169,6 +169,16 @@ CREATE TABLE IF NOT EXISTS piggy_goal_moves (
 CREATE INDEX IF NOT EXISTS ix_piggy_goal_moves_goal
 ON piggy_goal_moves(user_id, goal_id);
 
+CREATE TABLE IF NOT EXISTS payday_delays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    payday TEXT NOT NULL,
+    daily REAL NOT NULL CHECK(daily >= 0),
+    extensions TEXT NOT NULL DEFAULT '{}',
+    received_on TEXT,
+    UNIQUE(user_id,payday)
+);
+
 CREATE TABLE IF NOT EXISTS cashflow_income_overrides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

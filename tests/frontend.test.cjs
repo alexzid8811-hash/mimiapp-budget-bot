@@ -446,6 +446,26 @@ test('vacation reserve is explained separately from the salary being confirmed',
  assert.equal(get('cashflowIncomeAmount').value,45000);
 });
 
+test('payday delay previews the automatic piggy transfer and submits only the number of days', async () => {
+ const {sandbox,get,requests,responses}=setup();
+ responses['/api/cashflow'].periods=[{
+  start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',
+  received_editable:true,income_pending:true,override_key:'2026-10-08',delay_daily:1800,delay_shortfall:500,
+ }];
+ await get('refreshBtn').listeners.click();
+ assert.match(get('planCards').innerHTML,/Задержка выплаты/);
+ assert.match(get('planCards').innerHTML,/На обязательные платежи не хватает/);
+ sandbox.window.openPaydayDelay('2026-10-08');
+ get('paydayDelayDays').value='2';
+ get('paydayDelayDays').listeners.input();
+ assert.match(get('paydayDelayPreview').textContent,/3.600,00/);
+ await get('paydayDelayForm').listeners.submit({preventDefault(){}});
+ const sent=JSON.parse(requests.find(row=>row.url==='/api/cashflow/payday-delays/2026-10-08').body);
+ assert.equal(sent.days,2);
+ assert.equal(typeof sent.request_id,'string');
+ assert.equal('amount' in sent,false);
+});
+
 test('saving received vacation pay from settings sends the piggy deposit with the actual date', async () => {
  const {sandbox,get,requests}=setup();
  sandbox.window.budgetDate.today = () => '2026-09-18';

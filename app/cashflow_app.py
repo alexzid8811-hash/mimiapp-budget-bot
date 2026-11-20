@@ -5,18 +5,19 @@ and stores operations.
 """
 from __future__ import annotations
 
-from datetime import date
+import json
+from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import Depends, HTTPException
 from pydantic import Field
 
 from . import payroll_app as base
-from . import clock, engine, irregular_engine, piggy_goals, vacation_funds
+from . import clock, engine, irregular_engine, payday_delays, piggy_goals, vacation_funds
 from .validation import APIModel
 from .savings import check_piggy_history
 from .auth import TelegramUser, current_user
-from .money import cents
+from .money import amount, cents
 
 
 app = base.app
@@ -84,6 +85,11 @@ class CashflowIncomeOverrideIn(APIModel):
     confirmed: bool = False
     # Cards and accounts: where the confirmed money arrived (main by default).
     account_id: int | None = None
+
+
+class PaydayDelayIn(APIModel):
+    days: int = Field(ge=0, le=366)
+    request_id: str = Field(min_length=8, max_length=80, pattern=r"^[A-Za-z0-9-]+$")
 
 
 def today_numbers(user_id: int) -> dict:
@@ -246,10 +252,78 @@ def get_buffer(user: TelegramUser = Depends(current_user)) -> dict:
 def editable_payday_row(user_id: int, period_start: date) -> dict | None:
     snapshot = engine.compute(user_id, force_enabled=bool(cashflow_settings(user_id)["cashflow_enabled"]))
     return next(
-        (row for row in snapshot["periods"]
+        (row for row in snapshot["periods"] + snapshot["past_periods"]
          if row["override_key"] == period_start.isoformat() and row["received_editable"]),
         None,
     )
+
+
+def _delay_movement(con, uid, direction, value, today):
+    from . import accounts_engine
+
+    if not value:
+        return
+    purpose, title = ("payday_delay", "Траты до выплаты") if direction == "withdraw" else (
+        "payday_delay_return", "Возврат остатка после задержки выплаты")
+    day = today.isoformat()
+    movement = con.execute(
+        "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
+        "VALUES(?,?,?,?,?,'daily_budget',?)", (uid, direction, amount(value), day, title, purpose),
+    ).lastrowid
+    accounts_engine.link_piggy(con, uid, movement, direction=direction, source="daily_budget",
+                                value=amount(value), day=day)
+
+
+@app.post("/api/cashflow/payday-delays/{period_start}")
+def extend_payday_delay(
+    period_start: date, payload: PaydayDelayIn, user: TelegramUser = Depends(current_user),
+) -> dict:
+    uid = legacy.user_ready(user)
+    if irregular_engine.is_irregular(uid) or not cashflow_settings(uid)["cashflow_enabled"]:
+        raise HTTPException(422, "Задержка выплаты доступна в режиме зарплаты с включённым буфером")
+    today = clock.today()
+    payday = period_start - timedelta(days=1)
+    row = editable_payday_row(uid, period_start)
+    with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        delays = payday_delays.load(con, uid)
+        delay = delays.get(payday)
+        if delay and payload.request_id in delay["extensions"]:
+            return {"ok": True}
+        if (not row or not row["income_pending"] or row["payday"] != payday.isoformat()
+                or (delay and delay["received_on"] is not None)
+                or con.execute(
+                    "SELECT 1 FROM cashflow_income_overrides WHERE user_id=? AND confirmed=1 "
+                    "AND period_start IN (?,?)", (uid, period_start.isoformat(), payday.isoformat()),
+                ).fetchone()):
+            raise HTTPException(422, "Задержку можно добавить к выплате со статусом «ждём»")
+        daily = cents(delay["daily"] if delay else row["delay_daily"])
+        covered = payday_delays.bridge_days(delay) if delay else []
+        first_day = max(today, period_start, covered[-1] + timedelta(days=1) if covered else today)
+        all_covered = {
+            day for other in delays.values() for day in payday_delays.bridge_days(other)
+            if other["received_on"] is None or day < other["received_on"]
+        }
+        days = [first_day + timedelta(days=offset) for offset in range(payload.days)]
+        if any(day in all_covered for day in days):
+            raise HTTPException(422, "На эти дни уже выделены деньги по другой задержанной выплате")
+        total = daily * len(days)
+        if total:
+            piggy_goals.check_withdrawal(con, uid, amount(total), None)
+        extensions = dict(delay["extensions"]) if delay else {}
+        extensions[payload.request_id] = [day.isoformat() for day in days]
+        con.execute(
+            "INSERT INTO payday_delays(user_id,payday,daily,extensions) VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id,payday) DO UPDATE SET extensions=excluded.extensions",
+            (uid, payday.isoformat(), amount(daily), json.dumps(extensions)),
+        )
+        con.execute("DELETE FROM card_allocations WHERE user_id=? AND period_start=?", (uid, period_start.isoformat()))
+        _delay_movement(con, uid, "withdraw", total, today)
+        try:
+            check_piggy_history(con, uid)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    return {"ok": True}
 
 
 @app.put("/api/cashflow/income-overrides/{period_start}")
@@ -268,11 +342,25 @@ def save_cashflow_income_override(
     # Lock in the money already shown for every earlier period before this
     # edit can change the plan, so the edit only ever affects this period and
     # the ones after it, no matter which order payouts are edited in.
-    engine.freeze_allocations_before(uid, period_start)
+    if not row["delay_pending"] and not row["received_on"]:
+        engine.freeze_allocations_before(uid, period_start)
     # Entering the amount of a payday that has already come (even through
     # «Изменить») means the money arrived: it confirms the payday.
     confirmed = payload.confirmed or row["income_pending"]
     with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        today = clock.today()
+        payday = date.fromisoformat(row["payday"])
+        delay = payday_delays.load(con, uid).get(payday)
+        if delay and delay["received_on"] is None and confirmed:
+            returned = cents(delay["daily"]) * payday_delays.expired_bridge_days(delay, today)
+            _delay_movement(con, uid, "deposit", returned, today)
+            con.execute("UPDATE payday_delays SET received_on=? WHERE user_id=? AND payday=?",
+                        (today.isoformat(), uid, payday.isoformat()))
+        if delay and (confirmed or delay["received_on"]):
+            con.execute("DELETE FROM card_allocations WHERE user_id=? AND period_start=?",
+                        (uid, period_start.isoformat()))
+        received_on = (delay["received_on"] or today).isoformat() if delay else row["payday"]
         if payload.account_id is not None:
             from .accounts_app import check_account
 
@@ -302,7 +390,7 @@ def save_cashflow_income_override(
         from . import accounts_engine
 
         accounts_engine.sync_payroll_income(
-            con, uid, period_start=period_start.isoformat(), payday=row["payday"], value=payload.amount,
+            con, uid, period_start=period_start.isoformat(), payday=received_on, value=payload.amount,
             confirmed=bool(confirmed or (was_confirmed and was_confirmed["confirmed"])),
             account_id=payload.account_id,
         )
@@ -314,6 +402,9 @@ def delete_cashflow_income_override(
     period_start: date, user: TelegramUser = Depends(current_user)
 ) -> dict:
     uid = legacy.user_ready(user)
+    with legacy.connect() as con:
+        if period_start - timedelta(days=1) in payday_delays.load(con, uid):
+            raise HTTPException(422, "Для задержанной выплаты можно изменить фактическую сумму")
     if editable_payday_row(uid, period_start) is None:
         raise HTTPException(422, "Выплата закрытого периода не изменяется")
     # Freeze with the override still in effect: resetting it is itself an
@@ -443,6 +534,8 @@ def delete_piggy_bank_movement(
         ).fetchone()
         if movement is None:
             raise HTTPException(404, "Операция копилки не найдена")
+        if movement["purpose"] in ("payday_delay", "payday_delay_return"):
+            raise HTTPException(422, "Эта операция связана с задержкой выплаты")
         if movement["purpose"] in ("vacation_deposit", "vacation_existing_deposit"):
             raise HTTPException(422, "Это отпускные. Пополнение меняется через запись отпуска в настройках")
         # A linked movement is one half of an operation; deleting it alone
