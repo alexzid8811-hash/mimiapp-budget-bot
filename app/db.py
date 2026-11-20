@@ -176,6 +176,8 @@ CREATE TABLE IF NOT EXISTS payday_delays (
     daily REAL NOT NULL CHECK(daily >= 0),
     extensions TEXT NOT NULL DEFAULT '{}',
     received_on TEXT,
+    funding_on TEXT,
+    repayment_movement_id INTEGER REFERENCES piggy_bank_movements(id) ON DELETE SET NULL,
     UNIQUE(user_id,payday)
 );
 
@@ -640,6 +642,8 @@ def _prepare(con: sqlite3.Connection) -> None:
         ("vacations", "reserve_in_piggy", "INTEGER NOT NULL DEFAULT 0"),
         ("piggy_bank_movements", "vacation_id", "INTEGER REFERENCES vacations(id)"),
         ("piggy_bank_movements", "vacation_part", "TEXT"),
+        ("payday_delays", "funding_on", "TEXT"),
+        ("payday_delays", "repayment_movement_id", "INTEGER REFERENCES piggy_bank_movements(id) ON DELETE SET NULL"),
     ):
         if column not in {row[1] for row in con.execute(f"PRAGMA table_info({table})")}:
             con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")

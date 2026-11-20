@@ -145,9 +145,8 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
     vacation_forecast: dict[date, int] = {}
     bridge_in = {}
     for delay in delays.values():
-        for day in payday_delays.bridge_days(delay):
-            if delay["received_on"] is None or day < delay["received_on"]:
-                _add(bridge_in, day, cents(delay["daily"]))
+        for day in payday_delays.covered_days(delay):
+            _add(bridge_in, day, cents(delay["daily"]))
     for row in vacation_rows:
         if not row["transfer_date"] and row["payday"] and row["period_end"]:
             day = max(today, date.fromisoformat(row["payday"]))
@@ -257,7 +256,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         # Spare buffer money moved to the piggy bank («Лишнее в буфере»).
         for row in con.execute(
             "SELECT amount,movement_date FROM piggy_bank_movements WHERE user_id=? AND direction='deposit' "
-            "AND purpose='from_buffer' AND movement_date BETWEEN ? AND ?",
+            "AND purpose IN ('from_buffer','payday_delay_repayment') AND movement_date BETWEEN ? AND ?",
             window,
         ):
             _add(buffer_out, date.fromisoformat(row["movement_date"]), cents(row["amount"]))
@@ -321,7 +320,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         card_to_piggy=card_to_piggy, stored_allocations=stored, stored_cap_kept=stored_kept,
         buffer_out=buffer_out, caps=caps, cap_topups=topups, cap_moves=moves, sinking=sinking,
         buffer_floor=cents(floor), deferred_vacation=deferred_vacation, bridge_in=bridge_in,
-        delayed_funding={day: row["received_on"] for day, row in delays.items()},
+        delayed_funding={day: payday_delays.funding_day(row) for day, row in delays.items()},
     )
     extras = {
         "titles": {day: ", ".join(item["titles"]) or "Выплата" for day, item in schedule["paydays"].items()},
@@ -699,6 +698,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         payday = row.payday
         delay = extras["delays"].get(payday)
         delay_pending = delay is not None and delay["received_on"] is None
+        funding_on = payday_delays.funding_day(delay) if delay else None
         covered_days = payday_delays.bridge_days(delay) if delay_pending else []
         delay_start = None
         if delay_pending or (payday and payday == extras["waiting"]):
@@ -756,9 +756,14 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "delay_pending": delay_pending,
             "delay_shortfall": amount(delay_shortfall),
             "received_on": delay["received_on"].isoformat() if delay and delay["received_on"] else None,
+            "funding_on": funding_on.isoformat() if funding_on else None,
+            "delay_repaid": amount(delay["repaid_cents"]) if delay else 0.0,
+            "delay_repayment_remaining": amount(
+                payday_delays.amount_to_repay(delay) - delay["repaid_cents"]
+            ) if delay and delay["funding_on"] else 0.0,
             "days_funded_after_delay": (
-                max(0, (funded.period.end - max(funded.period.start, delay["received_on"])).days + 1)
-                if funded and delay and delay["received_on"] else None
+                max(0, (funded.period.end - max(funded.period.start, funding_on)).days + 1)
+                if funded and funding_on else None
             ),
             "mandatory": amount(row.mandatory),
             "to_piggy": amount(row.to_piggy),

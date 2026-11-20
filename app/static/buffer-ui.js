@@ -91,6 +91,11 @@
     if (period.delay_until) rows.push(`Из копилки до ${formatDate(period.delay_until)} включительно · ${formatMoney(period.delay_daily)} в день`);
     if (period.delay_shortfall > 0) rows.push(`На обязательные платежи не хватает ${formatMoney(period.delay_shortfall)}`);
     if (period.received_on) rows.push(`Получено ${formatDate(period.received_on)}`);
+    if (period.funding_on && period.funding_on !== period.received_on && period.days_funded_after_delay > 0) {
+      rows.push(`Новый бюджет с ${formatDate(period.funding_on)}`);
+    }
+    if (period.delay_repaid > 0) rows.push(`Возвращено в копилку · ${formatMoney(period.delay_repaid)}`);
+    if (period.delay_repayment_remaining > 0) rows.push(`Осталось вернуть в копилку · ${formatMoney(period.delay_repayment_remaining)}`);
     if (period.days_funded_after_delay != null) rows.push(`Дней в новом расчёте: ${period.days_funded_after_delay}`);
     return rows.map(label => `<div class="row-sub">${label}</div>`).join("");
   }
@@ -417,7 +422,7 @@
       const deposit = item.direction === "deposit";
       const vacationDeposit = item.purpose === "vacation_deposit" || item.purpose === "vacation_existing_deposit";
       const toCard = !deposit && item.source === "daily_budget";
-      const delayMove = item.purpose === "payday_delay" || item.purpose === "payday_delay_return";
+      const delayMove = ["payday_delay", "payday_delay_return", "payday_delay_repayment"].includes(item.purpose);
       const title = delayMove ? item.note : deposit && item.source === "daily_budget" ? "Из остатка дня"
         : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера"
           : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : vacationDeposit ? "Отпускные" : deposit ? "Пополнение"
