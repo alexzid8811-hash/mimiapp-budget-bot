@@ -495,15 +495,18 @@ test('pending delay distinguishes unpaid bills due by the selected day from the 
  const {get,responses}=setup();
  const period={start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',
   income_pending:true,received_editable:true,delay_pending:true,delay_until:'2026-10-09',delay_daily:900,
-  delay_check_until:'2026-10-09',delay_due:0,delay_shortfall:0,mandatory:8000,free:-8000,take:8000};
+  delay_check_until:'2026-10-09',delay_due:0,delay_shortfall:0,mandatory:8000,free:2000,take:8000,
+  to_card:11700,daily:900,to_piggy:2300,delay_return_in_plan:1800,card_period:{start:'2026-10-10',days:13}};
  const flow=responses['/api/cashflow'];
- Object.assign(flow,{periods:[period],capital_shortfall:500,reason:'Если задержанная выплата не поступит, к 21.10.2026 на обязательные платежи не хватит 500 ₽.'});
+ Object.assign(flow,{periods:[period],capital_shortfall:0});
  await get('refreshBtn').listeners.click();
- assert.equal(get('bufferShortfall').textContent,flow.reason);
+ assert.equal(get('bufferShortfall').classList.contains('hidden'),true);
  for(const id of ['bufferPeriods','planCards']){
   assert.match(get(id).innerHTML,/К оплате до 9 окт. включительно · 0,00/);
   assert.doesNotMatch(get(id).innerHTML,/не хватает 8.000/i);
-  assert.match(get(id).innerHTML,/за период без выплаты/);
+  assert.match(get(id).innerHTML,/взять из буфера/);
+  assert.match(get(id).innerHTML,/С 10 окт. · 13 дней/);
+  assert.match(get(id).innerHTML,/Пополнение 500,00.*<br>Возврат 1.800,00/);
  }
  Object.assign(period,{delay_due:2000,delay_shortfall:300});
  await get('refreshBtn').listeners.click();

@@ -225,7 +225,9 @@ class LedgerInput:
     # Restore the income expected when deciding allocations before a payday.
     funding_adjustments: dict[date, int] = field(default_factory=dict)
     delayed_funding: dict[date, date | None] = field(default_factory=dict)
+    delayed_receipts: dict[date, date] = field(default_factory=dict)
     bridge_in: dict[date, int] = field(default_factory=dict)
+    projected_repayments: dict[date, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -273,6 +275,9 @@ class LedgerResult:
     # end of each day (a part of ``buffer_end``).
     sinking_in: dict[date, int] = field(default_factory=dict)
     sinking_end: dict[date, int] = field(default_factory=dict)
+    # Part of the planned card allocation used to repay the piggy bank.
+    reallocated_to_piggy: dict[date, int] = field(default_factory=dict)
+    period_opening: dict[date, int] = field(default_factory=dict)
 
 
 def buffer_flows(inp: LedgerInput) -> dict[date, int]:
@@ -326,8 +331,14 @@ def _funding_day(inp: LedgerInput, period: CardPeriod) -> date | None:
     return due if due is not None and due <= period.end else None
 
 
-def _remaining_funded_days(period: CardPeriod, day: date) -> int:
-    return (period.end - max(period.start, day)).days + 1
+def allocation_day(inp: LedgerInput, period: CardPeriod) -> date | None:
+    """The card transfer can precede the first day covered by the new budget."""
+    funding = _funding_day(inp, period)
+    return inp.delayed_receipts.get(period.funded_on, funding) if funding is not None else None
+
+
+def _remaining_funded_days(inp: LedgerInput, period: CardPeriod) -> int:
+    return (period.end - max(period.start, _funding_day(inp, period))).days + 1
 
 
 def _spare_at_rate(opening, start, end, flows, funded_days, daily):
@@ -346,10 +357,10 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
     periods = card_periods(inp.start, inp.paydays, inp.data_end)
     by_funding: dict[date, list[CardPeriod]] = {}
     for period in periods:
-        day = _funding_day(inp, period)
+        day = allocation_day(inp, period)
         if day is not None:
             by_funding.setdefault(day, []).append(period)
-    funded_days = {day: sum(_remaining_funded_days(p, day) for p in items) for day, items in by_funding.items()}
+    funded_days = {day: sum(_remaining_funded_days(inp, p) for p in items) for day, items in by_funding.items()}
     flows = buffer_flows(inp)
 
     decision_flows, sinking_in, kept_before = sinking_decisions(inp, flows, {p.funded_on for p in periods})
@@ -374,6 +385,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
     card = 0
     card_start_today = 0
     opening_by_start: dict[date, int] = {}
+    reallocated_to_piggy: dict[date, int] = {}
     for day in daterange(inp.start, inp.data_end):
         funded_today = 0
         if day in by_funding:
@@ -400,7 +412,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 else:
                     daily = decision.daily
                     cap = cap_on(inp.caps, day)
-                    days = _remaining_funded_days(period, day)
+                    days = _remaining_funded_days(inp, period)
                     if cap is not None and daily > cap:
                         kept, daily = (daily - cap) * days, cap
                     if delayed and len(by_funding[day]) == 1:
@@ -409,6 +421,13 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                     value = daily * days
                     if day <= inp.today:
                         to_store[period.start] = (period.funded_on, value, kept)
+                repayment = inp.projected_repayments.get(period.funded_on, 0) if period.start > day else 0
+                if repayment:
+                    reallocated = min(value, repayment)
+                    value -= reallocated
+                    reallocated_to_piggy[period.start] = reallocated
+                    funded_today += repayment
+                    piggy_from_buffer[day] = piggy_from_buffer.get(day, 0) + repayment
                 allocations[period.start] = value
                 cap_kept[period.start] = kept
                 funded_today += value
@@ -453,8 +472,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 cap_trims[day] = trim
                 if min(trim, carried):
                     carry_buffer_trims[day] = min(trim, carried)
-            if day in starts:
-                opening_by_start[day] = card
+            if day in starts or received_late:
+                opening_by_start[active.start] = card
             if day == inp.today:
                 card_start_today = card
             card += (inp.card_in.get(day, 0) + inp.card_cover.get(day, 0) + inp.bridge_in.get(day, 0)
@@ -522,6 +541,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         carry_buffer_trims=carry_buffer_trims,
         sinking_in=sinking_in,
         sinking_end=sinking_end,
+        reallocated_to_piggy=reallocated_to_piggy,
+        period_opening=opening_by_start,
     )
 
 
@@ -534,9 +555,9 @@ def safe_rate_from(inp: LedgerInput, result: LedgerResult, day: date, held: int 
     look_ahead = min(add_months(day, inp.months), inp.data_end)
     funded_days = {day: (current.end - day).days + 1}
     for period in result.periods:
-        funding = _funding_day(inp, period)
+        funding = allocation_day(inp, period)
         if period.start > current.start and funding is not None and day <= funding <= look_ahead:
-            funded_days[funding] = funded_days.get(funding, 0) + _remaining_funded_days(period, funding)
+            funded_days[funding] = funded_days.get(funding, 0) + _remaining_funded_days(inp, period)
     decision_flows, _, kept_before = sinking_decisions(
         inp, buffer_flows(inp), {p.funded_on for p in result.periods})
     opening = held - kept_before(day) - inp.buffer_floor + (
@@ -557,9 +578,10 @@ def spare_buffer(inp: LedgerInput, result: LedgerResult) -> int:
                  for d in daterange(inp.today, inp.data_end)) - inp.buffer_floor
     if lowest <= 0:
         return 0
-    stored = {p.start: result.allocations[p.start] for p in result.periods if p.funded_on <= inp.today}
+    paid = {p.start for p in result.periods if (day := allocation_day(inp, p)) is not None and day <= inp.today}
+    stored = {start: result.allocations[start] for start in paid}
     kept = {start: result.cap_kept.get(start, 0) for start in stored}
-    later = {p.start: result.allocations[p.start] for p in result.periods if p.funded_on > inp.today}
+    later = {start: value for start, value in result.allocations.items() if start not in paid}
 
     def keeps(value: int) -> bool:
         out = dict(inp.buffer_out)

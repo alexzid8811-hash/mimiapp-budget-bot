@@ -250,7 +250,7 @@ def dashboard(user: TelegramUser = Depends(current_user)) -> dict:
     period = flow["period"]
     forecast = [
         {
-            "start": row["start"], "end": row["end"], "income": row["received"],
+            "start": row["start"], "end": row["end"], "income": row["forecast_received"],
             "mandatory": row["mandatory"], "net": row["free"],
         }
         for row in flow["periods"][1:9]

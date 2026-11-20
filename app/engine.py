@@ -8,7 +8,7 @@ from . import clock, payday_delays, planning, vacation_funds
 from .budget import add_months
 from .db import connect
 from .ledger import (
-    LedgerInput, Sinking, buffer_rows, cap_rule, daterange, run_ledger, safe_rate_from,
+    LedgerInput, Sinking, allocation_day, buffer_rows, cap_rule, daterange, run_ledger, safe_rate_from,
     spare_buffer,
 )
 from .money import amount, cents
@@ -158,6 +158,9 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
             received = delays[day]["received_on"]
             if received is not None and start <= received <= data_end:
                 _add(buffer_in, received, value)
+            elif received is None and start <= day <= data_end:
+                # Budgets funded before the delay were based on the expected pay.
+                _add(deferred_vacation, day, value if day in overrides else item["regular"])
             continue
         # An unconfirmed payday still counts with its calculated amount: the
         # plan stays as it was, and only the card money it funds is not
@@ -321,6 +324,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         buffer_out=buffer_out, caps=caps, cap_topups=topups, cap_moves=moves, sinking=sinking,
         buffer_floor=cents(floor), funding_adjustments=deferred_vacation, bridge_in=bridge_in,
         delayed_funding={day: payday_delays.funding_day(row) for day, row in delays.items()},
+        delayed_receipts={day: row["received_on"] for day, row in delays.items() if row["funding_on"]},
     )
     extras = {
         "titles": {day: ", ".join(item["titles"]) or "Выплата" for day, item in schedule["paydays"].items()},
@@ -511,6 +515,46 @@ def _forecast_input(inp: LedgerInput, extras: dict, *, include_today: bool = Tru
     return replace(inp, buffer_in=buffer_in, funding_adjustments=deferred)
 
 
+def _budget_plan(inp: LedgerInput, extras: dict) -> LedgerInput:
+    plan = _forecast_input(inp, extras)
+    pending = {day for day, funding in inp.delayed_funding.items() if funding is None}
+    if not pending:
+        return plan
+    incoming = dict(plan.buffer_in)
+    adjustments = dict(plan.funding_adjustments)
+    repayments = {}
+    for day in pending:
+        if inp.start <= day <= inp.data_end:
+            expected = extras["payday_amount"][day]
+            _add(incoming, day, expected)
+            _add(adjustments, day, -expected)
+            repayments[day] = min(expected, payday_delays.amount_to_repay(extras["delays"][day]))
+    pending_bridge = {day for payday in pending for day in payday_delays.covered_days(extras["delays"][payday])}
+    return replace(
+        plan, buffer_in=incoming, funding_adjustments=adjustments, projected_repayments=repayments,
+        delayed_funding={day: funding for day, funding in inp.delayed_funding.items() if day not in pending},
+        bridge_in={day: value for day, value in inp.bridge_in.items() if day not in pending_bridge},
+    )
+
+
+def _spending_periods(periods, delays):
+    """Move spending boundaries without changing the dates that fund bills."""
+    shifted = []
+    day_after = timedelta(days=1)
+    for period in periods:
+        delay = delays.get(period.funded_on) if shifted and shifted[-1].end < period.start else None
+        if delay:
+            covered = payday_delays.covered_days(delay)
+            begins = payday_delays.funding_day(delay) or (covered[-1] + day_after if covered else period.start)
+            begins = min(max(period.start, begins), period.end + day_after)
+            shifted[-1] = replace(shifted[-1], end=begins - day_after)
+            if begins > period.end:
+                continue
+            period = replace(period, start=begins)
+        shifted.append(period)
+    return shifted
+
+
 def set_daily_cap(uid: int, value: float | None, to_piggy: bool = False) -> None:
     """Change «Максимум в день» from today on.
 
@@ -622,12 +666,13 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     """Full budget snapshot.  With the start capital switched off, the budget
     is calculated from the latest payday with an empty account."""
     inp, extras, today, start, settings, enabled = _run(uid, force_enabled=force_enabled)
-    plan_inp = _forecast_input(inp, extras)
+    plan_inp = _budget_plan(inp, extras)
     result = run_ledger(plan_inp)
     # The plan (rows, shortfall, next periods) counts an unconfirmed payday
     # with its calculated amount.  The actual balances (card, buffer, today's
     # limit) stay as they were until the user presses «Получил ✓».
-    if extras["waiting"] or today in extras["vacation_forecast"]:
+    pending_delays = [day for day, row in extras["delays"].items() if row["received_on"] is None]
+    if extras["waiting"] or today in extras["vacation_forecast"] or pending_delays:
         actual_inp, actual = _actual_run(inp, extras)
     else:
         actual_inp, actual = plan_inp, result
@@ -637,21 +682,29 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         # A transfer can still change this payday's allocation today.
         pending_funding = extras["vacation_paydays"] & {today}
         store_allocations(uid, {
-            start_day: value for start_day, value in result.to_store.items()
+            start_day: value for start_day, value in (actual if pending_delays else result).to_store.items()
             if value[0] != extras["waiting"] and value[0] not in pending_funding
         })
         sync_cap_piggy(uid, start, today, actual.cap_to_piggy)
 
-    current = actual.current
+    spending_periods = _spending_periods(actual.periods, extras["delays"])
+    current = next(period for period in spending_periods if period.start <= today <= period.end)
+    spending_by_payday = {period.funded_on: period for period in spending_periods[1:]}
+    original_start = inp.start if current.start == inp.start else current.funded_on + timedelta(days=1)
+    original_period = next(period for period in actual.periods if period.start == original_start)
     days_left = (current.end - today).days + 1
-    next_forecast = next(
-        (f for s, f in sorted(result.forecasts.items()) if s > current.start), None
-    )
+    next_period = next((period for period in spending_periods if period.start > today), None)
+    next_allocation = result.allocations.get(next_period.funded_on + timedelta(days=1), 0) if next_period else 0
     pending = sum(
         actual.allocations[p.start] for p in actual.periods
         if p.funded_on <= today < p.start
     )
-    pending += sum(value for day, value in inp.bridge_in.items() if day > today)
+    bridge_on_card = sum(value for day, value in inp.bridge_in.items() if day > today)
+    delay_budget_on_card = sum(
+        actual.allocations[p.start] for p in actual.periods
+        if p.funded_on in inp.delayed_receipts and (paid := allocation_day(inp, p)) is not None
+        and paid <= today < inp.delayed_funding[p.funded_on] and p.start <= today
+    )
     buffer_now = actual.buffer_end[today]
     reserved = extras["reserved"]
     daily_cap, cap_to_piggy = cap_rule(inp.caps, today)
@@ -672,12 +725,12 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             piggy_trims -= in_range(actual.carry_piggy_trims)
         held = sum(result.cap_kept.get(p.start, 0) for p in periods)
         held_to_piggy = sum(result.cap_kept.get(p.start, 0) for p in periods
-                            if p.funded_on in inp.delayed_funding or cap_rule(inp.caps, p.funded_on)[1])
+                            if p.funded_on in plan_inp.delayed_funding or cap_rule(inp.caps, p.funded_on)[1])
         # Kept in the buffer first, moved to the piggy bank on switching.
         moved = in_range(inp.cap_moves)
         total = held + in_range(actual.cap_trims) + piggy_trims
         return total, min(total, held_to_piggy + piggy_trims + moved)
-    card_now = actual.card_end_today
+    card_now = actual.card_end_today + bridge_on_card + delay_budget_on_card
 
     with connect() as con:
         spent_period = con.execute(
@@ -693,10 +746,9 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         ).fetchone()[0]
     # Obligations of the current card period that are still to be paid,
     # with the debts of earlier periods.
-    mandatory_period = sum(v for d, v in extras["unpaid"].items() if d <= current.end)
+    mandatory_period = sum(v for d, v in extras["unpaid"].items() if d <= actual.current.end)
 
     period_kept = kept_by_cap(current.start, current.end, funded=False)
-    pending_delays = [day for day, row in extras["delays"].items() if row["received_on"] is None]
 
     def row_dict(row, *, current: bool, past: bool) -> dict:
         row_kept = kept_by_cap(row.start, row.end)
@@ -721,7 +773,16 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
                     # Earlier unpaid bills are already reserved in today's balance.
                     delay_shortfall = max(delay_shortfall, -actual.buffer_end[max(today, due)])
         card_start = funded.period.start if funded else None
-        if funded and not past:
+        repayment = plan_inp.projected_repayments.get(payday, 0) if delay_pending else 0
+        if delay and delay["received_on"] and row.start <= delay["received_on"] <= row.end:
+            repayment = delay["repaid_cents"]
+        reallocated = result.reallocated_to_piggy.get(card_start, 0)
+        displayed_card_period = spending_by_payday.get(payday)
+        if delay_pending:
+            daily = cents(delay["daily"])
+        elif delay and displayed_card_period:
+            daily = row.to_card // displayed_card_period.days
+        elif funded and not past:
             daily = funded.daily
         else:
             # A closed period: its card money spread over its days.
@@ -731,14 +792,16 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         # running takes the one in effect today.
         cap = (cap_rule(inp.caps, funded.period.funded_on if past else max(funded.period.start, today))[0]
                if funded else None)
-        capped = cap is not None and (daily >= cap or sum(row_kept) > 0 or row.card_to_piggy > 0)
+        capped = not delay_pending and cap is not None and (daily >= cap or sum(row_kept) > 0 or row.card_to_piggy > 0)
         return {
             "start": row.start.isoformat(),
             "end": row.end.isoformat(),
             "days": (row.end - row.start).days + 1,
             "kind": extras["titles"].get(payday, "Старт") if payday else "Старт",
             "payday": payday.isoformat() if payday else None,
-            "received": amount(row.received),
+            "received": amount(sum(actual_inp.buffer_in.get(day, 0) for day in daterange(row.start, row.end))
+                               if delay_pending else row.received),
+            "forecast_received": amount(row.received),
             "payday_amount": amount(extras["payday_amount"].get(payday, 0)) if payday else 0.0,
             "planned_payday_amount": amount(extras["planned_payday"].get(payday, 0)) if payday else 0.0,
             "regular_payday_amount": amount(extras["regular_payday"].get(payday, 0)) if payday else 0.0,
@@ -776,6 +839,11 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "received_on": delay["received_on"].isoformat() if delay and delay["received_on"] else None,
             "funding_on": funding_on.isoformat() if funding_on else None,
             "delay_repaid": amount(delay["repaid_cents"]) if delay else 0.0,
+            "delay_return_in_plan": amount(repayment),
+            "delay_base_allocation": amount(funded.allocation + reallocated) if delay_pending and funded else None,
+            "delay_base_end": funded.period.end.isoformat() if delay_pending and funded else None,
+            "delay_base_piggy_kept": amount(result.cap_kept.get(card_start, 0))
+            if delay_pending and cap_rule(inp.caps, payday)[1] else 0.0,
             "delay_repayment_remaining": amount(
                 payday_delays.amount_to_repay(delay) - delay["repaid_cents"]
             ) if delay and delay["funding_on"] else 0.0,
@@ -793,7 +861,8 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             # overspend).  The daily amount is (to_card + carry_in) / days.
             "carry_in": amount(funded.opening - funded.allocation) if funded and not past else 0.0,
             "free": amount(row.received - row.mandatory),
-            "card_period": _period_dict(funded.period) if funded else None,
+            "card_period": _period_dict(displayed_card_period) if displayed_card_period else (
+                _period_dict(funded.period) if funded and not delay else None),
             "daily": amount(daily),
             "daily_set": amount(cap) if capped else None,
             # Left in the buffer by the daily maximum in this buffer period.
@@ -815,7 +884,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
     rows = [row_dict(row, current=index == 0, past=False)
              for index, row in enumerate(buffer_rows(plan_inp, result))]
     past_rows = [row_dict(row, current=False, past=True)
-                 for row in buffer_rows(inp, result, past=True)]
+                 for row in buffer_rows(plan_inp, result, past=True)]
 
     next_income = next(
         ({"date": d.isoformat(), "income": amount(v)}
@@ -829,12 +898,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         low_day = min(daterange(today, inp.data_end), key=lambda d: result.buffer_end[d])
         if result.buffer_end[low_day] < inp.buffer_floor:
             floor_gap, floor_gap_date = inp.buffer_floor - result.buffer_end[low_day], low_day
-    if pending_delays and (result.shortfall or floor_gap):
-        deficit = result.shortfall or floor_gap
-        when = result.shortfall_date or floor_gap_date
-        purpose = "на обязательные платежи" if result.shortfall else "до минимума буфера"
-        reason = f"Если задержанная выплата не поступит, к {when:%d.%m.%Y} {purpose} не хватит {_rub(deficit)}."
-    elif result.shortfall > 0:
+    if result.shortfall > 0:
         reason = (
             f"Буфер не покрывает обязательные платежи: к {result.shortfall_date:%d.%m.%Y} "
             f"не хватает {_rub(result.shortfall)}. Дневной лимит новых периодов снижен до нуля."
@@ -864,14 +928,15 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             **_period_dict(current),
             "days_left": days_left,
             "is_last_day": days_left == 1,
-            "payday": current.end.isoformat(),
-            "payday_kind": extras["titles"].get(current.end, "Выплата"),
+            "payday": original_period.end.isoformat(),
+            "payday_kind": extras["titles"].get(original_period.end, "Выплата"),
         },
         "next_period": {
-            **_period_dict(next_forecast.period),
-            "allocation": amount(next_forecast.allocation),
-            "daily": amount(next_forecast.daily),
-        } if next_forecast else None,
+            **_period_dict(next_period),
+            "allocation": amount(next_allocation),
+            "daily": amount(next_allocation // next_period.days) if next_period.funded_on in extras["delays"] else
+            amount(result.forecasts[next_period.start].daily),
+        } if next_period else None,
         "card_balance": amount(card_now),
         "card_start_today": amount(actual.card_start_today),
         # Money moved from the piggy bank "for today" belongs to today only.
@@ -900,7 +965,10 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         "current_cash": amount(card_now + buffer_now + pending + reserved),
         "available_cash": amount(card_now + buffer_now + pending),
         "piggy_bank_balance": piggy_balance(uid),
-        "period_budget": amount(actual.forecasts[current.start].opening),
+        "period_budget": amount(
+            actual.period_opening[original_start]
+            + sum(value for day, value in inp.bridge_in.items() if current.start <= day <= current.end)
+        ),
         "remaining_period": amount(card_now),
         "spent_period": round(float(spent_period), 2),
         "mandatory_period": amount(mandatory_period),
