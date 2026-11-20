@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 16
+BACKUP_VERSION = 17
 
 SETTINGS_COLUMNS = (
     "currency",
@@ -69,7 +69,7 @@ TABLE_COLUMNS = {
         "bill_payment_id", "income_transaction_id", "expense_transaction_id", "vacation_id", "vacation_part", "created_at",
     ),
     "cashflow_income_overrides": ("id", "period_start", "amount", "confirmed", "updated_at"),
-    "payday_delays": ("id", "payday", "daily", "extensions", "received_on"),
+    "payday_delays": ("id", "payday", "daily", "extensions", "received_on", "funding_on", "repayment_movement_id"),
     "plan_history": ("id", "effective_date", "snapshot"),
     "card_allocations": ("id", "period_start", "funded_on", "amount", "cap_kept"),
     "payroll_changes": ("id", "effective_month", "salary_gross", "bonus_gross", "created_at"),
@@ -329,8 +329,10 @@ def restore_user_data(user_id: int, payload: dict) -> dict:
                 )
             for row in data["payday_delays"]:
                 con.execute(
-                    "INSERT INTO payday_delays(user_id,payday,daily,extensions,received_on) VALUES(?,?,?,?,?)",
-                    (user_id, row["payday"], row["daily"], json.dumps(row["extensions"]), row["received_on"]),
+                    "INSERT INTO payday_delays(user_id,payday,daily,extensions,received_on,funding_on,repayment_movement_id) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (user_id, row["payday"], row["daily"], json.dumps(row["extensions"]), row["received_on"],
+                     row["funding_on"], piggy_ids.get(row["repayment_movement_id"])),
                 )
             for row in data["card_allocations"]:
                 con.execute(

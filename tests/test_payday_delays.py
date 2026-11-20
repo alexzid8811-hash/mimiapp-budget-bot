@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
-from app import clock
+from app import clock, payday_delays
 from app.backup import export_user_data, restore_user_data
 from app.cashflow_app import app
 from app.db import connect
@@ -40,8 +40,14 @@ def delay(client, days, request_id):
     return client.post("/api/cashflow/payday-delays/2026-11-21", json={"days": days, "request_id": request_id})
 
 
-def confirm(client):
-    return client.put("/api/cashflow/income-overrides/2026-11-21", json={"amount": 55000, "confirmed": True})
+def confirm(client, actual=55000):
+    return client.put("/api/cashflow/income-overrides/2026-11-21", json={"amount": actual, "confirmed": True})
+
+
+def test_zero_limit_does_not_defer_new_budget_on_receipt_day():
+    received = date(2026, 11, 23)
+    delay = {"daily": 0, "extensions": {"extension-1": [received.isoformat()]}}
+    assert payday_delays.first_regular_day(delay, received) == received
 
 
 def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(budget):
@@ -66,16 +72,55 @@ def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(b
     flow = client.get("/api/cashflow").json()
     assert flow["period"]["days_left"] == 15
     assert flow["today_target"] == 1800
-    assert payday(client)["to_card"] == 15 * 1800
+    assert payday(client)["to_card"] == 14 * 1800
     assert payday(client)["received_on"] == "2026-11-23"
-    assert payday(client)["days_funded_after_delay"] == 15
+    assert payday(client)["funding_on"] == "2026-11-24"
+    assert payday(client)["days_funded_after_delay"] == 14
+    assert payday(client)["delay_repaid"] == 5400
     assert payday(client)["mandatory"] == 5000
     assert payday(client)["to_piggy"] > 0
     movements = client.get("/api/piggy-bank").json()["movements"]
-    assert [row["amount"] for row in movements if row["purpose"] == "payday_delay_return"] == [3600]
+    assert [row["amount"] for row in movements if row["purpose"] == "payday_delay_return"] == [1800]
+    assert [row["amount"] for row in movements if row["purpose"] == "payday_delay_repayment"] == [5400]
     saved = export_user_data(1)
     restore_user_data(1, saved)
     assert client.get("/api/cashflow").json()["today_target"] == 1800
+
+
+def test_actual_pay_caps_repayment_and_correction_updates_one_movement(budget):
+    client, advance = budget
+    advance("2026-11-20")
+    assert delay(client, 3, "extension-1").is_success
+    advance("2026-11-23")
+    assert confirm(client, 3000).is_success
+    assert payday(client)["delay_repaid"] == 3000
+    assert payday(client)["delay_repayment_remaining"] == 2400
+    assert payday(client)["funding_on"] == "2026-11-24"
+    assert confirm(client, 55000).is_success
+    assert confirm(client, 55000).is_success
+    assert payday(client)["delay_repaid"] == 5400
+    assert payday(client)["delay_repayment_remaining"] == 0
+    movements = client.get("/api/piggy-bank").json()["movements"]
+    assert [row["amount"] for row in movements if row["purpose"] == "payday_delay_repayment"] == [5400]
+
+
+def test_earlier_backup_keeps_the_original_settlement_date(budget):
+    client, advance = budget
+    advance("2026-11-20")
+    assert delay(client, 2, "extension-1").is_success
+    advance("2026-11-23")
+    assert confirm(client).is_success
+    backup = export_user_data(1)
+    backup["backup_version"] = 16
+    backup["data"]["payday_delays"][0].pop("funding_on")
+    backup["data"]["payday_delays"][0].pop("repayment_movement_id")
+    backup["data"]["piggy_bank_movements"] = [
+        row for row in backup["data"]["piggy_bank_movements"] if row["purpose"] != "payday_delay_repayment"
+    ]
+    restore_user_data(1, backup)
+    assert payday(client)["funding_on"] == "2026-11-23"
+    assert payday(client)["days_funded_after_delay"] == 15
+    assert payday(client)["delay_repaid"] == 0
 
 
 def test_marked_delay_remains_unreceived_after_the_next_payday(budget):

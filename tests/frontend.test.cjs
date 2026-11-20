@@ -466,6 +466,19 @@ test('payday delay previews the automatic piggy transfer and submits only the nu
  assert.equal('amount' in sent,false);
 });
 
+test('settled delay displays when the new budget starts and how much was repaid', async () => {
+ const {get,responses}=setup();
+ responses['/api/cashflow'].periods=[{
+  start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',income_confirmed:true,
+  received_on:'2026-10-10',funding_on:'2026-10-11',days_funded_after_delay:12,delay_repaid:5400,
+ }];
+ await get('refreshBtn').listeners.click();
+ const card=get('planCards').innerHTML;
+ assert.match(card,/Новый бюджет с 11 окт/);
+ assert.match(card,/Возвращено в копилку · 5.400,00/);
+ assert.match(card,/Дней в новом расчёте: 12/);
+});
+
 test('saving received vacation pay from settings sends the piggy deposit with the actual date', async () => {
  const {sandbox,get,requests}=setup();
  sandbox.window.budgetDate.today = () => '2026-09-18';

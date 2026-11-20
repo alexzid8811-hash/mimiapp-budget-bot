@@ -145,7 +145,7 @@ class Piggy(Record):
     source: Literal['external', 'daily_budget'] = 'external'
     purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer', 'cap_excess',
                      'vacation_buffer', 'vacation_deposit', 'vacation_existing_deposit',
-                     'payday_delay', 'payday_delay_return'] | None = None
+                     'payday_delay', 'payday_delay_return', 'payday_delay_repayment'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
     expense_transaction_id: int | None = Field(default=None, gt=0)
@@ -165,9 +165,10 @@ class Piggy(Record):
                        or self.bill_payment_id or self.expense_transaction_id
                        or (self.income_transaction_id and self.purpose != 'vacation_existing_deposit')):
             raise ValueError('Неверное движение отпускных из копилки')
-        if self.purpose in ('payday_delay', 'payday_delay_return'):
+        if self.purpose in ('payday_delay', 'payday_delay_return', 'payday_delay_repayment'):
             direction = 'withdraw' if self.purpose == 'payday_delay' else 'deposit'
-            if self.source != 'daily_budget' or self.direction != direction or any((
+            source = 'external' if self.purpose == 'payday_delay_repayment' else 'daily_budget'
+            if self.source != source or self.direction != direction or any((
                 self.bill_payment_id, self.income_transaction_id, self.expense_transaction_id,
             )):
                 raise ValueError('Неверная операция копилки при задержке выплаты')
@@ -331,6 +332,8 @@ class PaydayDelay(Record):
     daily: float = Field(ge=0)
     extensions: dict[str, list[date]]
     received_on: date | None = None
+    funding_on: date | None = None
+    repayment_movement_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode='before')
     @classmethod
@@ -346,6 +349,13 @@ class PaydayDelay(Record):
                 or self.payday > clock.today()
                 or self.received_on and not self.payday <= self.received_on <= clock.today()):
             raise ValueError('Неверные даты задержки выплаты')
+        covered = cents(self.daily) > 0 and self.received_on in days
+        if self.funding_on and (
+            not self.received_on or self.funding_on != self.received_on + timedelta(days=int(covered))
+        ):
+            raise ValueError('Неверная дата начала бюджета после задержки')
+        if self.repayment_movement_id and not self.funding_on:
+            raise ValueError('Возврат копилке требует подтверждённой выплаты')
         return self
 
 
@@ -360,7 +370,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 17):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 18):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -475,15 +485,32 @@ def validate_backup(payload):
     if len({row['payday'] for row in delays}) != len(delays):
         raise ValueError('Повторяющаяся задержка выплаты')
     bridge_days = [day for row in delays for dates in row['extensions'].values() for day in dates
-                   if row['received_on'] is None or day < row['received_on']]
+                   if row['received_on'] is None or day < (row['funding_on'] or row['received_on'])]
     if len(bridge_days) != len(set(bridge_days)):
         raise ValueError('Повторяющийся день задержки выплаты')
-    confirmed_paydays = {row['period_start'] for row in data['cashflow_income_overrides'] if row['confirmed']}
+    confirmed_paydays = {row['period_start']: cents(row['amount'])
+                         for row in data['cashflow_income_overrides'] if row['confirmed']}
+    repayments = {row['id']: row for row in data['piggy_bank_movements'] if row['purpose'] == 'payday_delay_repayment'}
     for row in delays:
-        if row['received_on'] and (date.fromisoformat(row['payday']) + timedelta(days=1)).isoformat() not in confirmed_paydays:
+        if not row['received_on']:
+            continue
+        key = (date.fromisoformat(row['payday']) + timedelta(days=1)).isoformat()
+        if key not in confirmed_paydays:
             raise ValueError('В резервной копии нет подтверждения задержанной выплаты')
+        if not row['funding_on']:
+            continue
+        used_days = sum(day < row['funding_on'] for days in row['extensions'].values() for day in days)
+        expected = min(cents(row['daily']) * used_days, confirmed_paydays[key])
+        repayment = repayments.pop(row['repayment_movement_id'], None)
+        if (bool(row['repayment_movement_id']) != bool(expected)
+                or (cents(repayment['amount']) if repayment else 0) != expected
+                or (repayment and repayment['movement_date'] != row['received_on'])):
+            raise ValueError('Возврат копилке не соответствует задержанной выплате')
+    if repayments:
+        raise ValueError('Возврат копилке без связанной задержки выплаты')
     withdrawn = sum(cents(row['daily']) * sum(map(len, row['extensions'].values())) for row in delays)
-    returned = sum(cents(row['daily']) * sum(day >= row['received_on'] for days in row['extensions'].values() for day in days)
+    returned = sum(cents(row['daily']) * sum(day >= (row['funding_on'] or row['received_on'])
+                                           for days in row['extensions'].values() for day in days)
                    for row in delays if row['received_on'])
     for purpose, expected in (('payday_delay', withdrawn), ('payday_delay_return', returned)):
         actual = sum(cents(row['amount']) for row in data['piggy_bank_movements'] if row['purpose'] == purpose)

@@ -274,6 +274,40 @@ def _delay_movement(con, uid, direction, value, today):
                                 value=amount(value), day=day)
 
 
+def _repay_delay(con, uid, payday, delay, received_amount):
+    from . import accounts_engine
+
+    value = min(payday_delays.amount_to_repay(delay), cents(received_amount))
+    if value == delay["repaid_cents"]:
+        return
+    protected = vacation_funds.protected_cents(con, uid)
+    movement_id = delay["repayment_movement_id"]
+    if not value:
+        con.execute("DELETE FROM piggy_bank_movements WHERE id=? AND user_id=?", (movement_id, uid))
+    elif movement_id:
+        con.execute("UPDATE piggy_bank_movements SET amount=? WHERE id=? AND user_id=?",
+                    (amount(value), movement_id, uid))
+        con.execute("UPDATE account_transfers SET amount=? WHERE piggy_movement_id=? AND user_id=?",
+                    (amount(value), movement_id, uid))
+    else:
+        day = delay["received_on"].isoformat()
+        movement_id = con.execute(
+            "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
+            "VALUES(?,'deposit',?,?,'Возврат денег за дни задержки','external','payday_delay_repayment')",
+            (uid, amount(value), day),
+        ).lastrowid
+        con.execute("UPDATE payday_delays SET repayment_movement_id=? WHERE user_id=? AND payday=?",
+                    (movement_id, uid, payday.isoformat()))
+        if accounts_engine.settings_for(con, uid)["enabled"]:
+            places, _ = accounts_engine.placement(con, uid)
+            accounts_engine._linked(con, uid, places.get("buffer"), places.get("piggy"), amount(value), day,
+                                    piggy=movement_id)
+    try:
+        check_piggy_history(con, uid, protected)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @app.post("/api/cashflow/payday-delays/{period_start}")
 def extend_payday_delay(
     period_start: date, payload: PaydayDelayIn, user: TelegramUser = Depends(current_user),
@@ -301,8 +335,7 @@ def extend_payday_delay(
         covered = payday_delays.bridge_days(delay) if delay else []
         first_day = max(today, period_start, covered[-1] + timedelta(days=1) if covered else today)
         all_covered = {
-            day for other in delays.values() for day in payday_delays.bridge_days(other)
-            if other["received_on"] is None or day < other["received_on"]
+            day for other in delays.values() for day in payday_delays.covered_days(other)
         }
         days = [first_day + timedelta(days=offset) for offset in range(payload.days)]
         if any(day in all_covered for day in days):
@@ -353,10 +386,15 @@ def save_cashflow_income_override(
         payday = date.fromisoformat(row["payday"])
         delay = payday_delays.load(con, uid).get(payday)
         if delay and delay["received_on"] is None and confirmed:
-            returned = cents(delay["daily"]) * payday_delays.expired_bridge_days(delay, today)
+            delay["received_on"] = today
+            delay["funding_on"] = payday_delays.first_regular_day(delay, today)
+            unused_days = len(payday_delays.bridge_days(delay)) - len(payday_delays.covered_days(delay))
+            returned = cents(delay["daily"]) * unused_days
             _delay_movement(con, uid, "deposit", returned, today)
-            con.execute("UPDATE payday_delays SET received_on=? WHERE user_id=? AND payday=?",
-                        (today.isoformat(), uid, payday.isoformat()))
+            con.execute("UPDATE payday_delays SET received_on=?,funding_on=? WHERE user_id=? AND payday=?",
+                        (today.isoformat(), delay["funding_on"].isoformat(), uid, payday.isoformat()))
+        if delay and delay["funding_on"]:
+            _repay_delay(con, uid, payday, delay, payload.amount)
         if delay and (confirmed or delay["received_on"]):
             con.execute("DELETE FROM card_allocations WHERE user_id=? AND period_start=?",
                         (uid, period_start.isoformat()))
@@ -534,7 +572,7 @@ def delete_piggy_bank_movement(
         ).fetchone()
         if movement is None:
             raise HTTPException(404, "Операция копилки не найдена")
-        if movement["purpose"] in ("payday_delay", "payday_delay_return"):
+        if movement["purpose"] in ("payday_delay", "payday_delay_return", "payday_delay_repayment"):
             raise HTTPException(422, "Эта операция связана с задержкой выплаты")
         if movement["purpose"] in ("vacation_deposit", "vacation_existing_deposit"):
             raise HTTPException(422, "Это отпускные. Пополнение меняется через запись отпуска в настройках")
