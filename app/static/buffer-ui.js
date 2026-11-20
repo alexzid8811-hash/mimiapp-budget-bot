@@ -83,7 +83,11 @@
 
   function delayButton(period) {
     if (!period.income_pending || period.delay_daily == null) return "";
-    return `<button class="income-btn" type="button" onclick="openPaydayDelay('${period.override_key}')">${period.delay_pending ? "Продлить задержку" : "Задержка выплаты"}</button>`;
+    const add = `<button class="income-btn" type="button" onclick="openPaydayDelay('${period.override_key}')">${period.delay_pending ? "Продлить задержку" : "Задержка выплаты"}</button>`;
+    const edit = period.delay_pending && period.delay_revision
+      ? `<button class="income-btn" type="button" onclick="openPaydayDelay('${period.override_key}', true)">Изменить задержку</button>`
+      : "";
+    return add + edit;
   }
 
   function delayDetails(period) {
@@ -322,18 +326,40 @@
   let delayDraft = null;
   function renderDelayPreview() {
     if (!delayDraft) return;
-    const days = Number(document.getElementById("paydayDelayDays").value);
-    const start = delayDraft.period.delay_start ? ` с ${formatDate(delayDraft.period.delay_start)}` : "";
-    setText("paydayDelayPreview", `${formatMoney(delayDraft.period.delay_daily)} в день${start} · из копилки ${formatMoney(delayDraft.period.delay_daily * days)}`);
+    const input = document.getElementById("paydayDelayDays");
+    const days = Number(input.value);
+    const {period, editing} = delayDraft;
+    if (editing) {
+      const difference = days - period.delay_future_days;
+      const value = formatMoney(Math.abs(difference) * period.delay_daily);
+      const movement = difference < 0 ? `Вернётся в копилку ${value}`
+        : difference > 0 ? `Из копилки ${value}` : "";
+      setText("paydayDelayPreview", input.value === "" ? "" : movement);
+      return;
+    }
+    const start = period.delay_start ? ` с ${formatDate(period.delay_start)}` : "";
+    setText("paydayDelayPreview", `${formatMoney(period.delay_daily)} в день${start} · из копилки ${formatMoney(period.delay_daily * days)}`);
   }
-  window.openPaydayDelay = overrideKey => {
+  window.openPaydayDelay = (overrideKey, editing = false) => {
     const period = findPayday(overrideKey);
-    if (!period?.income_pending || period.delay_daily == null) return;
+    if (!period?.income_pending || period.delay_daily == null || (editing && !period.delay_revision)) return;
     delayDraft = {
       period,
+      editing,
       requestId: globalThis.crypto?.randomUUID?.() || `delay-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     };
-    document.getElementById("paydayDelayDays").value = "1";
+    const input = document.getElementById("paydayDelayDays");
+    input.min = editing ? "0" : "1";
+    input.max = String(editing ? period.delay_future_days + 366 : 366);
+    input.value = String(editing ? period.delay_future_days : 1);
+    setText("paydayDelayTitle", editing ? "Изменить задержку" : period.delay_pending ? "Продлить задержку" : "Задержка выплаты");
+    setText("paydayDelayDaysLabel", editing ? "На сколько будущих дней нужны деньги" : "На сколько дней нужны деньги");
+    setText("savePaydayDelayBtn", editing ? "Сохранить" : "Подтвердить перевод");
+    document.getElementById("markPaydayDelayOnly").hidden = editing || period.delay_pending;
+    document.getElementById("cancelPaydayDelay").hidden = !editing || !period.delay_can_cancel;
+    document.getElementById("paydayDelayHelp").hidden = !editing;
+    const locked = period.delay_locked_days > 0 ? `Дней уже учтено по сегодня включительно — ${period.delay_locked_days}. ` : "";
+    setText("paydayDelayHelp", editing ? locked + "Введи 0, чтобы вернуть деньги за все будущие дни и продолжить ждать выплату." : "");
     renderDelayPreview();
     document.getElementById("paydayDelayDialog").showModal();
   };
@@ -341,11 +367,12 @@
   async function savePaydayDelay(days) {
     const button = document.getElementById("savePaydayDelayBtn");
     if (!delayDraft || button.disabled) return;
-    const { period, requestId } = delayDraft;
+    const { period, requestId, editing } = delayDraft;
     button.disabled = true;
     try {
       await request(`/api/cashflow/payday-delays/${period.override_key}`, {
-        method: "POST", body: JSON.stringify({ days, request_id: requestId }),
+        method: editing ? "PUT" : "POST",
+        body: JSON.stringify(editing ? { future_days: days, revision: period.delay_revision } : { days, request_id: requestId }),
       });
       document.getElementById("paydayDelayDialog").close();
       delayDraft = null;
@@ -361,6 +388,13 @@
     return savePaydayDelay(Number(document.getElementById("paydayDelayDays").value));
   });
   document.getElementById("markPaydayDelayOnly")?.addEventListener("click", () => savePaydayDelay(0));
+  document.getElementById("cancelPaydayDelay")?.addEventListener("click", () => {
+    if (!delayDraft?.editing || !delayDraft.period.delay_can_cancel) return;
+    const {delay_daily, delay_future_days} = delayDraft.period;
+    const total = delay_daily * delay_future_days;
+    const refund = total > 0 ? ` В копилку вернётся ${formatMoney(total)}.` : "";
+    if (confirm(`Отменить задержку?${refund} Выплата останется в ожидании подтверждения.`)) return savePaydayDelay(null);
+  });
 
   function openIncomeDialog(overrideKey, confirm) {
     const period = findPayday(overrideKey);
@@ -431,7 +465,7 @@
       const deposit = item.direction === "deposit";
       const vacationDeposit = item.purpose === "vacation_deposit" || item.purpose === "vacation_existing_deposit";
       const toCard = !deposit && item.source === "daily_budget";
-      const delayMove = ["payday_delay", "payday_delay_return", "payday_delay_repayment"].includes(item.purpose);
+      const delayMove = ["payday_delay", "payday_delay_return", "payday_delay_edit_return", "payday_delay_repayment"].includes(item.purpose);
       const title = delayMove ? item.note : deposit && item.source === "daily_budget" ? "Из остатка дня"
         : deposit && item.purpose === "from_buffer" ? "Лишнее из буфера"
           : deposit && item.purpose === "cap_excess" ? "Сверх максимума в день" : vacationDeposit ? "Отпускные" : deposit ? "Пополнение"

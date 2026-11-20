@@ -726,10 +726,12 @@
   <dialog id="paydayDelayDialog" aria-labelledby="paydayDelayTitle">
     <form method="dialog" id="paydayDelayForm" class="dialog-card">
       <div class="section-head"><h2 id="paydayDelayTitle">Задержка выплаты</h2><button class="icon-btn" aria-label="Закрыть" type="button" data-close>×</button></div>
-      <label>На сколько дней нужны деньги<input id="paydayDelayDays" type="number" min="1" max="366" step="1" required /></label>
+      <label><span id="paydayDelayDaysLabel">На сколько дней нужны деньги</span><input id="paydayDelayDays" type="number" min="1" max="366" step="1" required /></label>
+      <p class="muted" id="paydayDelayHelp" hidden></p>
       <p class="muted" id="paydayDelayPreview" aria-live="polite"></p>
       <button class="primary big" id="savePaydayDelayBtn" value="default">Подтвердить перевод</button>
       <button class="secondary" id="markPaydayDelayOnly" type="button">Отметить без перевода</button>
+      <button class="secondary danger" id="cancelPaydayDelay" type="button" hidden>Отменить задержку</button>
     </form>
   </dialog>
 
@@ -767,7 +769,7 @@
   <script src="/static/money-input.js?v=20261020-daily-cap"></script>
   <script src="/static/app.js?v=20261119-vacation-deposit"></script>
   <script src="/static/cashflow-ui.js?v=20261026-buffer-move"></script>
-  <script src="/static/buffer-ui.js?v=20261120-delay-notes"></script>
+  <script src="/static/buffer-ui.js?v=20261120-delay-edit"></script>
   <script src="/static/design-ui.js?v=20261027-weekends"></script>
   <script src="/static/backup.js?v=20260925-excel"></script>
   <script src="/static/analytics-ui.js?v=20261116-piggy-card"></script>

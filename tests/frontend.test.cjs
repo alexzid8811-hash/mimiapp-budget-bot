@@ -465,6 +465,32 @@ test('payday delay previews the automatic piggy transfer and submits only the nu
  assert.equal('amount' in sent,false);
 });
 
+test('pending delay can be shortened or cancelled from the same dialog', async () => {
+ const {sandbox,get,requests,responses}=setup();
+ const key='2026-10-08';
+ const revision='a'.repeat(64);
+ responses['/api/cashflow'].periods=[{
+  start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',
+  received_editable:true,income_pending:true,override_key:key,delay_daily:1800,delay_pending:true,
+  delay_revision:revision,delay_future_days:2,delay_locked_days:0,delay_can_cancel:true,delay_check_until:'2026-10-09',
+ }];
+ await get('refreshBtn').listeners.click();
+ for(const id of ['bufferPeriods','planCards']) assert.match(get(id).innerHTML,/Изменить задержку/);
+ sandbox.window.openPaydayDelay(key,true);
+ assert.equal(get('paydayDelayDays').value,'2');
+ get('paydayDelayDays').value='1';
+ get('paydayDelayDays').listeners.input();
+ assert.match(get('paydayDelayPreview').textContent,/Вернётся в копилку 1.800,00/);
+ await get('paydayDelayForm').listeners.submit({preventDefault(){}});
+ sandbox.confirm=()=>true;
+ sandbox.window.openPaydayDelay(key,true);
+ assert.equal(get('cancelPaydayDelay').hidden,false);
+ await get('cancelPaydayDelay').listeners.click();
+ const sent=requests.filter(r=>r.url.endsWith('/payday-delays/'+key));
+ assert.deepEqual(sent.map(r=>r.method),['PUT','PUT']);
+ assert.deepEqual(sent.map(r=>JSON.parse(r.body)),[{future_days:1,revision},{future_days:null,revision}]);
+});
+
 test('pending delay distinguishes unpaid bills due by the selected day from the period forecast', async () => {
  const {get,responses}=setup();
  const period={start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',
