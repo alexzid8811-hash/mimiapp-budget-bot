@@ -1,6 +1,7 @@
 """Confirmed bridge days for a delayed payroll payout."""
 import json
 from datetime import date, timedelta
+from hashlib import sha256
 
 from .money import cents
 
@@ -25,6 +26,11 @@ def load(con, uid):
 
 def bridge_days(delay):
     return sorted(date.fromisoformat(day) for days in delay["extensions"].values() for day in days)
+
+
+def revision(delay, today):
+    state = json.dumps([today.isoformat(), delay["daily"], delay["extensions"]], sort_keys=True)
+    return sha256(state.encode()).hexdigest()
 
 
 def funding_day(delay):

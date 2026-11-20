@@ -18,7 +18,7 @@ from .db import connect, ensure_user, user_scope
 
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-BACKUP_VERSION = 17
+BACKUP_VERSION = 18
 
 SETTINGS_COLUMNS = (
     "currency",

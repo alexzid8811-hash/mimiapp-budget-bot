@@ -185,3 +185,60 @@ def test_delay_only_counts_bills_due_by_covered_day_and_preserves_today(budget):
     assert client.post(f"/api/bills/{bill['id']}/pay", json={"due_date": "2026-11-23"}).is_success
     assert payday(client)["delay_due"] == 0
     assert payday(client)["mandatory"] == 4000
+
+
+def edit_delay(client, days, revision=None):
+    return client.put("/api/cashflow/payday-delays/2026-11-21", json={
+        "future_days": days, "revision": revision or payday(client)["delay_revision"],
+    })
+
+
+def test_shorten_and_cancel_delay_restore_savings_without_confirming_payday(budget):
+    client, advance = budget
+    advance("2026-11-20")
+    before = client.get("/api/cashflow").json()
+    assert delay(client, 2, "extension-one").is_success
+    row = payday(client)
+    assert row["delay_future_days"] == 2 and row["delay_can_cancel"]
+    assert edit_delay(client, 1, row["delay_revision"]).is_success
+    assert edit_delay(client, 1, row["delay_revision"]).status_code == 409
+    assert delay(client, 2, "extension-one").is_success
+    assert payday(client)["delay_until"] == "2026-11-21"
+    assert client.get("/api/piggy-bank").json()["balance"] == 8200
+    assert edit_delay(client, 8).status_code == 422
+    assert payday(client)["delay_future_days"] == 1
+    assert edit_delay(client, 3).is_success
+    assert payday(client)["delay_until"] == "2026-11-23"
+    assert client.get("/api/piggy-bank").json()["balance"] == 4600
+    assert edit_delay(client, None).is_success
+    row = payday(client)
+    assert row["income_pending"] and not row["delay_pending"] and not row["income_confirmed"]
+    assert client.get("/api/piggy-bank").json()["balance"] == 10000
+    after = client.get("/api/cashflow").json()
+    for key in ("card_balance", "available_today", "buffer_balance", "pending_card_allocation"):
+        assert after[key] == before[key]
+    restore_user_data(1, export_user_data(1))
+    assert client.get("/api/piggy-bank").json()["balance"] == 10000
+    assert payday(client)["income_pending"]
+
+
+def test_edit_protects_current_and_elapsed_days_and_repayment_uses_them(budget):
+    client, advance = budget
+    advance("2026-11-20")
+    assert delay(client, 3, "extension-one").is_success
+    old_revision = payday(client)["delay_revision"]
+    advance("2026-11-22")
+    assert edit_delay(client, 0, old_revision).status_code == 409
+    assert payday(client)["delay_locked_days"] == 2
+    assert not payday(client)["delay_can_cancel"]
+    assert edit_delay(client, None).status_code == 422
+    assert edit_delay(client, 0).is_success
+    assert payday(client)["delay_pending"]
+    assert client.get("/api/cashflow").json()["today_target"] == 1800
+    assert client.get("/api/piggy-bank").json()["balance"] == 6400
+    restore_user_data(1, export_user_data(1))
+    assert confirm(client).is_success
+    assert payday(client)["delay_repaid"] == 3600
+    assert payday(client)["funding_on"] == "2026-11-23"
+    restore_user_data(1, export_user_data(1))
+    assert payday(client)["delay_repaid"] == 3600

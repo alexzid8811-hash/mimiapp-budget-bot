@@ -145,7 +145,8 @@ class Piggy(Record):
     source: Literal['external', 'daily_budget'] = 'external'
     purpose: Literal['transfer', 'today', 'cover_overspend', 'from_buffer', 'cap_excess',
                      'vacation_buffer', 'vacation_deposit', 'vacation_existing_deposit',
-                     'payday_delay', 'payday_delay_return', 'payday_delay_repayment'] | None = None
+                     'payday_delay', 'payday_delay_return', 'payday_delay_edit_return',
+                     'payday_delay_repayment'] | None = None
     bill_payment_id: int | None = Field(default=None, gt=0)
     income_transaction_id: int | None = Field(default=None, gt=0)
     expense_transaction_id: int | None = Field(default=None, gt=0)
@@ -165,7 +166,7 @@ class Piggy(Record):
                        or self.bill_payment_id or self.expense_transaction_id
                        or (self.income_transaction_id and self.purpose != 'vacation_existing_deposit')):
             raise ValueError('Неверное движение отпускных из копилки')
-        if self.purpose in ('payday_delay', 'payday_delay_return', 'payday_delay_repayment'):
+        if self.purpose in ('payday_delay', 'payday_delay_return', 'payday_delay_edit_return', 'payday_delay_repayment'):
             direction = 'withdraw' if self.purpose == 'payday_delay' else 'deposit'
             source = 'external' if self.purpose == 'payday_delay_repayment' else 'daily_budget'
             if self.source != source or self.direction != direction or any((
@@ -370,7 +371,7 @@ MODELS = {'categories': Category, 'income_rules': Income, 'bill_rules': Bill,
 
 
 def validate_backup(payload):
-    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 18):
+    if not isinstance(payload, dict) or type(payload.get('backup_version')) is not int or payload['backup_version'] not in range(1, 19):
         raise ValueError('Неподдерживаемая версия резервной копии')
     if payload.get('app') != 'mimiapp-budget-bot':
         raise ValueError('Этот файл создан другим приложением')
@@ -509,6 +510,8 @@ def validate_backup(payload):
     if repayments:
         raise ValueError('Возврат копилке без связанной задержки выплаты')
     withdrawn = sum(cents(row['daily']) * sum(map(len, row['extensions'].values())) for row in delays)
+    withdrawn += sum(cents(row['amount']) for row in data['piggy_bank_movements']
+                     if row['purpose'] == 'payday_delay_edit_return')
     returned = sum(cents(row['daily']) * sum(day >= (row['funding_on'] or row['received_on'])
                                            for days in row['extensions'].values() for day in days)
                    for row in delays if row['received_on'])

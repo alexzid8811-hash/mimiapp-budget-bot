@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import Depends, HTTPException
 from pydantic import Field
@@ -90,6 +91,11 @@ class CashflowIncomeOverrideIn(APIModel):
 class PaydayDelayIn(APIModel):
     days: int = Field(ge=0, le=366)
     request_id: str = Field(min_length=8, max_length=80, pattern=r"^[A-Za-z0-9-]+$")
+
+
+class PaydayDelayEditIn(APIModel):
+    future_days: int | None = Field(ge=0)
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 def today_numbers(user_id: int) -> dict:
@@ -259,13 +265,17 @@ def editable_payday_row(user_id: int, period_start: date) -> dict | None:
     )
 
 
-def _delay_movement(con, uid, direction, value, today):
+def _delay_movement(con, uid, direction, value, today, *, edited=False):
     from . import accounts_engine
 
     if not value:
         return
-    purpose, title = ("payday_delay", "Траты до выплаты") if direction == "withdraw" else (
-        "payday_delay_return", "Возврат остатка после задержки выплаты")
+    if direction == "withdraw":
+        purpose, title = "payday_delay", "Траты до выплаты"
+    elif edited:
+        purpose, title = "payday_delay_edit_return", "Возврат за убранные дни задержки"
+    else:
+        purpose, title = "payday_delay_return", "Возврат остатка после задержки выплаты"
     day = today.isoformat()
     movement = con.execute(
         "INSERT INTO piggy_bank_movements(user_id,direction,amount,movement_date,note,source,purpose) "
@@ -353,6 +363,61 @@ def extend_payday_delay(
         )
         con.execute("DELETE FROM card_allocations WHERE user_id=? AND period_start=?", (uid, period_start.isoformat()))
         _delay_movement(con, uid, "withdraw", total, today)
+        try:
+            check_piggy_history(con, uid)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    return {"ok": True}
+
+
+@app.put("/api/cashflow/payday-delays/{period_start}")
+def edit_payday_delay(
+    period_start: date, payload: PaydayDelayEditIn, user: TelegramUser = Depends(current_user),
+) -> dict:
+    uid = legacy.user_ready(user)
+    if irregular_engine.is_irregular(uid) or not cashflow_settings(uid)["cashflow_enabled"]:
+        raise HTTPException(422, "Задержка выплаты доступна в режиме зарплаты с включённым буфером")
+    payday = period_start - timedelta(days=1)
+    row = editable_payday_row(uid, period_start)
+    with legacy.connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        today = clock.today()
+        delays = payday_delays.load(con, uid)
+        delay = delays.get(payday)
+        if (not row or not row["delay_pending"] or not delay or delay["received_on"] is not None
+                or row["delay_revision"] != payload.revision
+                or payday_delays.revision(delay, today) != payload.revision):
+            raise HTTPException(409, "Задержка изменилась. Обновите буфер и откройте её снова.")
+
+        covered = payday_delays.bridge_days(delay)
+        future = [day for day in covered if day > today]
+        cancel = payload.future_days is None
+        if cancel and not row["delay_can_cancel"]:
+            raise HTTPException(422, "Можно изменить будущие дни. Для расчёта с копилкой подтвердите выплату после получения.")
+        requested = 0 if payload.future_days is None else payload.future_days
+        change = requested - len(future)
+        if change > 366:
+            raise HTTPException(422, "За одно изменение можно добавить не больше 366 дней")
+        value = cents(delay["daily"]) * abs(change)
+        extensions = delay["extensions"]
+        if change < 0:
+            removed = {day.isoformat() for day in future[requested:]}
+            extensions = {key: [day for day in days if day not in removed] for key, days in extensions.items()}
+        elif change > 0:
+            first_day = max(today, payday, *covered) + timedelta(days=1)
+            added = [first_day + timedelta(days=index) for index in range(change)]
+            if set(added).intersection(day for key, other in delays.items() if key != payday
+                                       for day in payday_delays.covered_days(other)):
+                raise HTTPException(422, "На эти дни уже выделены деньги по другой задержанной выплате")
+            if value:
+                piggy_goals.check_withdrawal(con, uid, amount(value), None)
+            extensions[str(uuid4())] = [day.isoformat() for day in added]
+        if cancel:
+            con.execute("DELETE FROM payday_delays WHERE user_id=? AND payday=?", (uid, payday.isoformat()))
+        elif change:
+            con.execute("UPDATE payday_delays SET extensions=? WHERE user_id=? AND payday=?",
+                        (json.dumps(extensions), uid, payday.isoformat()))
+        _delay_movement(con, uid, "withdraw" if change > 0 else "deposit", value, today, edited=True)
         try:
             check_piggy_history(con, uid)
         except ValueError as exc:
@@ -573,7 +638,8 @@ def delete_piggy_bank_movement(
         ).fetchone()
         if movement is None:
             raise HTTPException(404, "Операция копилки не найдена")
-        if movement["purpose"] in ("payday_delay", "payday_delay_return", "payday_delay_repayment"):
+        if movement["purpose"] in ("payday_delay", "payday_delay_return", "payday_delay_edit_return",
+                                   "payday_delay_repayment"):
             raise HTTPException(422, "Эта операция связана с задержкой выплаты")
         if movement["purpose"] in ("vacation_deposit", "vacation_existing_deposit"):
             raise HTTPException(422, "Это отпускные. Пополнение меняется через запись отпуска в настройках")

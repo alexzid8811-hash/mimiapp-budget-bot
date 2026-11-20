@@ -132,11 +132,10 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         vacation_rows = vacation_funds.rows(con, uid, today)
         delays = {day: row for day, row in payday_delays.load(con, uid).items() if day in schedule["paydays"]}
     vacation_paydays = {date.fromisoformat(row["payday"]) for row in vacation_rows if row["payday"]}
-    waiting = unconfirmed_payday(
+    normally_waiting = unconfirmed_payday(
         paydays, confirmed, start=start, today=today, confirm_from=confirm_from, vacation_paydays=vacation_paydays,
     )
-    if waiting in delays:
-        waiting = None
+    waiting = normally_waiting if normally_waiting not in delays else None
     pending_delayed_dates = {day.isoformat() for day, row in delays.items() if row["received_on"] is None}
 
     buffer_in: dict[date, int] = {}
@@ -241,7 +240,8 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         for row in con.execute(
             "SELECT direction,amount,movement_date,COALESCE(purpose,'') AS purpose "
             "FROM piggy_bank_movements WHERE user_id=? AND source='daily_budget' "
-            "AND bill_payment_id IS NULL AND COALESCE(purpose,'') NOT IN ('payday_delay','payday_delay_return') "
+            "AND bill_payment_id IS NULL AND COALESCE(purpose,'') NOT IN "
+            "('payday_delay','payday_delay_return','payday_delay_edit_return') "
             "AND movement_date BETWEEN ? AND ?",
             window,
         ):
@@ -333,6 +333,7 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
         "overridden": set(overrides),
         "confirmed": confirmed,
         "waiting": waiting,
+        "normally_waiting": normally_waiting,
         "delays": delays,
         "reserved": reserved,
         "unpaid": unpaid,
@@ -705,6 +706,7 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         delay_pending = delay is not None and delay["received_on"] is None
         funding_on = payday_delays.funding_day(delay) if delay else None
         covered_days = payday_delays.bridge_days(delay) if delay_pending else []
+        future_days = sum(day > today for day in covered_days)
         delay_start = None
         if delay_pending or (payday and payday == extras["waiting"]):
             first_unfunded = covered_days[-1] + timedelta(days=1) if covered_days else payday + timedelta(days=1)
@@ -763,6 +765,11 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
             "delay_start": delay_start.isoformat() if delay_start else None,
             "delay_until": covered_days[-1].isoformat() if covered_days else None,
             "delay_pending": delay_pending,
+            "delay_revision": payday_delays.revision(delay, today) if delay_pending else None,
+            "delay_future_days": future_days,
+            "delay_locked_days": len(covered_days) - future_days,
+            "delay_can_cancel": bool(delay_pending and future_days == len(covered_days)
+                                     and payday == extras["normally_waiting"]),
             "delay_check_until": check_until.isoformat() if delay_pending else None,
             "delay_due": amount(delay_due),
             "delay_shortfall": amount(delay_shortfall),
