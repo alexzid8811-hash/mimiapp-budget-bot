@@ -106,7 +106,7 @@
   function vacationIncomeMarkup(period) {
     if (!period.vacation_funds?.length) return "";
     return `<div class="row-sub">Отпускные из копилки · ${formatMoney(period.vacation_included)}</div>
-      <div class="row-sub">Всего к распределению · ${formatMoney(period.received)}</div>
+      <div class="row-sub">Всего к распределению · ${formatMoney(period.forecast_received ?? period.received)}</div>
       <button class="tiny" type="button" onclick="openVacationCalculation('${period.start}')">Как посчитано</button>`;
   }
 
@@ -136,7 +136,7 @@
       + (period.income_overridden || period.income_confirmed ? line("Введённая сумма выплаты", period.payday_amount) : "")
       + vacations.join("")
       + line("Отпускные в расчёте периода", period.vacation_included)
-      + line("Всего к распределению", period.received);
+      + line("Всего к распределению", period.forecast_received ?? period.received);
     document.getElementById("vacationCalculationDialog").showModal();
   };
 
@@ -155,11 +155,7 @@
     setText("reserveBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
     const shortfall = document.getElementById("bufferShortfall");
-    const awaitingDelayedPay = [...planned, ...(data.past_periods || [])].some(p => p.delay_pending);
-    if (data.enabled && awaitingDelayedPay && (data.capital_shortfall > 0 || data.floor_gap > 0)) {
-      shortfall.textContent = data.reason;
-      shortfall.classList.remove("hidden");
-    } else if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
+    if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
       shortfall.textContent = `Даже без повседневных трат не хватает ${formatMoney(data.capital_shortfall)}. Увеличьте стартовый капитал или скорректируйте обязательные платежи.`;
       shortfall.classList.remove("hidden");
     } else if (data.enabled && Number(data.floor_gap || 0) > 0) {
@@ -212,13 +208,13 @@
     const worst = periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
     if(worst.length) {
       const text = "Больше всего возьмёте из буфера в периоды "+worst.map(p=>formatDate(p.start)+" — "+formatDate(p.end)).join(" и ")+": "+formatMoney(worst.reduce((a,p)=>a+Number(p.take),0))+". К концу прогноза останется "+formatMoney(last.buffer)+".";
-      warning.textContent=awaitingDelayedPay ? "Прогноз без задержанной выплаты. " + text : text;
+      warning.textContent=text;
       warning.classList.remove("hidden");
     }
     // What the period does with the buffer, in words: green goes into it,
     // red is taken from it.
     const movement = p => p.take>0
-      ? ["neg",formatMoney(p.take),p.delay_pending ? "за период без выплаты" : "взять из буфера"]
+      ? ["neg",formatMoney(p.take),"взять из буфера"]
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"положить в буфер"]
         : ["zero","—","без движения"];
@@ -234,12 +230,18 @@
       return Number(p.free) < 0 ? `<small class="free-short">не хватает ${formatMoney(-Number(p.free))}</small>` : "";
     };
     // Every period shows its daily amount under «На карту».
-    const dailyNote = p => Number(p.to_card) > 0 || p.daily_set != null
-      ? `<small>${formatMoney(dailyOf(p))} в день</small>` : "";
+    const dailyNote = p => {
+      if (p.delay_pending && p.card_period && p.delay_return_in_plan > 0) {
+        return `<small class="delay-note">${formatMoney(dailyOf(p))} в день<br>С ${formatDate(p.card_period.start)} · ${p.card_period.days} ${plural(p.card_period.days)}</small>`;
+      }
+      return Number(p.to_card) > 0 || p.daily_set != null ? `<small>${formatMoney(dailyOf(p))} в день</small>` : "";
+    };
     // Money leaving for the piggy bank: the excess over «Максимум в день»
     // and spare buffer money.  Excess kept in the buffer is already part of
     // the movement and is not repeated.
     const toPiggy = p => Math.max(Number(p.to_piggy || 0), Number(p.cap_kept_piggy || 0));
+    const piggyNote = p => p.delay_return_in_plan > 0
+      ? `<small class="delay-note">Пополнение ${formatMoney(toPiggy(p) - p.delay_return_in_plan)}<br>Возврат ${formatMoney(p.delay_return_in_plan)}</small>` : "";
     // The columns read as a sum: what came minus where it went is what the
     // buffer gets or gives; the hint says so once.
     const past = (data.past_periods || []).map(withStartCapital).map(p => ({...p, past: true}));
@@ -289,7 +291,7 @@
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : current ? '<span class="pc-chip">сейчас</span>' : "";
       const payLabel = `${p.delay_pending ? "Ожидается за" : p.past || current ? "Пришло" : "Придёт"}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
       const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.vacation_funds?.length || p.delay_pending ? p.payday_amount : p.received))}${vacationIncomeMarkup(p)}${delayDetails(p)}${payoutActions(p,current)}</div>`;
-      const flow = `<div class="pc-flow">${row("− Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("− На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("− В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
+      const flow = `<div class="pc-flow">${row("− Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("− На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("− В копилку", formatMoney(toPiggy(p)), piggyNote(p)) : ""}</div>`;
       const footLabel = p.past ? "Осталось в буфере" : "Останется в буфере";
       return `${groupTitle(p,i,j)}<article class="pc ${rowClass(p,i)}"><div class="pc-top"><div><div class="pc-date">${formatDate(p.start)} — ${formatDate(p.end)}${chip}</div><div class="pc-kind">${safe(p.kind)} · ${Number(p.days)} ${plural(Number(p.days))}</div></div><div class="pc-move ${c} num">${m}<small>${label}</small></div></div>${pay}${flow}<div class="pc-foot"><span>${footLabel}</span><b class="num ${lowBuffer(p)?"low":""}">${formatMoney(p.buffer)}</b></div>${yearlyNote(p,current)}</article>`;
     }).join("");
@@ -305,7 +307,7 @@
         `<td class="num">${receivedMarkup(p,true,current)}${vacationIncomeMarkup(p)}</td>`,
         `<td class="num">${formatMoney(p.mandatory)}${shortNote(p)}</td>`,
         `<td class="num">${formatMoney(p.to_card)}${dailyNote(p)}</td>`,
-        ...(piggyColumn ? [`<td class="num">${toPiggy(p) > 0.004 ? formatMoney(toPiggy(p)) : '<span class="zero">—</span>'}</td>`] : []),
+        ...(piggyColumn ? [`<td class="num">${toPiggy(p) > 0.004 ? formatMoney(toPiggy(p)) : '<span class="zero">—</span>'}${piggyNote(p)}</td>`] : []),
         `<td class="num sep ${c} movement-cell"><span>${m}</span><small>${label}</small></td>`,
         `<td class="num ${lowBuffer(p)?"low":""}">${formatMoney(p.buffer)}${yearlyNote(p,current)}</td>`,
       ];

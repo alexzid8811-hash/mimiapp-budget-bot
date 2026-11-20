@@ -45,19 +45,18 @@
       panel.classList.toggle("hidden", overspend<=0);
       if (overspend>0) $("overspendAmount").textContent=money(overspend);
     }
-    // The card period's end IS the payday (money received that day still
-    // belongs to the old period); the next card period starts the day after.
-    const start=d.period.start, payday=flow?.period?.payday || d.period.end, next=shift(payday,1);
+    const start=d.period.start, end=d.period.end, payday=flow?.period?.payday || end;
     const today=flow?.today || window.budgetDate.today();
     const count=days(today,payday);
     const kind=flow?.period?.payday_kind || "выплата";
-    $("nextPayTitle").textContent=kind==="Аванс" ? `До аванса ${count} ${plural(count)}` : `До выплаты ${count} ${plural(count)}`;
+    $("nextPayTitle").textContent=flow?.payday_waiting===payday && end!==payday ? `Ожидается: ${kind.toLowerCase()}`
+      : kind==="Аванс" ? `До аванса ${count} ${plural(count)}` : `До выплаты ${count} ${plural(count)}`;
     $("nextPayDate").textContent=date(payday);
     $("periodStartLabel").textContent=date(start);
-    $("periodEndLabel").textContent=date(payday)+" · "+kind.toLowerCase();
+    $("periodEndLabel").textContent=date(end)+(end===payday ? " · "+kind.toLowerCase() : "");
     const strip=$("periodStrip");strip.replaceChildren();
     const bills=new Set((state.plan||[]).map(p=>p.due_date));
-    for(let i=0;i<=Math.min(62,days(start,payday));i++){
+    for(let i=0;i<=Math.min(62,days(start,end));i++){
       const s=shift(start,i), el=document.createElement("div");
       const weekend=[0,6].includes(new Date(s+"T12:00:00Z").getUTCDay());
       el.className="day "+(s===payday?"payday":s<today?"past":s===today?"today":"")+(bills.has(s)?" bill":"")+(weekend?" weekend":"");

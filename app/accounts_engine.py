@@ -295,12 +295,13 @@ def budget_ops(uid: int, mode: str) -> list[BudgetOp]:
 
     if mode == "payroll":
         from . import engine
+        from .ledger import allocation_day
 
         if engine.settings_for(uid)["cashflow_enabled"]:
             inp, actual = _payroll_actual(uid)
             for period in actual.periods:
                 value = actual.allocations.get(period.start, 0)
-                funding = inp.delayed_funding.get(period.funded_on, period.funded_on)
+                funding = allocation_day(inp, period)
                 if funding is not None and funding <= today and value:
                     ops.append(BudgetOp(funding, {"buffer": -value, "spending": value}, {}))
             # «Максимум в день»: card money above the maximum returns to the

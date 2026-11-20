@@ -60,7 +60,8 @@ def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(b
     assert delay(client, 2, "extension-2").is_success
     assert client.get("/api/piggy-bank").json()["balance"] == 2800
     assert payday(client)["delay_until"] == "2026-11-24"
-    assert payday(client)["to_card"] == 0
+    assert payday(client)["to_card"] == 13 * 1800
+    assert payday(client)["delay_return_in_plan"] == 7200
 
     advance("2026-11-22")
     assert client.get("/api/cashflow").json()["today_target"] == 1800
@@ -70,7 +71,9 @@ def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(b
     assert confirm(client).is_success
     assert confirm(client).is_success
     flow = client.get("/api/cashflow").json()
-    assert flow["period"]["days_left"] == 15
+    assert flow["period"]["end"] == "2026-11-23"
+    assert flow["period"]["days_left"] == 1
+    assert flow["next_period"]["days"] == 14
     assert flow["today_target"] == 1800
     assert payday(client)["to_card"] == 14 * 1800
     assert payday(client)["received_on"] == "2026-11-23"
@@ -130,7 +133,7 @@ def test_marked_delay_remains_unreceived_after_the_next_payday(budget):
     advance("2026-12-08")
     assert payday(client)["income_pending"]
     assert payday(client)["received"] == 0
-    assert payday(client)["to_card"] == 0
+    assert payday(client)["delay_return_in_plan"] == 1800
     assert delay(client, 1, "extension-2").is_success
     assert client.get("/api/cashflow").json()["today_target"] == 1800
     assert confirm(client).is_success
@@ -171,7 +174,8 @@ def test_delay_only_counts_bills_due_by_covered_day_and_preserves_today(budget):
     before = client.get("/api/cashflow").json()
     assert delay(client, 2, "extension-1").is_success
     after = client.get("/api/cashflow").json()
-    for key in ("card_balance", "available_today", "today_target", "buffer_balance"):
+    assert after["card_balance"] == before["card_balance"] + 3600
+    for key in ("available_today", "today_target", "buffer_balance"):
         assert after[key] == before[key]
     row = payday(client)
     assert row["delay_check_until"] == "2026-11-22"
@@ -191,6 +195,46 @@ def edit_delay(client, days, revision=None):
     return client.put("/api/cashflow/payday-delays/2026-11-21", json={
         "future_days": days, "revision": revision or payday(client)["delay_revision"],
     })
+
+
+def test_delay_preserves_original_forecast_and_applies_it_at_receipt(budget):
+    client, advance = budget
+    assert client.put("/api/daily-cap", json={"amount": 1800, "excess_to": "piggy"}).is_success
+    assert client.post("/api/bill-rules", json={
+        "title": "Счёт", "amount": 2000, "day_of_month": 23,
+    }).is_success
+    advance("2026-11-20")
+    original = payday(client)
+    before = client.get("/api/cashflow").json()
+    assert delay(client, 2, "extension-one").is_success
+    flow = client.get("/api/cashflow").json()
+    assert flow["period"]["end"] == "2026-11-22"
+    assert flow["next_period"]["start"] == "2026-11-23"
+    assert flow["next_period"]["days"] == 15
+    assert flow["card_balance"] == before["card_balance"] + 3600
+    assert flow["piggy_bank_balance"] == before["piggy_bank_balance"] - 3600
+    assert flow["available_today"] == before["available_today"]
+    expected = payday(client)
+    assert expected["received"] == 0
+    assert original["to_piggy"] > 0
+    assert expected["to_piggy"] == pytest.approx(original["to_piggy"] + 3600)
+    assert expected["to_card"] == original["to_card"] - 3600
+    for key in ("mandatory", "take", "put_aside", "buffer", "yearly_saved"):
+        assert expected[key] == original[key]
+
+    advance("2026-11-22")
+    bridge = client.get("/api/cashflow").json()
+    for _ in range(2):
+        assert confirm(client, original["payday_amount"]).is_success
+        settled = payday(client)
+        assert settled["received"] == original["payday_amount"]
+        for key in ("to_card", "to_piggy", "buffer"):
+            assert settled[key] == expected[key]
+        flow = client.get("/api/cashflow").json()
+        assert flow["period"]["end"] == "2026-11-22"
+        assert flow["next_period"]["start"] == "2026-11-23"
+        assert flow["card_balance"] == pytest.approx(bridge["card_balance"] + expected["to_card"])
+        assert flow["piggy_bank_balance"] == pytest.approx(bridge["piggy_bank_balance"] + expected["to_piggy"])
 
 
 def test_shorten_and_cancel_delay_restore_savings_without_confirming_payday(budget):

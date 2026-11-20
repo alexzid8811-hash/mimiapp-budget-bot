@@ -451,28 +451,46 @@ def save_cashflow_income_override(
         today = clock.today()
         payday = date.fromisoformat(row["payday"])
         delay = payday_delays.load(con, uid).get(payday)
-        if delay and delay["received_on"] is None and confirmed:
+        was_confirmed = con.execute(
+            "SELECT confirmed,amount FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
+            (uid, period_start.isoformat()),
+        ).fetchone()
+        preserve_allocation = None
+        settling_now = bool(delay and delay["received_on"] is None and confirmed)
+        if settling_now:
+            if row["delay_revision"] != payday_delays.revision(delay, today):
+                raise HTTPException(409, "Задержка изменилась. Обновите буфер и подтвердите выплату снова.")
             delay["received_on"] = today
             delay["funding_on"] = payday_delays.first_regular_day(delay, today)
-            unused_days = len(payday_delays.bridge_days(delay)) - len(payday_delays.covered_days(delay))
+            covered = payday_delays.covered_days(delay)
+            unused_days = len(payday_delays.bridge_days(delay)) - len(covered)
             returned = cents(delay["daily"]) * unused_days
             _delay_movement(con, uid, "deposit", returned, today)
             con.execute("UPDATE payday_delays SET received_on=?,funding_on=? WHERE user_id=? AND payday=?",
                         (today.isoformat(), delay["funding_on"].isoformat(), uid, payday.isoformat()))
+            repayment = payday_delays.amount_to_repay(delay)
+            if (cents(payload.amount) == cents(row["payday_amount"]) and row["delay_base_allocation"] is not None
+                    and delay["funding_on"] <= date.fromisoformat(row["delay_base_end"])
+                    and len(covered) == max(0, (delay["funding_on"] - period_start).days)
+                    and repayment <= min(cents(row["delay_base_allocation"]), cents(payload.amount))):
+                preserve_allocation = (cents(row["delay_base_allocation"]) - repayment,
+                                       cents(row["delay_base_piggy_kept"]))
         if delay and delay["funding_on"]:
             _repay_delay(con, uid, payday, delay, payload.amount)
-        if delay and (confirmed or delay["received_on"]):
+        if delay and (settling_now or was_confirmed and cents(payload.amount) != cents(was_confirmed["amount"])):
             con.execute("DELETE FROM card_allocations WHERE user_id=? AND period_start=?",
                         (uid, period_start.isoformat()))
+        if preserve_allocation is not None:
+            allocation, kept = preserve_allocation
+            con.execute(
+                "INSERT INTO card_allocations(user_id,period_start,funded_on,amount,cap_kept) VALUES(?,?,?,?,?)",
+                (uid, period_start.isoformat(), payday.isoformat(), amount(allocation), amount(kept)),
+            )
         received_on = (delay["received_on"] or today).isoformat() if delay else row["payday"]
         if payload.account_id is not None:
             from .accounts_app import check_account
 
             check_account(con, uid, payload.account_id, operation="income")
-        was_confirmed = con.execute(
-            "SELECT confirmed FROM cashflow_income_overrides WHERE user_id=? AND period_start=?",
-            (uid, period_start.isoformat()),
-        ).fetchone()
         con.execute(
             "INSERT INTO cashflow_income_overrides(user_id,period_start,amount,confirmed) VALUES(?,?,?,?) "
             "ON CONFLICT(user_id,period_start) DO UPDATE SET "
