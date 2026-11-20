@@ -160,4 +160,28 @@ def test_a_bill_due_during_delay_is_reported_separately_from_card_funding(budget
     assert delay(client, 2, "extension-1").is_success
     assert payday(client)["delay_shortfall"] > 0
     assert payday(client)["mandatory"] == 25000
+    assert payday(client)["delay_due"] == 25000
     assert client.get("/api/piggy-bank").json()["balance"] == 6400
+
+
+def test_delay_only_counts_bills_due_by_covered_day_and_preserves_today(budget):
+    client, advance = budget
+    bill = client.post("/api/bill-rules", json={"title": "Счёт", "amount": 4000, "day_of_month": 23}).json()
+    advance("2026-11-20")
+    before = client.get("/api/cashflow").json()
+    assert delay(client, 2, "extension-1").is_success
+    after = client.get("/api/cashflow").json()
+    for key in ("card_balance", "available_today", "today_target", "buffer_balance"):
+        assert after[key] == before[key]
+    row = payday(client)
+    assert row["delay_check_until"] == "2026-11-22"
+    assert row["delay_due"] == row["delay_shortfall"] == 0
+    assert row["mandatory"] == 4000
+    assert delay(client, 1, "extension-2").is_success
+    assert payday(client)["delay_due"] == 4000
+    advance("2026-11-24")
+    assert payday(client)["delay_check_until"] == "2026-11-24"
+    assert payday(client)["delay_due"] == 4000
+    assert client.post(f"/api/bills/{bill['id']}/pay", json={"due_date": "2026-11-23"}).is_success
+    assert payday(client)["delay_due"] == 0
+    assert payday(client)["mandatory"] == 4000

@@ -89,7 +89,6 @@
   function delayDetails(period) {
     const rows = [];
     if (period.delay_until) rows.push(`Из копилки до ${formatDate(period.delay_until)} включительно · ${formatMoney(period.delay_daily)} в день`);
-    if (period.delay_shortfall > 0) rows.push(`На обязательные платежи не хватает ${formatMoney(period.delay_shortfall)}`);
     if (period.received_on) rows.push(`Получено ${formatDate(period.received_on)}`);
     if (period.funding_on && period.funding_on !== period.received_on && period.days_funded_after_delay > 0) {
       rows.push(`Новый бюджет с ${formatDate(period.funding_on)}`);
@@ -97,7 +96,7 @@
     if (period.delay_repaid > 0) rows.push(`Возвращено в копилку · ${formatMoney(period.delay_repaid)}`);
     if (period.delay_repayment_remaining > 0) rows.push(`Осталось вернуть в копилку · ${formatMoney(period.delay_repayment_remaining)}`);
     if (period.days_funded_after_delay != null) rows.push(`Дней в новом расчёте: ${period.days_funded_after_delay}`);
-    return rows.map(label => `<div class="row-sub">${label}</div>`).join("");
+    return rows.map(label => `<div class="row-sub delay-note">${label}</div>`).join("");
   }
 
   function vacationIncomeMarkup(period) {
@@ -152,7 +151,11 @@
     setText("reserveBalance", data.enabled ? formatMoney(data.buffer_balance) : "—");
     setText("bufferPageDaily", data.enabled ? formatMoney(data.available_today) : "—");
     const shortfall = document.getElementById("bufferShortfall");
-    if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
+    const awaitingDelayedPay = [...planned, ...(data.past_periods || [])].some(p => p.delay_pending);
+    if (data.enabled && awaitingDelayedPay && (data.capital_shortfall > 0 || data.floor_gap > 0)) {
+      shortfall.textContent = data.reason;
+      shortfall.classList.remove("hidden");
+    } else if (data.enabled && Number(data.capital_shortfall || 0) > 0) {
       shortfall.textContent = `Даже без повседневных трат не хватает ${formatMoney(data.capital_shortfall)}. Увеличьте стартовый капитал или скорректируйте обязательные платежи.`;
       shortfall.classList.remove("hidden");
     } else if (data.enabled && Number(data.floor_gap || 0) > 0) {
@@ -205,21 +208,27 @@
     const worst = periods.map((p,i)=>({...p,index:i})).filter(p=>p.take>0).sort((a,b)=>b.take-a.take).slice(0,2).sort((a,b)=>a.index-b.index);
     if(worst.length) {
       const text = "Больше всего возьмёте из буфера в периоды "+worst.map(p=>formatDate(p.start)+" — "+formatDate(p.end)).join(" и ")+": "+formatMoney(worst.reduce((a,p)=>a+Number(p.take),0))+". К концу прогноза останется "+formatMoney(last.buffer)+".";
-      warning.textContent=text;
+      warning.textContent=awaitingDelayedPay ? "Прогноз без задержанной выплаты. " + text : text;
       warning.classList.remove("hidden");
     }
     // What the period does with the buffer, in words: green goes into it,
     // red is taken from it.
     const movement = p => p.take>0
-      ? ["neg",formatMoney(p.take),"взять из буфера"]
+      ? ["neg",formatMoney(p.take),p.delay_pending ? "за период без выплаты" : "взять из буфера"]
       : p.put_aside>0
         ? ["pos",formatMoney(p.put_aside),"положить в буфер"]
         : ["zero","—","без движения"];
     // The period's own money may fall short of its obligatory payments (a
     // small advance after the January holidays): a short red note under them;
     // the missing money is already planned in the buffer.
-    const shortNote = p => Number(p.free) < 0
-      ? `<small class="free-short">не хватает ${formatMoney(-Number(p.free))}</small>` : "";
+    const shortNote = p => {
+      if (p.delay_pending) {
+        const due = `К оплате до ${formatDate(p.delay_check_until)} включительно · ${formatMoney(p.delay_due)}`;
+        const gap = p.delay_shortfall > 0 ? `<small class="free-short delay-note">Не хватает в буфере ${formatMoney(p.delay_shortfall)}</small>` : "";
+        return `<small class="delay-note">${due}</small>${gap}`;
+      }
+      return Number(p.free) < 0 ? `<small class="free-short">не хватает ${formatMoney(-Number(p.free))}</small>` : "";
+    };
     // Every period shows its daily amount under «На карту».
     const dailyNote = p => Number(p.to_card) > 0 || p.daily_set != null
       ? `<small>${formatMoney(dailyOf(p))} в день</small>` : "";
@@ -274,7 +283,7 @@
       const current = !p.past && i===0;
       const [c,m,label]=movement(p);
       const chip = p.past ? '<span class="pc-chip past">прошёл</span>' : current ? '<span class="pc-chip">сейчас</span>' : "";
-      const payLabel = `${p.past || current ? "Пришло" : "Придёт"}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
+      const payLabel = `${p.delay_pending ? "Ожидается за" : p.past || current ? "Пришло" : "Придёт"}${p.payday ? ` ${formatDate(p.payday)}` : ""}`;
       const pay = `<div class="pc-pay">${row(`${payLabel} ${statusMark(p)}`, formatMoney(p.vacation_funds?.length || p.delay_pending ? p.payday_amount : p.received))}${vacationIncomeMarkup(p)}${delayDetails(p)}${payoutActions(p,current)}</div>`;
       const flow = `<div class="pc-flow">${row("− Обязательные", formatMoney(p.mandatory), shortNote(p))}${Number(p.to_card) > 0 ? row("− На карту", formatMoney(p.to_card), dailyNote(p)) : ""}${toPiggy(p) > 0.004 ? row("− В копилку", formatMoney(toPiggy(p))) : ""}</div>`;
       const footLabel = p.past ? "Осталось в буфере" : "Останется в буфере";

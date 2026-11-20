@@ -1016,6 +1016,7 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 /* «из них на годовые …» у текущего периода переносится, когда таблице тесно:
    это самая широкая подпись последней колонки. */
 .plan-table td small.yearly-note{white-space:normal}
+.plan-table td .delay-note,.plan-table td:nth-child(2) .row-sub{max-width:22ch;margin-left:auto;white-space:normal;line-height:1.3}
 .plan-table-wrap{margin-top:8px}
 @media(max-width:1279px){.plan-table{font-size:13px}}
 
@@ -1043,7 +1044,7 @@ body.mode-irregular .toast{bottom:calc(128px + env(safe-area-inset-bottom))}
 .pc-status{padding:1px 7px;border-radius:99px;background:var(--surface-2);color:var(--muted);font-size:11px;font-weight:600;white-space:nowrap}
 .pc-status.pending{background:var(--warn-bg);color:var(--warn-text)}
 .pc-status.done{background:color-mix(in srgb,var(--income) 14%,transparent);color:var(--income)}
-.pc-pay-actions{display:flex;gap:8px}
+.pc-pay-actions{display:flex;flex-wrap:wrap;gap:8px}
 .pc-pay-actions .income-btn{flex:1;min-height:38px;padding:0 12px;border-radius:10px;background:var(--surface-2);color:var(--text);font-size:14px}
 .pc-pay-actions .income-btn.accent{background:var(--accent-fill);color:#fff}
 .pc-pay-actions .income-btn:hover{text-decoration:none;filter:brightness(.97)}

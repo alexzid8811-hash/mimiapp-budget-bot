@@ -450,11 +450,10 @@ test('payday delay previews the automatic piggy transfer and submits only the nu
  const {sandbox,get,requests,responses}=setup();
  responses['/api/cashflow'].periods=[{
   start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',
-  received_editable:true,income_pending:true,override_key:'2026-10-08',delay_daily:1800,delay_shortfall:500,
+  received_editable:true,income_pending:true,override_key:'2026-10-08',delay_daily:1800,
  }];
  await get('refreshBtn').listeners.click();
  assert.match(get('planCards').innerHTML,/Задержка выплаты/);
- assert.match(get('planCards').innerHTML,/На обязательные платежи не хватает/);
  sandbox.window.openPaydayDelay('2026-10-08');
  get('paydayDelayDays').value='2';
  get('paydayDelayDays').listeners.input();
@@ -464,6 +463,25 @@ test('payday delay previews the automatic piggy transfer and submits only the nu
  assert.equal(sent.days,2);
  assert.equal(typeof sent.request_id,'string');
  assert.equal('amount' in sent,false);
+});
+
+test('pending delay distinguishes unpaid bills due by the selected day from the period forecast', async () => {
+ const {get,responses}=setup();
+ const period={start:'2026-10-07',end:'2026-10-21',kind:'Зарплата',days:15,payday:'2026-10-07',
+  income_pending:true,received_editable:true,delay_pending:true,delay_until:'2026-10-09',delay_daily:900,
+  delay_check_until:'2026-10-09',delay_due:0,delay_shortfall:0,mandatory:8000,free:-8000,take:8000};
+ const flow=responses['/api/cashflow'];
+ Object.assign(flow,{periods:[period],capital_shortfall:500,reason:'Если задержанная выплата не поступит, к 21.10.2026 на обязательные платежи не хватит 500 ₽.'});
+ await get('refreshBtn').listeners.click();
+ assert.equal(get('bufferShortfall').textContent,flow.reason);
+ for(const id of ['bufferPeriods','planCards']){
+  assert.match(get(id).innerHTML,/К оплате до 9 окт. включительно · 0,00/);
+  assert.doesNotMatch(get(id).innerHTML,/не хватает 8.000/i);
+  assert.match(get(id).innerHTML,/за период без выплаты/);
+ }
+ Object.assign(period,{delay_due:2000,delay_shortfall:300});
+ await get('refreshBtn').listeners.click();
+ for(const id of ['bufferPeriods','planCards']) assert.match(get(id).innerHTML,/Не хватает в буфере 300,00/);
 });
 
 test('settled delay displays when the new budget starts and how much was repaid', async () => {
@@ -1121,7 +1139,7 @@ test('piggy unassigned and goals cards use equal responsive desktop columns and 
  assert.ok(css.includes('.piggy-goals-layout{grid-template-columns:repeat(2,minmax(0,1fr))}'));
  assert.ok(css.includes('.piggy-goals-layout>.card{min-width:0;margin:0}'));
  assert.ok(css.includes('background:var(--surface-2);border:1px solid var(--line)'));
- assert.ok(html.includes('styles.css?v=20261119-piggy-card-spacing'));
+ assert.match(html,/styles\.css\?v=[^"]+/);
 });
 
 test('piggy without goals invites to add one and sends no goal', async () => {

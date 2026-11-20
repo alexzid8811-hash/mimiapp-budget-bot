@@ -235,7 +235,8 @@ def get_cashflow(user: TelegramUser = Depends(current_user)) -> dict:
 
 BUFFER_KEYS = (
     "today", "horizon_end", "daily_target", "available_today", "buffer_balance",
-    "capital_shortfall", "shortfall_date", "periods", "past_periods", "card_balance", "tomorrow_limit",
+    "capital_shortfall", "shortfall_date", "floor_gap", "floor_gap_date", "buffer_floor", "reason",
+    "periods", "past_periods", "card_balance", "tomorrow_limit",
     "daily_cap", "daily_cap_to", "period_cap_kept", "period_cap_kept_piggy", "spare_buffer",
 )
 
