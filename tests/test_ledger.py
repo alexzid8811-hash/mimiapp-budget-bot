@@ -104,6 +104,14 @@ def test_covering_overspend_from_piggy_restores_following_days():
     assert result.tomorrow_limit == 100 * RUB
 
 
+def test_delay_budget_keeps_money_spread_over_an_independently_funded_period():
+    payday, tomorrow = D(2026, 9, 22), D(2026, 9, 23)
+    inp = ledger(payday, start=payday, buffer_in={payday: 2700 * RUB},
+                 stored_allocations={payday: 0, tomorrow: 2700 * RUB}, bridge_in={tomorrow: 180 * RUB})
+    assert run_ledger(inp).tomorrow_limit == 192 * RUB  # 2880 ₽ over fifteen days.
+    assert run_ledger(replace(inp, today=tomorrow)).today_limit == 192 * RUB
+
+
 def test_spreading_overspend_lowers_only_remaining_days_of_current_period():
     inp = ten_days_with_1000(card_out={D(2026, 9, 13): 190 * RUB})
     result = run_ledger(inp)

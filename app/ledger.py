@@ -278,6 +278,7 @@ class LedgerResult:
     # Part of the planned card allocation used to repay the piggy bank.
     reallocated_to_piggy: dict[date, int] = field(default_factory=dict)
     period_opening: dict[date, int] = field(default_factory=dict)
+    bridge_limits: dict[date, int] = field(default_factory=dict)
 
 
 def buffer_flows(inp: LedgerInput) -> dict[date, int]:
@@ -351,6 +352,21 @@ def _spare_at_rate(opening, start, end, flows, funded_days, daily):
     return max(0, spare or 0)
 
 
+def _remaining_bridge_funding(funding: dict[date, int]) -> dict[date, tuple[int, int]]:
+    """Funding and days left in each consecutive stretch covered by savings."""
+    remaining = {}
+    for day in sorted(funding, reverse=True):
+        later_funding, later_days = remaining.get(day + ONE_DAY, (0, 0))
+        remaining[day] = (funding[day] + later_funding, 1 + later_days)
+    return remaining
+
+
+def _bridge_limit(balance: int, remaining: tuple[int, int], regular_days: int) -> int:
+    funding, bridge_days = remaining
+    # An older delay can still be open when a later payment funds this card period.
+    return max(0, (balance + funding) // max(bridge_days, regular_days))
+
+
 def run_ledger(inp: LedgerInput) -> LedgerResult:
     if not inp.start <= inp.today <= inp.horizon <= inp.data_end:
         raise ValueError("Неверный диапазон расчёта")
@@ -370,6 +386,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
     buffer = inp.start_capital
     allocations = dict.fromkeys((p.start for p in periods), 0)
     cap_kept = allocations.copy()
+    bridge_remaining = _remaining_bridge_funding(inp.bridge_in)
+    bridge_limits: dict[date, int] = {}
     buffer_end: dict[date, int] = {}
     to_store: dict[date, tuple[date, int, int]] = {}
     starts = {period.start: period for period in periods}
@@ -446,7 +464,8 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 carried = max(0, card)
                 if _funding_day(inp, active) == active.funded_on:
                     card += allocations[day]
-            received_late = active.funded_on != day and _funding_day(inp, active) == day
+            funding_day = _funding_day(inp, active)
+            received_late = active.funded_on != day and funding_day == day
             if received_late:
                 carry_in[day] = card
                 carried = max(0, card)
@@ -477,6 +496,12 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
                 opening_by_start[active.start] = card
             if day == inp.today:
                 card_start_today = card
+            if day in bridge_remaining:
+                regular_days = (
+                    (active.end - day).days + 1
+                    if funding_day is not None and funding_day <= day and allocations[active.start] else 0
+                )
+                bridge_limits[day] = _bridge_limit(card + inp.card_in.get(day, 0), bridge_remaining[day], regular_days)
             card += (inp.card_in.get(day, 0) + inp.card_cover.get(day, 0) + inp.bridge_in.get(day, 0)
                      - inp.card_out.get(day, 0) - inp.card_to_piggy.get(day, 0))
         buffer_end[day] = buffer
@@ -484,10 +509,9 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
 
     current = next(p for p in periods if p.start <= inp.today <= p.end)
     days_left = (current.end - inp.today).days + 1
-    today_limit = max(0, (card_start_today + inp.card_in.get(inp.today, 0)) // days_left)
-    if inp.today in inp.bridge_in:
-        bridge = inp.bridge_in[inp.today]
-        today_limit = max(0, min(bridge, card_start_today + bridge))
+    today_limit = bridge_limits.get(
+        inp.today, max(0, (card_start_today + inp.card_in.get(inp.today, 0)) // days_left)
+    )
     spent_today = inp.card_out.get(inp.today, 0)
     available_today = (today_limit + inp.card_cover.get(inp.today, 0)
                        - spent_today - inp.card_to_piggy.get(inp.today, 0))
@@ -508,7 +532,23 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         forecasts[period.start] = PeriodForecast(period, allocations[period.start], opening, daily, carry)
         if days_left == 1 and period.start == current.end + ONE_DAY:
             tomorrow_limit = daily
-    tomorrow_limit = inp.bridge_in.get(inp.today + ONE_DAY, tomorrow_limit)
+    tomorrow = inp.today + ONE_DAY
+    next_card_period = starts.get(tomorrow, current)
+    funding_day = _funding_day(inp, next_card_period)
+    opens_late = funding_day == tomorrow and tomorrow != next_card_period.funded_on
+    if tomorrow in bridge_remaining or opens_late:
+        days = (next_card_period.end - tomorrow).days + 1
+        allocation = allocations[next_card_period.start]
+        opens_on_schedule = tomorrow in starts and funding_day == next_card_period.funded_on
+        opening = card + allocation if opens_late or opens_on_schedule else card
+        cap = cap_on(inp.caps, tomorrow)
+        if cap is not None and (tomorrow in starts or tomorrow in cap_days or opens_late):
+            opening = min(opening, cap * days)
+        if tomorrow in bridge_remaining:
+            regular_days = days if funding_day is not None and funding_day <= tomorrow and allocation else 0
+            tomorrow_limit = _bridge_limit(opening, bridge_remaining[tomorrow], regular_days)
+        else:
+            tomorrow_limit = max(0, opening // days)
 
     lowest = 0
     lowest_date = None
@@ -544,6 +584,7 @@ def run_ledger(inp: LedgerInput) -> LedgerResult:
         sinking_end=sinking_end,
         reallocated_to_piggy=reallocated_to_piggy,
         period_opening=opening_by_start,
+        bridge_limits=bridge_limits,
     )
 
 

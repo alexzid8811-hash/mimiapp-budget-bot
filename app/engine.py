@@ -144,8 +144,9 @@ def build_input(uid: int, *, start: date, capital: float, months: int, today: da
     vacation_forecast: dict[date, int] = {}
     bridge_in = {}
     for delay in delays.values():
+        daily = cents(delay["daily"])
         for day in payday_delays.covered_days(delay):
-            _add(bridge_in, day, cents(delay["daily"]))
+            bridge_in[day] = daily
     for row in vacation_rows:
         if not row["transfer_date"] and row["payday"] and row["period_end"]:
             day = max(today, date.fromisoformat(row["payday"]))
@@ -952,6 +953,8 @@ def compute(uid: int, *, force_enabled: bool = False) -> dict:
         # Money moved from the piggy bank "for today" belongs to today only.
         "today_target": amount(actual.today_limit + inp.card_cover.get(today, 0)),
         "daily_target": amount(actual.today_limit + inp.card_cover.get(today, 0)),
+        "delay_day_limits": {day.isoformat(): amount(limit + inp.card_cover.get(day, 0))
+                             for day, limit in actual.bridge_limits.items()},
         "available_today": amount(actual.available_today),
         "spent_today": amount(actual.spent_today),
         "overspend": amount(actual.overspend),
