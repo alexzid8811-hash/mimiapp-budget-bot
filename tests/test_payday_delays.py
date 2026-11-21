@@ -50,6 +50,41 @@ def test_zero_limit_does_not_defer_new_budget_on_receipt_day():
     assert payday_delays.first_regular_day(delay, received) == received
 
 
+def test_unused_delay_money_is_shared_by_the_remaining_days(budget):
+    client, advance = budget
+    advance("2026-11-20")
+
+    def spend(value, day):
+        assert client.post("/api/transactions", json={"type": "expense", "amount": value, "tx_date": day}).is_success
+
+    def cashflow():
+        return client.get("/api/cashflow").json()
+
+    # Start the delay with no carry from the preceding card period.
+    spend(cashflow()["card_balance"], "2026-11-20")
+    assert delay(client, 2, "extension-1").is_success
+    advance("2026-11-21")
+    assert cashflow()["today_target"] == 1800
+    spend(696.30, "2026-11-21")
+    assert cashflow()["tomorrow_limit"] == 2903.70
+
+    advance("2026-11-22")
+    last_day = cashflow()
+    assert last_day["available_today"] == last_day["card_balance"] == 2903.70
+    assert delay(client, 1, "extension-2").is_success
+    extended = cashflow()
+    assert extended["card_balance"] == 4703.70
+    assert extended["available_today"] == 2351.85
+    period = client.get("/api/analytics?mode=period").json()
+    today = next(day for day in period["days"] if day["date"] == "2026-11-22")
+    assert (today["delay_funding"], today["delay_limit"]) == (1800, 2351.85)
+
+    spend(1000, "2026-11-22")
+    assert cashflow()["tomorrow_limit"] == 3703.70
+    advance("2026-11-23")
+    assert cashflow()["available_today"] == 3703.70
+
+
 def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(budget):
     client, advance = budget
     bill = client.post("/api/bill-rules", json={"title": "Интернет", "amount": 5000, "day_of_month": 22}).json()
@@ -64,7 +99,7 @@ def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(b
     assert payday(client)["delay_return_in_plan"] == 7200
 
     advance("2026-11-22")
-    assert client.get("/api/cashflow").json()["today_target"] == 1800
+    assert client.get("/api/cashflow").json()["today_target"] == 3600
     assert client.post(f"/api/bills/{bill['id']}/pay", json={"due_date": "2026-11-22"}).is_success
 
     advance("2026-11-23")
@@ -75,7 +110,8 @@ def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(b
     assert flow["period"]["payday_received_on"] == "2026-11-23"
     assert flow["period"]["days_left"] == 1
     assert flow["next_period"]["days"] == 14
-    assert flow["today_target"] == 1800
+    assert flow["today_target"] == 9000
+    assert flow["tomorrow_limit"] == 1800
     assert payday(client)["to_card"] == 14 * 1800
     assert payday(client)["received_on"] == "2026-11-23"
     assert payday(client)["funding_on"] == "2026-11-24"
@@ -88,7 +124,7 @@ def test_delay_extends_by_new_days_and_late_advance_reallocates_remaining_days(b
     assert [row["amount"] for row in movements if row["purpose"] == "payday_delay_repayment"] == [5400]
     saved = export_user_data(1)
     restore_user_data(1, saved)
-    assert client.get("/api/cashflow").json()["today_target"] == 1800
+    assert client.get("/api/cashflow").json()["today_target"] == flow["today_target"]
 
 
 def test_actual_pay_caps_repayment_and_correction_updates_one_movement(budget):
@@ -136,7 +172,7 @@ def test_marked_delay_remains_unreceived_after_the_next_payday(budget):
     assert payday(client)["received"] == 0
     assert payday(client)["delay_return_in_plan"] == 1800
     assert delay(client, 1, "extension-2").is_success
-    assert client.get("/api/cashflow").json()["today_target"] == 1800
+    assert client.get("/api/cashflow").json()["today_target"] == 7200
     assert confirm(client).is_success
     with connect() as con:
         assert con.execute("SELECT received_on FROM payday_delays").fetchone()[0] == "2026-12-08"
@@ -283,7 +319,7 @@ def test_edit_protects_current_and_elapsed_days_and_repayment_uses_them(budget):
     assert edit_delay(client, None).status_code == 422
     assert edit_delay(client, 0).is_success
     assert payday(client)["delay_pending"]
-    assert client.get("/api/cashflow").json()["today_target"] == 1800
+    assert client.get("/api/cashflow").json()["today_target"] == 7200
     assert client.get("/api/piggy-bank").json()["balance"] == 6400
     restore_user_data(1, export_user_data(1))
     assert confirm(client).is_success
@@ -332,7 +368,9 @@ def test_delay_updates_card_periods_spending_bills_and_reports(budget):
     assert previous["end"] == "2026-11-22"
     assert previous["next_anchor"] == current["start"]
     assert previous["totals"]["daily"] == 300
-    assert previous["days"][-1] == {"date": "2026-11-22", "amount": 300, "delay_limit": 1800}
+    assert previous["days"][-1] == {
+        "date": "2026-11-22", "amount": 300, "delay_funding": 1800, "delay_limit": 7200,
+    }
     month = client.get("/api/analytics?mode=month").json()
     assert (month["start"], month["end"], month["totals"]["daily"]) == ("2026-11-01", "2026-11-30", 1000)
     row, = month["payday_delays"]

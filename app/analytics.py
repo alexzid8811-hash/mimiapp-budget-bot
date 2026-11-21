@@ -143,23 +143,27 @@ def _categories(expenses: list[dict], previous: list[dict]) -> list[dict]:
     return result
 
 
-def _days(expenses: list[dict], start: date, end: date, delay_limits: dict[date, float]) -> list[dict]:
+def _days(expenses: list[dict], start: date, end: date, delay_funding: dict[date, float],
+          delay_limits: dict[str, float]) -> list[dict]:
     totals: dict[str, int] = defaultdict(int)
     for e in expenses:
         if e["bill_rule_id"] is None:
             totals[e["tx_date"]] += cents(e["amount"])
     days, day = [], start
     while day <= end:
-        row = {"date": day.isoformat(), "amount": amount(totals.get(day.isoformat(), 0))}
-        if day in delay_limits:
-            row["delay_limit"] = delay_limits[day]
+        key = day.isoformat()
+        row = {"date": key, "amount": amount(totals.get(key, 0))}
+        if day in delay_funding:
+            row["delay_funding"] = delay_funding[day]
+            if key in delay_limits:
+                row["delay_limit"] = delay_limits[key]
         days.append(row)
         day += timedelta(days=1)
     return days
 
 
 def _delays_in_range(delays, start: date, end: date, today: date) -> tuple[list[dict], dict[date, float]]:
-    rows, limits = [], {}
+    rows, funding_by_day = [], {}
     for payday, delay in sorted(delays.items()):
         received = delay["received_on"]
         funding = payday_delays.funding_day(delay)
@@ -171,7 +175,7 @@ def _delays_in_range(delays, start: date, end: date, today: date) -> tuple[list[
         daily = cents(delay["daily"])
         settled_here = received is not None and start <= received <= end
         repaid = delay["repaid_cents"] if settled_here else 0
-        limits.update({day: amount(daily) for day in covered})
+        funding_by_day.update({day: amount(daily) for day in covered})
         rows.append({
             "payday": payday.isoformat(),
             "received_on": received.isoformat() if received else None,
@@ -185,7 +189,7 @@ def _delays_in_range(delays, start: date, end: date, today: date) -> tuple[list[
             "repayment_remaining": amount(payday_delays.amount_to_repay(delay) - repaid)
             if settled_here and delay["funding_on"] else 0.0,
         })
-    return rows, limits
+    return rows, funding_by_day
 
 
 def monthly(uid: int, first_month: date, count: int) -> list[dict]:
@@ -293,17 +297,19 @@ def _upcoming_bills(uid: int, start: date, end: date, today: date, shown: set) -
     ]
 
 
-def _daily_limit(uid: int, start: date, end: date, today: date) -> float | None:
-    """Planned per-day card budget, known only for the current card period."""
+def _budget_flow(uid: int) -> dict:
     from . import engine  # local import: the engine is heavy and optional here
 
     try:
         flow = engine.compute(uid)
     except Exception:  # noqa: BLE001 - the chart works without the line
-        return None
+        return {}
+    return flow if flow.get("enabled") else {}
+
+
+def _daily_limit(flow: dict, start: date, end: date, today: date) -> float | None:
+    """Planned per-day card budget, known only for the current card period."""
     period = flow.get("period") or {}
-    if not flow.get("enabled"):
-        return None
     if period.get("start") != start.isoformat() or period.get("end") != end.isoformat() or not start <= today <= end:
         return None
     return flow["period_daily_limit"] or None
@@ -328,7 +334,11 @@ def summary(uid: int, mode: Mode, anchor: date, today: date | None = None) -> di
         prev_deposits = _piggy_deposits(con, uid, prev_start, compare_end)
     kinds = _kinds(expenses, deposits)
     previous = _kinds(prev_expenses, prev_deposits)
-    delay_rows, delay_limits = _delays_in_range(delays, start, end, today)
+    delay_rows, delay_funding = _delays_in_range(delays, start, end, today)
+    needs_flow = mode != "year" and (
+        (mode == "period" and start <= today <= end) or any(day <= today for day in delay_funding)
+    )
+    flow = _budget_flow(uid) if needs_flow else {}
     if mode == "year":
         months = monthly(uid, start, 12)
     else:
@@ -347,9 +357,9 @@ def summary(uid: int, mode: Mode, anchor: date, today: date | None = None) -> di
         "previous_totals": previous,
         "piggy_taken": piggy_taken,
         "categories": _categories(expenses, prev_expenses),
-        "days": [] if mode == "year" else _days(expenses, start, end, delay_limits),
+        "days": [] if mode == "year" else _days(expenses, start, end, delay_funding, flow.get("delay_day_limits", {})),
         "payday_delays": delay_rows,
-        "daily_limit": _daily_limit(uid, start, end, today) if mode == "period" else None,
+        "daily_limit": _daily_limit(flow, start, end, today) if mode == "period" else None,
         "months": months,
         "bills": _bills(uid, start, end, today),
     }

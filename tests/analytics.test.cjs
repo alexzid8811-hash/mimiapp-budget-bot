@@ -138,8 +138,8 @@ test('every tab shows the average spend, the card period too', async () => {
 test('analytics shows the delay and compares spending with the limit of each covered day', async () => {
   const response = {
     ...sample,
-    days: [{date: '2026-09-14', amount: 950, delay_limit: 1000},
-           {date: '2026-09-15', amount: 1100, delay_limit: 1000}],
+    days: [{date: '2026-09-14', amount: 1800, delay_funding: 1800, delay_limit: 2903.70},
+           {date: '2026-09-15', amount: 2000, delay_funding: 1800, delay_limit: 1950}],
     payday_delays: [{
       payday: '2026-09-13', received_on: null, funding_on: null,
       covered_from: '2026-09-14', covered_until: '2026-09-15', covered_days: 2,

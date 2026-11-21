@@ -210,7 +210,7 @@
     card.classList.toggle("hidden", data.mode === "year");
     if (data.mode === "year") return;
     const days = data.days, values = days.map(d => d.amount), limit = data.daily_limit;
-    const limitFor = i => days[i].delay_limit ?? limit;
+    const limitFor = i => days[i].delay_funding == null ? limit : days[i].delay_limit;
     const isOver = (v, i) => limitFor(i) != null && v > limitFor(i);
     const hasDelayLimits = days.some(d => d.delay_limit != null);
     const passed = days.filter(d => d.date <= data.today);
@@ -226,7 +226,13 @@
       line: average,
       lineColor: "var(--muted)",
       color: (v, i) => isOver(v, i) ? "var(--expense)" : "var(--kind-daily)",
-      tip: (v, i) => `<b>${day(days[i].date)}</b> · ${rub(v)}${days[i].delay_limit != null ? ` · из копилки ${delayMoney.format(limitFor(i))}` : ""}${isOver(v, i) ? ` · +${rub(v - limitFor(i))}` : ""}`,
+      tip: (v, i) => {
+        const {date, delay_funding, delay_limit} = days[i];
+        const funding = delay_funding == null ? "" : ` · из копилки ${delayMoney.format(delay_funding)}`;
+        const daily = delay_limit == null ? "" : ` · на день ${delayMoney.format(delay_limit)}`;
+        const excess = isOver(v, i) ? ` · +${rub(v - limitFor(i))}` : "";
+        return `<b>${day(date)}</b> · ${rub(v)}${funding}${daily}${excess}`;
+      },
     });
     $("analyticsDaysLegend").innerHTML = (hasDelayLimits
       ? `<span><i style="background:var(--kind-daily)"></i>Траты за день</span><span><i style="background:var(--expense)"></i>Сверх лимита дня</span>${limit ? `<span>Лимит периода ${rub(limit)}/день</span>` : ""}`
