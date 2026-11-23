@@ -690,6 +690,33 @@ test('operations can be searched and filtered by type', async () => {
   assert.match(get('transactionsList').innerHTML, /Ничего не найдено/);
 });
 
+test('operations cap the unfiltered history at 150 rows across expenses and transfers', async () => {
+  const {get, responses, requests} = setup();
+  const recent = Array.from({length: 148}, (_, i) => ({
+    id: i + 3, type: 'expense', amount: 1, tx_date: '2026-09-15',
+  }));
+  responses['/api/transactions?limit=150'] = [...recent,
+    {id: 2, type: 'expense', amount: 1, tx_date: '2026-09-14', note: 'Последняя запись'},
+    {id: 1, type: 'expense', amount: 1, tx_date: '2026-09-13', note: 'Более старая запись'},
+  ];
+  responses['/api/piggy-bank?limit=150'] = {balance: 1, movements: [
+    {id: 1, direction: 'deposit', amount: 1, movement_date: '2026-09-15', source: 'daily_budget'},
+  ]};
+  await get('refreshBtn').listeners.click();
+
+  assert.equal((get('transactionsList').innerHTML.match(/class="list-row"/g) || []).length, 150);
+  assert.match(get('transactionsList').innerHTML, /Карта → копилка/);
+  assert.match(get('transactionsList').innerHTML, /Последняя запись/);
+  assert.doesNotMatch(get('transactionsList').innerHTML, /Более старая запись/);
+
+  responses['/api/transactions?limit=150&since=2026-09-07'] = responses['/api/transactions?limit=150'];
+  responses['/api/piggy-bank?limit=150&since=2026-09-07'] = responses['/api/piggy-bank?limit=150'];
+  get('txPeriod').listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(requests.some(r => r.url === '/api/transactions?limit=150&since=2026-09-07'));
+  assert.match(get('transactionsList').innerHTML, /Более старая запись/);
+});
+
 test('«Сегодня» narrows everyday operations to today and combines with the type chips', async () => {
   const {sandbox,get,responses} = setup();
   responses['/api/transactions'] = [
@@ -752,7 +779,7 @@ test('«Период» shows the card period from the header and excludes «Се
   vm.runInContext('transactionsSince = null', sandbox);
   get('txPeriod').listeners.click();
   await new Promise(resolve => setImmediate(resolve));
-  assert.ok(requests.some(r => r.url === '/api/transactions?since=2026-09-07'));
+  assert.ok(requests.some(r => r.url === '/api/transactions?limit=150&since=2026-09-07'));
 
   let html = get('transactionsList').innerHTML;
   assert.match(html, /7 сент\. — 21 сент\./);
@@ -820,8 +847,8 @@ test('‹ › step «Период» through earlier card periods and load them w
   assert.equal(get('txPeriodLabel').textContent, '22 авг. — 6 сент.');
   assert.equal(get('txPeriodNext').disabled, false);
   // The list did not reach so far back: operations and transfers are loaded from the period start.
-  assert.ok(requests.some(r => r.url === '/api/transactions?since=2026-08-22'));
-  assert.ok(requests.some(r => r.url === '/api/piggy-bank?since=2026-08-22'));
+  assert.ok(requests.some(r => r.url === '/api/transactions?limit=150&since=2026-08-22'));
+  assert.ok(requests.some(r => r.url === '/api/piggy-bank?limit=150&since=2026-08-22'));
   let html = get('transactionsList').innerHTML;
   assert.match(html, /22 авг\. — 6 сент\./);
   assert.match(html, /Обед[\s\S]*Карта → копилка/);
@@ -832,7 +859,7 @@ test('‹ › step «Период» through earlier card periods and load them w
   assert.match(get('transactionsList').innerHTML, /Метро/);
   // A reload keeps the period on screen whole.
   await get('refreshBtn').listeners.click();
-  assert.ok(requests.some(r => r.url === '/api/transactions?since=2026-08-07'));
+  assert.ok(requests.some(r => r.url === '/api/transactions?limit=150&since=2026-08-07'));
   assert.equal(get('txPeriodLabel').textContent, '7 авг. — 21 авг.');
 
   await get('txPeriodNext').listeners.click();

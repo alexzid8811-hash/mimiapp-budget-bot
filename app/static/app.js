@@ -64,6 +64,11 @@ function todayISO() { return window.budgetDate.today(); }
 function shiftISODate(iso, days) { return window.budgetDate.shift(iso, days); }
 
 let loadVersion = 0;
+const TRANSACTION_HISTORY_LIMIT = 150;
+
+function transactionHistoryPath(path, since) {
+  return `${path}?limit=${TRANSACTION_HISTORY_LIMIT}${since ? `&since=${since}` : ""}`;
+}
 
 // The operations list holds the latest operations and every operation since
 // transactionsFrom(): «Период» shows a whole card period.  The first load
@@ -76,8 +81,8 @@ async function loadAll() {
   const selectedPeriod = transactionPeriod;
   try {
     const [bootstrap, payroll, vacations, dashboard, transactions, plan, cashflowSettings, cashflow, piggy, irregular, accounts, updatedPeriod] = await Promise.all([
-      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api(since ? `/api/transactions?since=${since}` : "/api/transactions"), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
-      api(since ? `/api/piggy-bank?since=${since}` : "/api/piggy-bank").catch(() => ({ movements: [] })),
+      api("/api/bootstrap"), api("/api/payroll-settings"), api("/api/vacations"), api("/api/dashboard"), api(transactionHistoryPath("/api/transactions", since)), api("/api/plan"), api("/api/cashflow-settings"), api("/api/cashflow"),
+      api(transactionHistoryPath("/api/piggy-bank", since)).catch(() => ({ movements: [] })),
       api("/api/irregular").catch(() => null),
       api("/api/accounts").catch(() => null),
       selectedPeriod ? api(`/api/card-period?day=${selectedPeriod.start}`).catch(() => selectedPeriod) : null
@@ -261,7 +266,7 @@ async function coverTransactionPeriod() {
   const version = loadVersion;
   try {
     const [transactions, piggy] = await Promise.all([
-      api(`/api/transactions?since=${since}`), api(`/api/piggy-bank?since=${since}`),
+      api(transactionHistoryPath("/api/transactions", since)), api(transactionHistoryPath("/api/piggy-bank", since)),
     ]);
     // A newer load replaces the list and covers the period itself.
     if (version !== loadVersion) return;
@@ -302,8 +307,10 @@ function renderTransactions() {
     $("txPeriodNext").disabled = !transactionPeriod;
   }
   const inRange = t => today ? t.tx_date === today : !period || (t.tx_date >= period.start && t.tx_date <= period.end);
-  const items = all.filter(t => inRange(t) && transactionMatches(t, query))
+  const sorted = all.filter(inRange)
     .sort((a, b) => b.tx_date.localeCompare(a.tx_date) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const history = today || period ? sorted : sorted.slice(0, TRANSACTION_HISTORY_LIMIT);
+  const items = history.filter(t => transactionMatches(t, query));
   if (!items.length) {
     const message = !all.length
       ? (transactionView === "bills" ? "Оплаченных обязательных платежей пока нет." : "Пока нет операций.")

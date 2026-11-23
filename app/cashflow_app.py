@@ -547,9 +547,11 @@ def delete_cashflow_income_override(
 
 
 @app.get("/api/piggy-bank")
-def get_piggy_bank(since: date | None = None, user: TelegramUser = Depends(current_user)) -> dict:
+def get_piggy_bank(
+    since: date | None = None, user: TelegramUser = Depends(current_user), *, limit: int = 80,
+) -> dict:
     uid = legacy.user_ready(user)
-    return piggy_bank_snapshot(uid, since=since)
+    return piggy_bank_snapshot(uid, limit=limit, since=since)
 
 
 def _insert_piggy(user_id: int, direction: str, amount: float, day: date, note: str,

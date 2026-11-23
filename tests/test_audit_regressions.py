@@ -1025,5 +1025,7 @@ def test_piggy_bank_since_adds_every_movement_of_the_period(client):
     dates = lambda **kw: [m["movement_date"] for m in as_user(1, piggy_bank_snapshot, 1, **kw)["movements"]]
     assert dates(limit=1) == ["2026-09-10"]
     assert dates(limit=1, since=date(2026, 9, 8)) == ["2026-09-10", "2026-09-08"]
+    limited = client.get("/api/piggy-bank?limit=1&since=2026-09-08").json()["movements"]
+    assert [m["movement_date"] for m in limited] == ["2026-09-10", "2026-09-08"]
     listed = client.get("/api/piggy-bank?since=2026-09-08").json()["movements"]
     assert [m["movement_date"] for m in listed] == ["2026-09-10", "2026-09-08", "2026-09-02"]
